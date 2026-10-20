@@ -31,9 +31,9 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 | P1A-RECOVERY      | Staging cleanup, expiry, reconciliation                        | ✅      |
 | P1A-IMPORT-UI     | Upload UI with progress and report                             | ✅      |
 | P1A-HARDEN        | 14 review findings on PRs 1–4 (auth, jobs, imports, ZIP)       | ✅      |
-| P1A-EXPORT        | Portable export v1                                             | 📝 next |
-| P1A-RESTORE       | Restore + CLI + round-trip test                                | 📝      |
-| P1A-INTEGRITY     | Integrity check job                                            | 📝      |
+| P1A-EXPORT        | Portable export v1 (job, API, UI, CLI)                         | ✅      |
+| P1A-RESTORE       | Restore core + CLI + re-extraction + round-trip ✅; API/UI 📝  | 🚧      |
+| P1A-INTEGRITY     | Integrity check job                                            | 📝 next |
 | P1A-ENC           | Built-in age encryption for exports                            | 📝      |
 
 ## Phase 1B — Usable Library

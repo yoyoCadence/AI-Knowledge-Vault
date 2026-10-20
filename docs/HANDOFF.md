@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 6: review-finding hardening)
+## 1. Snapshot (2026-10-20, after PR 7: portable export + restore)
 
 **Merged and tested**
 
@@ -129,11 +129,82 @@ conversations. Update it at the end of every PR.
     - Impossible cursor dates (Feb 30, year 0) are rejected instead of reaching Postgres.
   - Tests: 182 passing (157 before), plus E2E 6/6.
 
+- **PR 7, P1A-EXPORT + the core of P1A-RESTORE** (`src/modules/backup/`):
+  - `format.ts` (format v1): entry paths, Zod schemas for every JSON file, a strict GNU
+    `checksums.sha256` codec, and `README.txt`. `manifest.json` pins the SHA-256 of
+    `checksums.sha256`, which covers every other entry.
+  - `export.ts` (`writeExport`):
+    - streams one workspace (metadata, normalized Markdown with front matter, and originals
+      byte for byte) into a ZIP with yazl
+    - re-hashes each original while streaming; a corrupt stored object fails the export with
+      `ORIGINAL_CORRUPT`
+  - `service.ts`:
+    - `export_runs` and the `export.create` job (temp file → hash → `ws/{ws}/exports/{id}.zip`)
+    - `POST/GET /api/exports`
+    - `GET /api/exports/:id/download` (302 to a 5-minute signed URL, audited)
+    - 7-day retention, enforced by the hourly `maintenance.cleanup_exports` job
+  - `restore.ts` (`restoreArchive`):
+    - SafeZip (`RESTORE_*` limits)
+    - **every entry is hashed and compared before anything is written**, and the hash in each
+      original's path must match its content
+    - Zod validation plus referential checks
+    - originals are content-addressed (dedup per workspace)
+    - one transaction per artifact
+    - IDs are kept when free; `skip_existing` or `copy` (new IDs, `（還原副本）`, `origin_ref`)
+      when the artifact already exists in the target; new IDs when an ID belongs to another
+      workspace
+    - the archived Markdown becomes the active extraction (`restore_archive`) right away
+  - `reextract.ts`: the `restore.reextract_version` job rebuilds text, sections, thumbnails and
+    previews with the **same code as imports**. That code was extracted from `process-item.ts`
+    into `src/modules/imports/derive.ts` (`deriveVersionContent`, `saveExtraction`). A failure
+    keeps the archived text.
+  - CLI: `pnpm backup:export --workspace <slug> --out <file>` and
+    `pnpm backup:restore <file> --workspace <slug> [--mode skip_existing|copy]`. Bundled as
+    `dist/backup-*.mjs`. A restore writes a `restore_runs` row.
+  - UI: the export panel on `/import` (create, progress, download with SHA-256, the
+    unencrypted-archive warning).
+  - Tests: `tests/integration/backup/roundtrip.test.ts` covers:
+    1. seed through the real import pipeline
+    2. export, then `sha256sum -c` on the extracted archive
+    3. destroy the workspace
+    4. restore into an empty storage root with identical IDs, metadata and bytes
+    5. re-extraction
+    6. `skip_existing` idempotency
+    7. `copy`
+    8. a tampered original → `CHECKSUM_MISMATCH` with nothing written
+    9. a forged checksums file → caught by the manifest
+    10. a non-export ZIP → rejected
+
+    Also `exports-api.test.ts` (job, download, workspace isolation, expiry) and E2E (export
+    download checksum). The CLIs were smoke-tested on E2E data, including the bundled
+    `dist/backup-export.mjs`.
+
+  - Migration `0004_backup_runs`: `export_runs`, `restore_runs`, `integrity_checks`.
+  - **Review fixes before merge** (Codex, plus an independent review):
+    - Export reads all metadata in one `REPEATABLE READ, READ ONLY` snapshot. Before this, an
+      import that committed mid-export could leave a version without its artifact.
+    - A stream error or `ORIGINAL_CORRUPT` while exporting an original used to raise an uncaught
+      `'error'`, which crashed the worker and left the export hanging. It now fails the export
+      cleanly, and the CLI deletes the partial file.
+    - In `skip_existing` mode, an id taken by another workspace maps to a deterministic
+      per-workspace id (`restore:{ws}:{id}`). A re-run therefore skips instead of duplicating.
+    - Existing artifacts get the versions they lack. Version-number conflicts are reported as
+      failed.
+    - Originals that already have rows are re-verified and re-written if storage lost them
+      (`repaired`).
+    - Archive filenames are truncated by code point and lone surrogates are replaced. A
+      200-character name ending in an emoji used to make the archive unrestorable.
+    - Re-extraction uses the import rule for `processing_status`.
+    - Id lookups are chunked or done with joins, staying under Postgres's 65,535-parameter
+      limit.
+    - Tests: `tests/integration/backup/restore-edges.test.ts`. All 5 fail on the pre-fix code.
+
 **Not done or not verified**
 
 - Preview files are stored but **not yet served**. The preview origin route (`/p/:token/*`) is
   P1B-PREVIEW.
-- No export, restore or integrity job yet (P1A-EXPORT, P1A-RESTORE, P1A-INTEGRITY).
+- No integrity job yet (P1A-INTEGRITY). Restore is CLI-only (no `/api/restores` or UI yet).
+- Export archives are unencrypted (P1A-ENC). The UI and CLI warn about this.
 - HTML extraction can join adjacent inline labels without a space. This is cosmetic.
 - The S3 adapter has not been verified against real R2.
 
@@ -167,34 +238,27 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 ## 4. Next steps (exact)
 
-**PR 7: P1A-EXPORT + P1A-RESTORE + P1A-INTEGRITY** (BACKUP_RECOVERY.md):
+**PR 8: P1A-INTEGRITY plus restore through the API and UI** (BACKUP_RECOVERY.md §6–7):
 
-1. Schema: `export_runs`, `restore_runs`, `integrity_checks`.
-2. `src/modules/backup/format.ts`:
-   - Zod schemas for manifest v1 and metadata files
-   - `checksums.sha256` writer and parser (GNU format)
-   - a `README.txt` template
-3. `export.ts` (job `export.create`): stream rows and originals into a ZIP (yazl) at
-   `storageKeys.export`, plus `export_runs` bookkeeping, audit, and
-   `GET /api/exports/:id/download` (signed URL).
-4. `restore.ts` (job `restore.run`):
-   - Use SafeZip with limits suitable for large archives.
-   - Verify every checksum **before writing anything**.
-   - Restore originals (content-addressed, dedup), then rows in dependency order, keeping IDs
-     unless they conflict (`skip_existing` | `copy`).
-   - Re-extract each version (reuse the import extraction code via a `restore.reextract_version`
-     job), and fall back to the archived normalized markdown.
-   - Write a report.
-5. CLI: `pnpm export --workspace <slug> --out <file>` and
-   `pnpm restore <file> --workspace <slug> [--mode]`.
-6. Integrity job: re-hash originals, update `storage_status` and `integrity_verified_at`, write
-   an `integrity_checks` row; show the last check on `/import`.
-7. Tests:
-   - round trip into a fresh schema and storage
-   - `skip_existing` idempotency
-   - `copy` mode
-   - a tampered archive aborts with `CHECKSUM_MISMATCH`
-   - `sha256sum -c` compatibility of `checksums.sha256`
+1. `src/modules/backup/integrity.ts`, job `integrity.check` (one per workspace; idempotency key
+   per run):
+   - stream every `file_assets` object and re-hash it
+   - `storage_status` → `stored`, `missing` or `corrupt`, plus `integrity_verified_at`. Both
+     columns are allowed by the immutability trigger.
+   - write an `integrity_checks` row with the counts and failing IDs
+2. `POST /api/integrity-checks` and `GET /api/integrity-checks/latest`. Show "last verified" and
+   the counts on `/import`. Weekly schedule entry in `src/worker/scheduler.ts`.
+3. Restore over HTTP:
+   - `POST /api/restores` `{filename, size}` → a `restore_runs` row plus a signed upload to
+     `storageKeys.restoreUpload`
+   - `POST /api/restores/:id/start` `{mode}` → job `restore.run`, which downloads to a temp
+     file and calls `restoreArchive`
+   - `GET /api/restores/:id` → the report
+   - UI: upload an archive on `/import`, choose a mode, show the report
+4. Tests:
+   - integrity finds a deleted object (`missing`) and a modified local file (`corrupt`)
+   - restore over HTTP end to end
+5. Docs: API_CONTRACT status, BACKUP_RECOVERY runbook step 6, task.md, ROADMAP, this file.
 
 **Then Phase 1B:**
 

@@ -29,7 +29,11 @@
     "db:migrate": "tsx --env-file-if-exists=.env.local scripts/db-migrate.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "admin:create": "tsx --env-file-if-exists=.env.local scripts/admin-create.ts",
-    "admin:create:prod": "node dist/admin-create.mjs"
+    "admin:create:prod": "node dist/admin-create.mjs",
+    "backup:export": "tsx --env-file-if-exists=.env.local scripts/backup-export.ts",
+    "backup:export:prod": "node dist/backup-export.mjs",
+    "backup:restore": "tsx --env-file-if-exists=.env.local scripts/backup-restore.ts",
+    "backup:restore:prod": "node dist/backup-restore.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1150.0",

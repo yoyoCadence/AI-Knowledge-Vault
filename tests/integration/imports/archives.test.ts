@@ -442,7 +442,7 @@ describe("maintenance (P1A-RECOVERY)", () => {
     const first = await enqueueDueMaintenance(db, now);
     const second = await enqueueDueMaintenance(db, now);
     expect(second).toBe(0);
-    expect(first).toBeLessThanOrEqual(1);
+    expect(first).toBeLessThanOrEqual(2); // import + export cleanup
     const scheduled = await db
       .select()
       .from(processingJobs)

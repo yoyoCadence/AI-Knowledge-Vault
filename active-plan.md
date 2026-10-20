@@ -4,10 +4,10 @@ _Last updated: 2026-10-20 by the implementing agent._
 
 ## Current focus
 
-**PR 6 (this branch): hardening.** Fixes the 14 review findings left open on PRs 1–4 (see
-`docs/HANDOFF.md` §1).
+**PR 7 (this branch): P1A-EXPORT + P1A-RESTORE core.** Portable export (job, API, UI, CLI),
+restore (CLI) with re-extraction, and the verified round trip.
 
-**Next: PR 7, P1A-EXPORT + P1A-RESTORE + P1A-INTEGRITY.** The exact steps are in
+**Next: PR 8, P1A-INTEGRITY plus restore through the API and UI.** The exact steps are in
 `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
@@ -43,7 +43,7 @@ findings handled. If the review bot is unavailable, run an independent review fi
    - security tests (traversal, bomb, symlink)
 5. ✅ P1A import UI: dropzone, progress and report, plus the library grid and detail page (PR 5).
    - ✅ Hardening (PR 6): the review findings on PRs 1–4.
-6. 🚧 P1A export and restore (PR 7):
+6. 🚧 P1A export and restore (PR 7 ✅ export + restore core; PR 8 integrity + restore UI):
    - format v1, export job, restore job, CLI
    - integrity check
    - round-trip and tamper tests
