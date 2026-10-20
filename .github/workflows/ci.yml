@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  verify:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: vault
+          POSTGRES_PASSWORD: vault
+          POSTGRES_DB: vault_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vault -d vault_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL_TEST: postgres://vault:vault@127.0.0.1:5432/vault_test
+      S3_TEST_ENDPOINT: http://127.0.0.1:5055
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Start S3-compatible emulator (moto) for storage adapter tests
+        run: |
+          python3 -m pip install --quiet "moto[server]"
+          nohup moto_server -H 127.0.0.1 -p 5055 > moto.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:5055/ >/dev/null && break; sleep 1; done
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit + integration tests
+        run: pnpm test
+
+      - name: Build web
+        run: pnpm build
+        env:
+          # Build-time placeholders only; runtime secrets are never needed to compile.
+          APP_ORIGIN: http://localhost:3000
+          PREVIEW_ORIGIN: http://127.0.0.1:3000
+
+      - name: Build worker + CLI bundles
+        run: pnpm build:node
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build image (web + worker + migrate)
+        run: docker build --tag ai-knowledge-vault:ci .
+      - name: Worker bundle starts and exits on invalid config
+        run: |
+          set +e
+          docker run --rm ai-knowledge-vault:ci node dist/worker.mjs > out.log 2>&1
+          code=$?
+          cat out.log
+          test "$code" -ne 0 && grep -q "Invalid environment configuration" out.log

@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+/* Class-based dark mode driven by next-themes (`<html class="dark">`). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens. Neutral, content-first palette ("Modern Personal Knowledge Library").
+ * Colors are OKLCH; components reference semantic tokens only.
+ */
+:root {
+  --background: oklch(0.99 0.002 250);
+  --foreground: oklch(0.21 0.01 260);
+  --surface: oklch(1 0 0);
+  --surface-muted: oklch(0.97 0.004 250);
+  --muted-foreground: oklch(0.5 0.015 260);
+  --border: oklch(0.91 0.006 250);
+  --border-strong: oklch(0.84 0.008 250);
+  --primary: oklch(0.45 0.13 255);
+  --primary-foreground: oklch(0.99 0 0);
+  --accent: oklch(0.95 0.02 255);
+  --accent-foreground: oklch(0.35 0.11 255);
+  --success: oklch(0.55 0.13 150);
+  --warning: oklch(0.7 0.14 75);
+  --danger: oklch(0.55 0.19 25);
+  --ring: oklch(0.6 0.13 255);
+  --radius: 0.625rem;
+}
+
+.dark {
+  --background: oklch(0.17 0.006 260);
+  --foreground: oklch(0.94 0.004 250);
+  --surface: oklch(0.21 0.007 260);
+  --surface-muted: oklch(0.24 0.008 260);
+  --muted-foreground: oklch(0.7 0.012 255);
+  --border: oklch(0.3 0.008 260);
+  --border-strong: oklch(0.38 0.01 260);
+  --primary: oklch(0.72 0.12 255);
+  --primary-foreground: oklch(0.18 0.02 260);
+  --accent: oklch(0.28 0.04 255);
+  --accent-foreground: oklch(0.86 0.06 255);
+  --success: oklch(0.72 0.14 150);
+  --warning: oklch(0.8 0.14 80);
+  --danger: oklch(0.7 0.17 25);
+  --ring: oklch(0.72 0.12 255);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  /* System fonts only: no runtime dependency on a font CDN (product principle P-9). */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC",
+    "Microsoft JhengHei", "Hiragino Sans", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

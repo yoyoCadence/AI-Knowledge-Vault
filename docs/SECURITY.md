@@ -1,0 +1,196 @@
+# Security
+
+## 1. Assets
+
+| Asset                                    | Sensitivity                                    | Notes                                                        |
+| ---------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| Original research files                  | High (private research, possibly confidential) | Immutable, private by default                                |
+| Extracted text, notes                    | High                                           | Same protection as originals                                 |
+| Account credentials, sessions            | Critical                                       | scrypt hashes and session tokens in Postgres; never exported |
+| Storage and DB credentials, auth secrets | Critical                                       | Server-side env only                                         |
+| Share-link tokens                        | Medium                                         | Grant read of one artifact; only hashes stored               |
+| Audit logs                               | Medium                                         | Integrity matters for forensics                              |
+
+## 2. Threat model (STRIDE summary)
+
+| Threat                 | Example                                                                         | Mitigations                                                                                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Spoofing               | Credential stuffing on login                                                    | Rate limiting (database-backed), no public sign-up, generic error messages, scrypt hashing, session rotation on login                                             |
+| Tampering              | Overwrite an original via a crafted upload or retry                             | Content-addressed keys, conditional writes, DB trigger on `file_assets`, server-side hash verification                                                            |
+| Repudiation            | "I never shared that"                                                           | `audit_logs` for share/visibility/export/restore/download events                                                                                                  |
+| Information disclosure | IDOR on `/api/artifacts/:id`; private items in search; preview stealing cookies | Workspace-scoped queries in every service; 404 (not 403) for objects outside the scope; search filters by workspace; preview on a separate origin without cookies |
+| Denial of service      | Zip bomb, huge PDF, 10k-entry ZIP                                               | Streaming limits (IMPORT_PIPELINE §4), job timeouts, bounded concurrency, upload size limits                                                                      |
+| Elevation of privilege | Script in imported HTML acting on the main origin; prompt injection (Phase 2)   | Script-free preview on an isolated origin; reading mode never renders raw HTML; retrieved text is treated as data in AI prompts                                   |
+
+## 3. Trust boundaries
+
+```
+[Internet] ──TLS──▶ [web: APP_ORIGIN]  ← authenticated user (cookie session)
+[Internet] ──TLS──▶ [web: PREVIEW_ORIGIN] ← anyone holding a valid preview token; NEVER cookies
+[Browser]  ──signed PUT──▶ [Object storage] ← one key, one size, 15-minute TTL
+[web/worker] ──▶ [Postgres], [Object storage] ← server secrets
+[worker] ──▶ untrusted file bytes (parsing only; never executed)
+[Phase 2] [worker/web] ──▶ [AI provider] ← only content allowed by the sensitivity policy
+```
+
+Untrusted inputs include:
+
+- every uploaded byte
+- filenames, ZIP entry names, and HTML/PDF metadata
+- share tokens and preview tokens (verified with HMAC and constant-time compare)
+- query strings
+- `Host`/`Origin` headers (compared against configured origins)
+
+## 4. Upload security
+
+1. Declaration is validated with Zod:
+   - The extension must be on the allow-list.
+   - `declared_size ≤ IMPORT_MAX_FILE_BYTES` (default 200 MiB).
+   - The filename is sanitized: NFC; control characters, `/`, `\` and NUL removed; at most
+     255 UTF-8 bytes. The original name is kept for display only.
+2. The signed upload URL binds the method (PUT), the exact key, `Content-Length` (S3
+   presign signs it) and a 15-minute expiry. The local adapter verifies an HMAC token with
+   the same binding plus a streamed byte limit.
+3. The worker re-verifies the actual size, the magic bytes and the hash. It never trusts the
+   client MIME type.
+4. Staging and originals are separate key prefixes. Staging is deleted after processing.
+5. Zip-specific controls are in IMPORT_PIPELINE §4.
+6. Images are decoded by sharp with `limitInputPixels` (default 100 MP) to stop
+   decompression-bomb images.
+7. PDF parsing runs with a page cap (`PDF_MAX_PAGES`, default 2,000) and the item timeout.
+   JavaScript inside PDFs is never executed, because pdf.js text extraction does not run
+   scripts.
+
+## 5. Preview isolation (FR-PRV-2, ADR-007)
+
+Layers:
+
+1. **Separate origin.** `PREVIEW_ORIGIN` differs from `APP_ORIGIN` in host. In production
+   it should also differ in registrable domain (eTLD+1), so "same-site" cookie semantics
+   do not apply.
+2. **Host routing.** `proxy.ts` refuses everything except `/p/*` on the preview host
+   (returns 404), and refuses `/p/*` on the app host.
+3. **No ambient credentials.** Auth cookies are host-only (no `Domain` attribute), so they
+   are never sent to the preview host. Preview access uses a path token:
+   `base64url(payload).base64url(HMAC-SHA256(PREVIEW_TOKEN_SECRET, payload))`. The payload
+   is `{v: versionId, w: workspaceId, s: scope, e: expiry}`. TTL is 15 minutes for owners;
+   for share links it is the shorter of the link expiry and 1 hour, re-issued per page view.
+4. **Response headers:**
+   ```
+   Content-Security-Policy: default-src 'none'; script-src 'none'; object-src 'none';
+     style-src <preview-origin> 'unsafe-inline'; img-src <preview-origin> data: blob:;
+     font-src <preview-origin> data:; media-src <preview-origin>; connect-src 'none';
+     frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none';
+     frame-ancestors <app-origin>; sandbox allow-same-origin
+   X-Content-Type-Options: nosniff
+   Referrer-Policy: no-referrer
+   Cross-Origin-Resource-Policy: cross-origin
+   Cache-Control: private, max-age=300
+   ```
+   PDFs are served with a CSP that omits `sandbox`, because the browser PDF viewer needs it,
+   but they stay on the preview origin.
+5. **iframe sandbox.** The embedding page uses `<iframe sandbox="" referrerpolicy="no-referrer">`:
+   no scripts, no same-origin, no top navigation, no forms, no popups.
+6. **Manifest lookup.** The requested path is normalized, then looked up in
+   `derived_assets(version, 'preview_file', path)`. A missing path returns 404. There is no
+   filesystem path join anywhere.
+7. **Content-Type.** It comes from our own extension map; uploaded headers are never used.
+   `.js` files are served as `text/plain`, which defeats any script execution even if CSP
+   failed.
+
+Reading mode renders our normalized Markdown with an allow-list renderer: no raw HTML
+passthrough, links get `rel="noopener noreferrer nofollow"`, and images point only to
+derived assets via the app proxy. `dangerouslySetInnerHTML` is banned by lint rule in
+`src/components/reader/**`.
+
+## 6. Authentication
+
+- Better Auth with email and password and no sign-up endpoint (`disableSignUp`). The admin is
+  created by `pnpm admin:create`, which reads the password from a prompt or the
+  `ADMIN_PASSWORD` env var (never from argv, which can leak through `ps`).
+- Password policy: minimum 12 characters, maximum 128.
+- Sessions:
+  - 7-day expiry, refreshed daily
+  - cookie `__Secure-vault.session_token` (production), `HttpOnly`, `Secure`, `SameSite=Lax`, host-only
+  - all sessions listed and revocable in Settings
+- Rate limits (database storage): sign-in 5 per 60 s per IP; other auth routes 30 per 60 s.
+- Login failures are recorded in `audit_logs` (no password, email hashed). Successes are
+  recorded with IP and UA.
+- Future: passkeys and TOTP through Better Auth plugins; OAuth only as an _additional_ method.
+
+## 7. Authorization
+
+- `Actor = { userId, workspaceId, role }` comes from the session and the membership row.
+- `can(actor, action)` is a role table: owner = all; editor = everything except
+  workspace/backup admin; viewer = read.
+- **Object-level rule:** every repository query includes `workspace_id = actor.workspaceId`,
+  and soft-deleted rows are excluded. Objects outside the scope return **404** with the same
+  body as truly missing objects, so existence is not leaked.
+- Public access paths (share links, public artifacts, preview tokens) go through
+  `modules/sharing`/`modules/preview` resolvers that return a **narrow capability**, for
+  example "may read extracted content of version X". The rest of the app's services are
+  never called with an anonymous actor.
+
+## 8. CSRF
+
+- Cookies use `SameSite=Lax`.
+- Every mutating `/api/*` handler (POST/PUT/PATCH/DELETE) runs `assertSameOrigin(request)`:
+  - `Origin` must equal `APP_ORIGIN`
+  - or, if `Origin` is absent, `Sec-Fetch-Site` must be `same-origin`
+  - otherwise the request fails with `403 CSRF_REJECTED`
+- Better Auth applies its own origin and fetch-metadata checks to `/api/auth/*`.
+- Mutating APIs accept only `application/json`, except storage upload routes, which are
+  token-authorized.
+
+## 9. Storage security
+
+- The R2 bucket is private, with no public bucket URL or r2.dev subdomain.
+- CORS on the bucket allows `PUT` and `GET` from `APP_ORIGIN` only (DEPLOYMENT.md).
+- Signed download URLs: 5-minute TTL, a single key, and
+  `response-content-disposition=attachment`. They are generated only after authorization.
+- Storage keys contain IDs and hashes but are **never** a security boundary. Every access is
+  authorized first.
+- R2 credentials are scoped to a single bucket with Object Read & Write, never account-wide.
+
+## 10. Secrets
+
+- These live only in env or a platform secret store: `BETTER_AUTH_SECRET`,
+  `PREVIEW_TOKEN_SECRET`, `LOCAL_STORAGE_SIGNING_SECRET`, `DATABASE_URL` and `S3_*`.
+- Each secret must be ≥ 32 characters (validated at startup).
+- `.env*` files are git-ignored. `.env.example` contains only placeholders.
+- Pino redaction covers secrets, and the env validation error output prints variable names,
+  never values.
+- Exports exclude `users` password hashes, `sessions`, `auth_accounts`,
+  `auth_verifications`, `auth_rate_limits` and share token hashes (FR-BAK-2).
+
+## 11. Input validation and injection
+
+- **Zod** validates every request body and query.
+- **SQL:** Drizzle parameterizes everything. Raw SQL fragments use the `sql` template with
+  bound parameters only. `sql.raw` is banned outside migrations.
+- **XSS:** React escapes by default. There is no raw HTML in the app origin, and search
+  snippets are built as text segments, not HTML strings.
+- **Path traversal:** storage keys are built only by `storageKeys.*` helpers from validated
+  UUIDs and hashes. The local adapter resolves the key under its root and asserts
+  containment.
+- **SSRF:** there is no server-side URL fetching in Phase 1. Future URL Import must use an
+  allow-list resolver that blocks private IP ranges after DNS resolution, plus redirect
+  limits.
+
+## 12. Privacy rules
+
+- Private artifacts never appear in public endpoints. There is no public search in Phase 1.
+- `unlisted` pages send `X-Robots-Tag: noindex, nofollow` and are absent from any sitemap.
+  There is no sitemap in Phase 1.
+- Thumbnails and preview files are served only through authorized routes or preview tokens.
+- Logs never contain document text, filenames with a `sensitivity = restricted` flag, or
+  tokens.
+- `restricted` content is never sent to external AI providers by default (Phase 2 policy
+  gate).
+
+## 13. Security test inventory
+
+See `TEST_PLAN.md` §4: unauthorized read and download, share revocation, path traversal ZIP,
+zip bomb, symlink entry, malicious HTML (script-free preview headers), API permission bypass
+(cross-workspace IDs), private search leakage, expired signed URL, CSRF rejection, and
+`file_assets` immutability trigger.
