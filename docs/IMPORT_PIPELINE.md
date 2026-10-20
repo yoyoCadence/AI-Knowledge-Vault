@@ -44,6 +44,11 @@ treated as a ZIP. An `.html` that is really an executable is rejected.
 
 ## 3. ZIP classification
 
+> **Status:** designed. Implementation is P1A-ZIP, the next PR. Until then, ZIP uploads are
+> preserved byte-for-byte as `content_kind = archive_other` with extraction error
+> `ARCHIVE_ANALYSIS_UNAVAILABLE`. They become analysable through a reprocess job once the ZIP
+> pipeline lands.
+
 The worker builds an **inventory** (entry list with sizes) using the safe reader (§4), then
 classifies it:
 
@@ -145,14 +150,21 @@ ROADMAP P1B-VERSION-SPLIT.
 - **source_platform:** set to `claude_design` **only** when the Claude Design structure is
   detected (§3.1). Otherwise `null`. The user can set it at batch level
   (`options.sourcePlatform`).
-- **source_model:** only from explicit metadata (`<meta name="generator">`, or front-matter
-  `model:`). The detector never infers a model from style.
+- **source_model:** only from an explicit declaration: `<meta name="ai-model|llm-model|model">`
+  or front-matter `model:`/`ai_model:`. `<meta name="generator">` names the authoring software;
+  it is stored as `analysis.generator`, never as the model. The detector never infers a model
+  from style.
 - **research_date:** only from explicit metadata (front-matter `date:`, or
   `<meta name="date">`/`article:published_time`). Never the file mtime.
 - **reference_sources:** links inside a section whose heading matches
   `/^(sources?|references?|bibliography|來源|參考(資料|文獻)?|引用)$/i`, capped at 200.
 
 ## 8. Recovery and idempotency
+
+The import handler derives the version, artifact and derived-asset IDs deterministically from
+the import item ID (UUIDv5; see ADR-008 amendment). A retry after a crash therefore overwrites the
+same derived objects instead of leaving orphans, and the commit transaction re-checks the item
+status under a row lock, so two runs can never both commit.
 
 | Scenario                                                      | Mechanism                                                                                                                                                                                             |
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

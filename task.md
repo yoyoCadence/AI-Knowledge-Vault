@@ -22,12 +22,12 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 | ID                | Task                                                           | Status  |
 | ----------------- | -------------------------------------------------------------- | ------- |
 | P1A-AUTH          | Better Auth, admin CLI, login/logout, sessions, rate limit     | ✅      |
-| P1A-FILES         | Immutable originals, integrity, download                       | 📝 next |
-| P1A-IMPORT-API    | Batches/items API, signed upload, complete/retry/cancel        | 📝      |
-| P1A-IMPORT-WORKER | `import.process_item` pipeline                                 | 📝      |
-| P1A-EXTRACT       | HTML / Claude Design / MD / TXT / PDF / image extraction       | 📝      |
-| P1A-ZIP           | Safe ZIP reader, classification A/B/C/D, derived preview files | 📝      |
-| P1A-VERSION       | Version matching + suspected duplicates                        | 📝      |
+| P1A-FILES         | Immutable originals, integrity, download                       | ✅      |
+| P1A-IMPORT-API    | Batches/items API, signed upload, complete/retry/cancel        | ✅      |
+| P1A-IMPORT-WORKER | `import.process_item` pipeline                                 | ✅      |
+| P1A-EXTRACT       | HTML / Claude Design / MD / TXT / PDF / image extraction       | ✅      |
+| P1A-ZIP           | Safe ZIP reader, classification A/B/C/D, derived preview files | 📝 next |
+| P1A-VERSION       | Version matching + suspected duplicates                        | ✅      |
 | P1A-RECOVERY      | Staging cleanup, expiry, reconciliation                        | 📝      |
 | P1A-IMPORT-UI     | Upload UI with progress and report                             | 📝      |
 | P1A-EXPORT        | Portable export v1                                             | 📝      |

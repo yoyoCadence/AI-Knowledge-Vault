@@ -66,6 +66,8 @@ const EnvSchema = z
     S3_FORCE_PATH_STYLE: booleanFlag,
 
     IMPORT_MAX_FILE_BYTES: positiveInt(200 * MiB),
+    /** Larger files are preserved but not parsed (preservation never depends on parsing). */
+    EXTRACT_MAX_BYTES: positiveInt(50 * MiB),
     IMPORT_MAX_ITEMS_PER_BATCH: positiveInt(500),
     IMPORT_ITEM_TIMEOUT_MS: positiveInt(300_000),
     UPLOAD_URL_TTL_SECONDS: positiveInt(900),

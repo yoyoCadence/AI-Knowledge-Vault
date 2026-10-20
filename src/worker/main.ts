@@ -18,7 +18,7 @@ async function main(): Promise<void> {
     db: getDb(),
     storage: getStorage(),
     logger,
-    registry: buildJobRegistry(),
+    registry: buildJobRegistry(env),
     concurrency: env.WORKER_CONCURRENCY,
     leaseSeconds: env.JOB_LEASE_SECONDS,
     pollIntervalMs: env.WORKER_POLL_INTERVAL_MS,

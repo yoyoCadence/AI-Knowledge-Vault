@@ -13,7 +13,9 @@ but not yet created.
 3. Every user-data row carries `workspace_id` (FK → `workspaces`, `ON DELETE CASCADE`). This is the
    authorization boundary and the future multi-tenant boundary.
 4. Foreign keys are always declared. Delete semantics are explicit: `CASCADE` for owned children,
-   `SET NULL` for optional links, `RESTRICT` for anything that protects originals.
+   `SET NULL` for optional links, and `NO ACTION` for anything that protects originals. NO ACTION
+   refuses the delete like RESTRICT does, but is checked at statement end, so workspace cascades
+   still work.
 5. `file_assets` immutability is enforced by a trigger. `UPDATE` may change only
    `storage_status`, `integrity_verified_at` and `updated_at`.
 6. Large binaries never go into Postgres. Extracted text does, since PostgreSQL TOAST compresses it.
@@ -65,7 +67,7 @@ erDiagram
   artifacts ||--|{ artifact_versions : versions
   artifacts |o--o| artifact_versions : current_version
   artifact_versions ||--|{ artifact_files : contains
-  file_assets ||--o{ artifact_files : "referenced by (RESTRICT)"
+  file_assets ||--o{ artifact_files : "referenced by (NO ACTION)"
   artifact_versions ||--o{ derived_assets : derives
   artifact_versions ||--o{ extracted_documents : extracts
   extracted_documents ||--o{ document_sections : sections
@@ -166,7 +168,7 @@ Indexes:
 | workspace_id           | uuid                                               |                                                                                                                                               |
 | artifact_id            | uuid → artifacts CASCADE                           |                                                                                                                                               |
 | version_number         | int                                                | `unique(artifact_id, version_number)`                                                                                                         |
-| primary_file_id        | uuid → file_assets RESTRICT                        | the original uploaded file (ZIP, HTML, PDF …)                                                                                                 |
+| primary_file_id        | uuid → file_assets NO ACTION                       | the original uploaded file (ZIP, HTML, PDF …)                                                                                                 |
 | content_kind           | text check                                         | `html_document`, `claude_design_document`, `static_site`, `framework_project`, `pdf`, `markdown`, `text`, `image`, `archive_other`, `unknown` |
 | preview_kind           | text check                                         | `static_html` (A), `static_site` (B), `framework_source` (C), `unsupported` (D), `pdf`, `image`, `text_only`                                  |
 | preview_status         | text check ∈ {pending, ready, unavailable, failed} |                                                                                                                                               |
@@ -207,7 +209,8 @@ Indexes:
 Trigger `file_assets_immutable` raises an exception if `UPDATE` touches any other column.
 
 **artifact_files** (P1A): `id`, `artifact_version_id → artifact_versions CASCADE`,
-`file_asset_id → file_assets RESTRICT`, `role ∈ {original, attachment, cover}`,
+`file_asset_id → file_assets NO ACTION` (refuses deleting a referenced original but allows
+workspace cascades), `role ∈ {original, attachment, cover}`,
 `display_name text`, `created_at`. `unique(artifact_version_id, file_asset_id, role)`.
 
 **derived_assets** (P1A): `id`, `workspace_id`, `artifact_version_id → artifact_versions CASCADE`,

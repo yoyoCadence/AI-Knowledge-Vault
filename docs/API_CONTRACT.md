@@ -48,13 +48,13 @@ REST-oriented JSON API served by Next.js route handlers under `/api`. Status col
 
 | Method | Path                                           | Body / Query                                                                       | Response                                                                                                           | Status |
 | ------ | ---------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------ |
-| POST   | `/api/imports`                                 | `{projectId?, collectionId?, options?: {autoVersionByFilename?, sourcePlatform?}}` | `201 {batch}`                                                                                                      | 📝     |
-| GET    | `/api/imports`                                 | `?limit&cursor`                                                                    | `{items: batchSummary[]}`                                                                                          | 📝     |
-| GET    | `/api/imports/:batchId`                        | —                                                                                  | `{batch, counts: {total, awaiting_upload, queued, processing, succeeded, duplicate, failed, …}, items: item[]}`    | 📝     |
-| POST   | `/api/imports/:batchId/items`                  | `{filename, size, mimeType?, clientKey?, targetArtifactId?}`                       | `201 {item, upload: {url, method: "PUT", headers, expiresAt}}` (idempotent on `clientKey`: `200` with a fresh URL) | 📝     |
-| POST   | `/api/imports/:batchId/items/:itemId/complete` | —                                                                                  | `202 {item}` (idempotent)                                                                                          | 📝     |
-| POST   | `/api/imports/:batchId/items/:itemId/retry`    | —                                                                                  | `202 {item}`; `409 NOT_RETRYABLE` if not failed or the staging object is gone                                      | 📝     |
-| POST   | `/api/imports/:batchId/items/:itemId/cancel`   | —                                                                                  | `200 {item}`                                                                                                       | 📝     |
+| POST   | `/api/imports`                                 | `{projectId?, collectionId?, options?: {autoVersionByFilename?, sourcePlatform?}}` | `201 {batch}`                                                                                                      | ✅     |
+| GET    | `/api/imports`                                 | `?limit&cursor`                                                                    | `{items: batchSummary[]}`                                                                                          | ✅     |
+| GET    | `/api/imports/:batchId`                        | —                                                                                  | `{batch, counts: {total, awaiting_upload, queued, processing, succeeded, duplicate, failed, …}, items: item[]}`    | ✅     |
+| POST   | `/api/imports/:batchId/items`                  | `{filename, size, mimeType?, clientKey?, targetArtifactId?}`                       | `201 {item, upload: {url, method: "PUT", headers, expiresAt}}` (idempotent on `clientKey`: `200` with a fresh URL) | ✅     |
+| POST   | `/api/imports/:batchId/items/:itemId/complete` | —                                                                                  | `202 {item}` (idempotent)                                                                                          | ✅     |
+| POST   | `/api/imports/:batchId/items/:itemId/retry`    | —                                                                                  | `202 {item}`; `409 NOT_RETRYABLE` if not failed or the staging object is gone                                      | ✅     |
+| POST   | `/api/imports/:batchId/items/:itemId/cancel`   | —                                                                                  | `200 {item}`                                                                                                       | ✅     |
 
 The spec's `POST /api/imports/:id/upload-url` is implemented as item creation (one URL per
 declared file), which makes per-file status and retry addressable.
@@ -63,15 +63,15 @@ declared file), which makes per-file status and retry addressable.
 
 | Method | Path                                                   | Description                                                                                                                 | Status  |
 | ------ | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- | ------- |
-| GET    | `/api/artifacts`                                       | `?q&projectId&collectionId&tag&sourceModel&kind&from&to&sort=(created                                                       | updated | title)&limit&cursor` → cards | 📝  |
-| GET    | `/api/artifacts/:id`                                   | detail (current version, versions summary, tags, project, source metadata)                                                  | 📝      |
+| GET    | `/api/artifacts`                                       | `?q&projectId&collectionId&tag&sourceModel&kind&from&to&sort=(created                                                       | updated | title)&limit&cursor` → cards | ✅  |
+| GET    | `/api/artifacts/:id`                                   | detail (current version, versions summary, tags, project, source metadata)                                                  | ✅      |
 | PATCH  | `/api/artifacts/:id`                                   | `{title?, description?, projectId?, visibility?, sensitivity?, reviewStatus?}` (A on visibility/sensitivity)                | 📝      |
 | DELETE | `/api/artifacts/:id`                                   | soft delete (A)                                                                                                             | 📝      |
 | POST   | `/api/artifacts/:id/restore`                           | undo soft delete (A)                                                                                                        | 📝      |
 | GET    | `/api/artifacts/:id/versions`                          | list                                                                                                                        | 📝      |
 | GET    | `/api/artifacts/:id/versions/:versionId`               | version detail incl. source metadata, analysis, extraction status                                                           | 📝      |
 | PATCH  | `/api/artifacts/:id/versions/:versionId`               | source metadata (`sourcePlatform`, `sourceModel`, `originalPrompt`, `sourceUrl`, `researchDate`, `author`, `changeSummary`) | 📝      |
-| GET    | `/api/artifacts/:id/versions/:versionId/original`      | 302 → signed download URL (5 min). Audited                                                                                  | 📝      |
+| GET    | `/api/artifacts/:id/versions/:versionId/original`      | 302 → signed download URL (5 min). Audited                                                                                  | ✅      |
 | GET    | `/api/artifacts/:id/versions/:versionId/content`       | normalized markdown + sections (reading mode)                                                                               | 📝      |
 | GET    | `/api/artifacts/:id/thumbnail`                         | image bytes (authorized)                                                                                                    | 📝      |
 | POST   | `/api/artifacts/:id/versions/:versionId/preview-token` | `{url, expiresAt}` for the preview origin                                                                                   | 📝      |
@@ -126,8 +126,8 @@ from imports. A metadata-only artifact type can be added later if needed.
 
 | Method | Path                                 | Description                                                               | Status |
 | ------ | ------------------------------------ | ------------------------------------------------------------------------- | ------ |
-| PUT    | `/api/storage/local/upload?token=`   | HMAC token bound to key, size and expiry; streams to disk with a byte cap | 📝     |
-| GET    | `/api/storage/local/download?token=` | HMAC token bound to key and expiry                                        | 📝     |
+| PUT    | `/api/storage/local/upload?token=`   | HMAC token bound to key, size and expiry; streams to disk with a byte cap | ✅     |
+| GET    | `/api/storage/local/download?token=` | HMAC token bound to key and expiry                                        | ✅     |
 
 Both return 404 when `STORAGE_DRIVER != local`.
 

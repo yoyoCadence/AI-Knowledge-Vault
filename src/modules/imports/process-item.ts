@@ -1,0 +1,570 @@
+import { createReadStream } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
+import { v5 as uuidv5 } from "uuid";
+import type { DbExecutor } from "@/infrastructure/database/client";
+import {
+  artifactFiles,
+  artifacts,
+  artifactVersions,
+  derivedAssets,
+  documentSections,
+  extractedDocuments,
+  fileAssets,
+  importBatches,
+  importItems,
+  type MatchReason,
+} from "@/infrastructure/database/schema";
+import { StorageObjectNotFoundError, storageKeys } from "@/infrastructure/storage";
+import { AppError } from "@/lib/errors";
+import { identityKeyFor, isDistinctiveKey } from "@/modules/artifacts";
+import {
+  contentHash,
+  extractSingleFile,
+  fileExtension,
+  filenameStem,
+  sniffFormat,
+  THUMBNAIL_GENERATOR,
+  THUMBNAIL_GENERATOR_VERSION,
+  type Classification,
+  type ExtractionLimits,
+  type ExtractionResult,
+  type SingleFileOutcome,
+} from "@/modules/extraction";
+import { downloadToTempFile } from "@/modules/files/staging";
+import { sha256OfBuffer } from "@/modules/files/hash";
+import { storeOriginal } from "@/modules/files/originals";
+import type { JobContext, JobDefinition } from "@/modules/jobs";
+import { isTerminal } from "./state";
+import { IMPORT_JOB_TYPE, refreshBatchStatus, transitionItem } from "./service";
+
+/**
+ * Worker handler for `import.process_item` (IMPORT_PIPELINE §1 stages 7–18).
+ *
+ * Idempotency (ADR-005: handlers must tolerate re-runs):
+ * - The item row is the source of truth: terminal items are skipped; the commit transaction
+ *   re-checks the status under a row lock, so two runs can never both commit.
+ * - Originals are content-addressed with conditional writes (re-storing is a verified no-op).
+ * - Version, artifact and derived-asset ids are derived deterministically from the item id
+ *   (UUIDv5), so a crashed attempt's derived objects are overwritten — not duplicated — by the retry.
+ * - Same-hash detection runs under a per-(workspace, sha256) advisory lock.
+ */
+
+export interface ProcessLimits extends ExtractionLimits {
+  maxFileBytes: number;
+}
+
+const ID_NAMESPACE = "4f6f1c1e-3b7a-5d2e-9c1a-6b2f0e8d7a10";
+export const deterministicId = (name: string) => uuidv5(name, ID_NAMESPACE);
+
+const SINGLE_HTML_PREVIEW_GENERATOR = "copy-original";
+
+type ItemRow = typeof importItems.$inferSelect;
+
+/** Live (non-deleted) usage of an original with this content in the workspace, if any. */
+async function findLiveUsage(db: DbExecutor, workspaceId: string, sha256: string) {
+  const [row] = await db
+    .select({
+      fileAssetId: fileAssets.id,
+      versionId: artifactVersions.id,
+      artifactId: artifacts.id,
+    })
+    .from(fileAssets)
+    .innerJoin(
+      artifactFiles,
+      and(eq(artifactFiles.fileAssetId, fileAssets.id), eq(artifactFiles.role, "original")),
+    )
+    .innerJoin(artifactVersions, eq(artifactVersions.id, artifactFiles.artifactVersionId))
+    .innerJoin(
+      artifacts,
+      and(eq(artifacts.id, artifactVersions.artifactId), isNull(artifacts.deletedAt)),
+    )
+    .where(and(eq(fileAssets.workspaceId, workspaceId), eq(fileAssets.sha256, sha256)))
+    .orderBy(desc(artifactVersions.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Version matching (IMPORT_PIPELINE §6): explicit target, else a unique distinctive filename match. */
+async function resolveTarget(
+  db: DbExecutor,
+  item: ItemRow,
+  identityKey: string,
+  autoVersion: boolean,
+): Promise<
+  | { artifactId: string; reason: MatchReason }
+  | { artifactId: null; reason: null; ambiguous: boolean }
+> {
+  if (item.targetArtifactId) {
+    const [target] = await db
+      .select({ id: artifacts.id })
+      .from(artifacts)
+      .where(
+        and(
+          eq(artifacts.id, item.targetArtifactId),
+          eq(artifacts.workspaceId, item.workspaceId),
+          isNull(artifacts.deletedAt),
+        ),
+      );
+    if (!target) throw new AppError("NOT_FOUND", "The target artifact no longer exists");
+    return { artifactId: target.id, reason: "explicit_target" };
+  }
+  if (!autoVersion || !isDistinctiveKey(identityKey))
+    return { artifactId: null, reason: null, ambiguous: false };
+  const matches = await db
+    .select({ id: artifacts.id })
+    .from(artifacts)
+    .where(
+      and(
+        eq(artifacts.workspaceId, item.workspaceId),
+        eq(artifacts.identityKey, identityKey),
+        isNull(artifacts.deletedAt),
+      ),
+    )
+    .limit(2);
+  if (matches.length === 1) return { artifactId: matches[0]!.id, reason: "filename_stem" };
+  return { artifactId: null, reason: null, ambiguous: matches.length > 1 };
+}
+
+function summarize(extraction: ExtractionResult, description: string | undefined): string | null {
+  if (description) return description.slice(0, 280);
+  const lines = extraction.plainText.split("\n").map((line) => line.trim());
+  const first = lines.find((line) => line.length >= 20 && line !== extraction.title);
+  if (!first) return null;
+  return first.length > 280 ? `${first.slice(0, 279)}…` : first;
+}
+
+/** Placeholder until the ZIP pipeline (P1A-ZIP) lands: the original is preserved, never parsed. */
+function archiveOutcome(stem: string): SingleFileOutcome {
+  const classification: Classification = {
+    contentKind: "archive_other",
+    previewKind: "unsupported",
+    previewEntryPath: null,
+    analysis: {},
+  };
+  return {
+    classification,
+    extraction: {
+      method: "archive",
+      version: 0,
+      status: "failed",
+      title: stem,
+      language: null,
+      plainText: "",
+      markdown: "",
+      sections: [],
+      metadata: {},
+      references: [],
+      warnings: [],
+      errorCode: "ARCHIVE_ANALYSIS_UNAVAILABLE",
+      errorMessage:
+        "ZIP analysis is not available yet; the original archive is preserved and can be reprocessed",
+    },
+  };
+}
+
+async function markDuplicate(
+  db: DbExecutor,
+  item: ItemRow,
+  usage: { fileAssetId: string; versionId: string; artifactId: string },
+  extra: { sha256: string; detectedType: string },
+) {
+  await transitionItem(db, item, "duplicate", {
+    outcome: "duplicate_file",
+    matchReason: "same_hash",
+    fileAssetId: usage.fileAssetId,
+    resultArtifactId: usage.artifactId,
+    resultVersionId: usage.versionId,
+    sha256: extra.sha256,
+    detectedType: extra.detectedType,
+    completedAt: new Date(),
+  });
+  await refreshBatchStatus(db, item.batchId);
+}
+
+export async function processImportItem(
+  ctx: JobContext,
+  limits: ProcessLimits,
+): Promise<Record<string, unknown>> {
+  const { db, storage, logger, signal } = ctx;
+  const itemId = String(ctx.job.payload.itemId ?? "");
+  const [initial] = await db.select().from(importItems).where(eq(importItems.id, itemId));
+  if (!initial) return { skipped: "missing_item" };
+  if (ctx.job.workspaceId && initial.workspaceId !== ctx.job.workspaceId) {
+    throw new AppError("FORBIDDEN", "job workspace does not match item workspace");
+  }
+  if (isTerminal(initial.status)) return { skipped: initial.status };
+
+  let item =
+    initial.status === "queued" ? await transitionItem(db, initial, "processing") : initial;
+  const [batch] = await db.select().from(importBatches).where(eq(importBatches.id, item.batchId));
+  if (!batch) return { skipped: "missing_batch" };
+
+  let staged;
+  try {
+    staged = await downloadToTempFile(storage, item.stagingKey, {
+      maxBytes: limits.maxFileBytes,
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof StorageObjectNotFoundError) {
+      throw new AppError("UPLOAD_INCOMPLETE", "The uploaded file is missing from staging storage");
+    }
+    throw error;
+  }
+
+  try {
+    if (staged.size !== item.declaredSize) {
+      throw new AppError(
+        "SIZE_MISMATCH",
+        `received ${staged.size} bytes but ${item.declaredSize} were declared`,
+      );
+    }
+    const sniff = sniffFormat(staged.head, item.originalFilename);
+    if (sniff.format === "unknown") {
+      throw new AppError("UNSUPPORTED_FILE_TYPE", "The file content is not a supported format");
+    }
+    const warnings: string[] = [];
+    const extension = fileExtension(item.originalFilename);
+    const expectedByExtension: Record<string, string[]> = {
+      zip: ["zip"],
+      pdf: ["pdf"],
+      png: ["png"],
+      jpg: ["jpeg"],
+      jpeg: ["jpeg"],
+      webp: ["webp"],
+    };
+    if (expectedByExtension[extension] && !expectedByExtension[extension]!.includes(sniff.format)) {
+      warnings.push(
+        `CONTENT_TYPE_MISMATCH: .${extension} file contains ${sniff.format} data; treated as ${sniff.format}`,
+      );
+    }
+    const detectedType = sniff.format;
+
+    // Fast path: identical bytes already live in this workspace → nothing new to store.
+    const existingUsage = await findLiveUsage(db, item.workspaceId, staged.sha256);
+    if (existingUsage) {
+      await db.transaction(async (tx) => {
+        const [locked] = await tx
+          .select()
+          .from(importItems)
+          .where(eq(importItems.id, item.id))
+          .for("update");
+        if (!locked || locked.status !== "processing") return;
+        await markDuplicate(tx, locked, existingUsage, { sha256: staged.sha256, detectedType });
+      });
+      await storage.deleteObject(item.stagingKey).catch(() => undefined);
+      return { outcome: "duplicate_file", artifactId: existingUsage.artifactId };
+    }
+
+    const { storageKey } = await storeOriginal(storage, {
+      workspaceId: item.workspaceId,
+      sha256: staged.sha256,
+      size: staged.size,
+      mimeType: sniff.mimeType,
+      sourcePath: staged.path,
+    });
+
+    const bytes = staged.size <= limits.maxExtractBytes ? await readFile(staged.path) : null;
+    const outcome =
+      sniff.format === "zip"
+        ? archiveOutcome(filenameStem(item.originalFilename))
+        : await extractSingleFile({
+            bytes,
+            filename: item.originalFilename,
+            format: sniff.format,
+            limits,
+          });
+    signal.throwIfAborted();
+    const { extraction, classification } = outcome;
+    warnings.push(...extraction.warnings);
+
+    // Derived assets: written before the commit with deterministic keys (safe to overwrite on retry).
+    const versionId = deterministicId(`artifact-version:${item.id}`);
+    const derived: (typeof derivedAssets.$inferInsert)[] = [];
+    if (outcome.thumbnail) {
+      const id = deterministicId(`derived:${versionId}:thumbnail:`);
+      const key = storageKeys.derived(item.workspaceId, versionId, id);
+      await storage.putObject(key, outcome.thumbnail.bytes, {
+        contentType: outcome.thumbnail.mimeType,
+      });
+      derived.push({
+        id,
+        workspaceId: item.workspaceId,
+        artifactVersionId: versionId,
+        kind: "thumbnail",
+        path: "",
+        storageKey: key,
+        mimeType: outcome.thumbnail.mimeType,
+        byteSize: outcome.thumbnail.bytes.length,
+        sha256: sha256OfBuffer(outcome.thumbnail.bytes),
+        generator: THUMBNAIL_GENERATOR,
+        generatorVersion: THUMBNAIL_GENERATOR_VERSION,
+      });
+    }
+    if (classification.previewKind === "static_html" && classification.previewEntryPath) {
+      const path = classification.previewEntryPath;
+      const id = deterministicId(`derived:${versionId}:preview_file:${path}`);
+      const key = storageKeys.derived(item.workspaceId, versionId, id);
+      await storage.putObject(key, createReadStream(staged.path), {
+        contentType: "text/html",
+        contentLength: staged.size,
+      });
+      derived.push({
+        id,
+        workspaceId: item.workspaceId,
+        artifactVersionId: versionId,
+        kind: "preview_file",
+        path,
+        storageKey: key,
+        mimeType: "text/html",
+        byteSize: staged.size,
+        sha256: staged.sha256,
+        generator: SINGLE_HTML_PREVIEW_GENERATOR,
+        generatorVersion: 1,
+      });
+    }
+
+    const identityKey = identityKeyFor(item.originalFilename);
+    const textHash = extraction.plainText ? contentHash(extraction.plainText) : null;
+    const autoVersion = batch.options.autoVersionByFilename !== false;
+
+    const committed = await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`${item.workspaceId}:${staged.sha256}`}, 0))`,
+      );
+      const [locked] = await tx
+        .select()
+        .from(importItems)
+        .where(eq(importItems.id, item.id))
+        .for("update");
+      if (!locked || locked.status !== "processing")
+        return { skipped: locked?.status ?? "missing" } as const;
+      item = locked;
+
+      // Re-check under the lock: a concurrent item with the same bytes may have committed first.
+      const usage = await findLiveUsage(tx, item.workspaceId, staged.sha256);
+      if (usage) {
+        await markDuplicate(tx, item, usage, { sha256: staged.sha256, detectedType });
+        return {
+          outcome: "duplicate_file",
+          artifactId: usage.artifactId,
+          versionId: usage.versionId,
+        } as const;
+      }
+
+      await tx
+        .insert(fileAssets)
+        .values({
+          workspaceId: item.workspaceId,
+          storageProvider: storage.provider,
+          storageKey,
+          originalFilename: item.originalFilename,
+          mimeType: sniff.mimeType,
+          byteSize: staged.size,
+          sha256: staged.sha256,
+          storageStatus: "stored",
+          integrityVerifiedAt: new Date(),
+          createdBy: batch.createdBy,
+        })
+        .onConflictDoNothing({ target: [fileAssets.workspaceId, fileAssets.sha256] });
+      const [asset] = await tx
+        .select({ id: fileAssets.id })
+        .from(fileAssets)
+        .where(
+          and(eq(fileAssets.workspaceId, item.workspaceId), eq(fileAssets.sha256, staged.sha256)),
+        );
+      if (!asset) throw new Error("file asset missing after upsert");
+
+      const target = await resolveTarget(tx, item, identityKey, autoVersion);
+      if (!target.artifactId && "ambiguous" in target && target.ambiguous) {
+        warnings.push(
+          "AMBIGUOUS_VERSION_MATCH: several artifacts share this filename; imported as a new artifact",
+        );
+      }
+
+      let artifactId: string;
+      let versionNumber: number;
+      if (target.artifactId) {
+        artifactId = target.artifactId;
+        await tx
+          .select({ id: artifacts.id })
+          .from(artifacts)
+          .where(eq(artifacts.id, artifactId))
+          .for("update");
+        const [{ max } = { max: 0 }] = await tx
+          .select({ max: sql<number>`coalesce(max(${artifactVersions.versionNumber}), 0)::int` })
+          .from(artifactVersions)
+          .where(eq(artifactVersions.artifactId, artifactId));
+        versionNumber = max + 1;
+      } else {
+        artifactId = deterministicId(`artifact:${item.id}`);
+        versionNumber = 1;
+        await tx.insert(artifacts).values({
+          id: artifactId,
+          workspaceId: item.workspaceId,
+          projectId: batch.targetProjectId,
+          title: (extraction.title ?? filenameStem(item.originalFilename)).slice(0, 500),
+          summary: summarize(extraction, extraction.metadata.description),
+          identityKey,
+          createdBy: batch.createdBy,
+        });
+      }
+
+      await tx.insert(artifactVersions).values({
+        id: versionId,
+        workspaceId: item.workspaceId,
+        artifactId,
+        versionNumber,
+        primaryFileId: asset.id,
+        contentKind: classification.contentKind,
+        previewKind: classification.previewKind,
+        previewStatus: classification.previewKind === "unsupported" ? "unavailable" : "ready",
+        previewEntryPath: classification.previewEntryPath,
+        processingStatus: extraction.status === "failed" ? "failed" : "ready",
+        contentHash: textHash,
+        sourcePlatform: extraction.metadata.sourcePlatform ?? batch.options.sourcePlatform ?? null,
+        sourceModel: extraction.metadata.sourceModel ?? null,
+        sourceUrl: extraction.metadata.sourceUrl ?? null,
+        researchDate: extraction.metadata.researchDate ?? null,
+        author: extraction.metadata.author ?? null,
+        referenceSources: extraction.references,
+        analysis: {
+          ...classification.analysis,
+          detectedFormat: sniff.format,
+          sniffedMime: sniff.mimeType,
+        },
+        importItemId: item.id,
+        createdBy: batch.createdBy,
+      });
+      await tx.insert(artifactFiles).values({
+        artifactVersionId: versionId,
+        fileAssetId: asset.id,
+        role: "original",
+        displayName: item.originalFilename,
+      });
+      if (derived.length > 0) await tx.insert(derivedAssets).values(derived);
+
+      const [document] = await tx
+        .insert(extractedDocuments)
+        .values({
+          workspaceId: item.workspaceId,
+          artifactVersionId: versionId,
+          extractionMethod: extraction.method,
+          extractionVersion: extraction.version,
+          status: extraction.status,
+          title: extraction.title,
+          language: extraction.language,
+          plainText: extraction.plainText,
+          normalizedMarkdown: extraction.markdown,
+          contentHash: textHash,
+          charCount: extraction.plainText.length,
+          warnings: extraction.warnings,
+          errorCode: extraction.errorCode ?? null,
+          errorMessage: extraction.errorMessage ?? null,
+        })
+        .returning({ id: extractedDocuments.id });
+      if (extraction.sections.length > 0) {
+        await tx.insert(documentSections).values(
+          extraction.sections.map((section) => ({
+            ...section,
+            extractedDocumentId: document!.id,
+          })),
+        );
+      }
+      await tx
+        .update(artifactVersions)
+        .set({ activeExtractionId: document!.id })
+        .where(eq(artifactVersions.id, versionId));
+      await tx
+        .update(artifacts)
+        .set({ currentVersionId: versionId })
+        .where(eq(artifacts.id, artifactId));
+
+      // FR-IMP-9: flag (never merge) other artifacts whose text is identical.
+      let suspectedDuplicateOf: string | null = null;
+      if (textHash) {
+        const [similar] = await tx
+          .select({ artifactId: artifactVersions.artifactId })
+          .from(artifactVersions)
+          .innerJoin(
+            artifacts,
+            and(eq(artifacts.id, artifactVersions.artifactId), isNull(artifacts.deletedAt)),
+          )
+          .where(
+            and(
+              eq(artifactVersions.workspaceId, item.workspaceId),
+              eq(artifactVersions.contentHash, textHash),
+              ne(artifactVersions.artifactId, artifactId),
+            ),
+          )
+          .limit(1);
+        if (similar) {
+          suspectedDuplicateOf = similar.artifactId;
+          warnings.push(
+            "SUSPECTED_DUPLICATE: another artifact has identical text content; not merged",
+          );
+        }
+      }
+
+      await transitionItem(tx, item, "succeeded", {
+        outcome: target.artifactId ? "new_version" : "new_artifact",
+        matchReason: target.reason,
+        fileAssetId: asset.id,
+        resultArtifactId: artifactId,
+        resultVersionId: versionId,
+        suspectedDuplicateOf,
+        sha256: staged.sha256,
+        detectedType,
+        warnings,
+        completedAt: new Date(),
+      });
+      await refreshBatchStatus(tx, item.batchId);
+      return {
+        outcome: target.artifactId ? "new_version" : "new_artifact",
+        artifactId,
+        versionId,
+        versionNumber,
+      } as const;
+    });
+
+    await storage.deleteObject(item.stagingKey).catch((error: unknown) => {
+      logger.warn({ err: error }, "staging cleanup failed; maintenance job will retry");
+    });
+    return { ...committed };
+  } finally {
+    await staged.cleanup();
+  }
+}
+
+/** Marks the item failed with a user-visible reason when its job fails permanently. */
+async function markItemFailed(
+  db: DbExecutor,
+  itemId: string,
+  failure: { code: string; message: string },
+) {
+  await db.transaction(async (tx) => {
+    const [item] = await tx
+      .select()
+      .from(importItems)
+      .where(eq(importItems.id, itemId))
+      .for("update");
+    if (!item || isTerminal(item.status)) return;
+    await transitionItem(tx, item, "failed", {
+      errorCode: failure.code,
+      errorMessage: failure.message.slice(0, 1000),
+      completedAt: new Date(),
+    });
+    await refreshBatchStatus(tx, item.batchId);
+  });
+}
+
+export function importJobDefinition(limits: ProcessLimits, timeoutMs: number): JobDefinition {
+  return {
+    type: IMPORT_JOB_TYPE,
+    timeoutMs,
+    handler: (ctx) => processImportItem(ctx, limits),
+    onFailed: ({ job, db, failure }) =>
+      markItemFailed(db, String(job.payload.itemId ?? ""), failure),
+  };
+}
