@@ -16,6 +16,7 @@ import { getStorage, storageKeys, type StorageAdapter } from "@/infrastructure/s
 import { newId } from "@/lib/ids";
 import {
   ABANDONED_RESTORE_AFTER_MS,
+  UPLOAD_REPLAY_WINDOW_MS,
   cleanupRestoreUploads,
   exportCleanupJobDefinition,
   restoreLimitsFromEnv,
@@ -181,9 +182,10 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
     ).toBe(1);
     const [run] = await db.select().from(restoreRuns).where(eq(restoreRuns.id, restore.id));
     expect(run?.sourceSha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(run?.sourceStorageKey).toBeNull();
     const uploadKey = storageKeys.restoreUpload(actor.workspaceId, restore.id);
     expect(await getStorage().headObject(uploadKey)).toBeNull();
+    // The key outlives the deletion until the signed upload URL has expired (replay window).
+    expect(run?.sourceStorageKey).toBe(uploadKey);
     const audits = await db
       .select({ action: auditLogs.action })
       .from(auditLogs)
@@ -322,7 +324,7 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
     expect(await cleanupRestoreUploads(db, getStorage())).toBeGreaterThanOrEqual(1);
     expect(await getStorage().headObject(uploadKey(second.id))).toBeNull();
     const [run] = await db.select().from(restoreRuns).where(eq(restoreRuns.id, second.id));
-    expect(run).toMatchObject({ status: "completed", sourceStorageKey: null });
+    expect(run?.status).toBe("completed");
   });
 
   it("an upload never started is abandoned after a day and cannot start later", async () => {
@@ -489,5 +491,32 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
     expect(await getStorage().headObject(uploadKey)).not.toBeNull();
     await cleanupRestoreUploads(db, getStorage());
     expect(await getStorage().headObject(uploadKey)).toBeNull();
+  });
+
+  it("an upload replayed after the restore is deleted until its URL expires", async () => {
+    const { cookie, actor } = await owner();
+    const restore = await uploadArchive(cookie, archive);
+    await start(cookie, restore.id);
+    await drainJobs();
+    const uploadKey = storageKeys.restoreUpload(actor.workspaceId, restore.id);
+    expect(await getStorage().headObject(uploadKey)).toBeNull();
+
+    // The still-valid signed PUT is replayed: the archive is back under the same key.
+    await getStorage().putObject(uploadKey, archive);
+    const [run] = await db.select().from(restoreRuns).where(eq(restoreRuns.id, restore.id));
+    await cleanupRestoreUploads(db, getStorage(), new Date(run!.createdAt.getTime() + 60_000));
+    expect(await getStorage().headObject(uploadKey)).toBeNull();
+    expect(
+      (await db.select().from(restoreRuns).where(eq(restoreRuns.id, restore.id)))[0],
+    ).toMatchObject({ sourceStorageKey: uploadKey });
+
+    // Once the URL has expired, a final sweep forgets the key.
+    const later = new Date(run!.createdAt.getTime() + UPLOAD_REPLAY_WINDOW_MS + 60_000);
+    await getStorage().putObject(uploadKey, archive);
+    await cleanupRestoreUploads(db, getStorage(), later);
+    expect(await getStorage().headObject(uploadKey)).toBeNull();
+    expect(
+      (await db.select().from(restoreRuns).where(eq(restoreRuns.id, restore.id)))[0],
+    ).toMatchObject({ sourceStorageKey: null });
   });
 });

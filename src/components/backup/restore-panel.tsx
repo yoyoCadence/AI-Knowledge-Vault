@@ -78,6 +78,10 @@ export function RestorePanel({ initial }: { initial: RestoreView | null }) {
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<"skip_existing" | "copy">("skip_existing");
   const [run, setRun] = useState(initial);
+  // The run this file was already uploaded to. Starting is idempotent, so after an ambiguous
+  // failure (e.g. the /start response was lost) a retry starts that run again rather than
+  // creating a second one, which in copy mode would restore the archive twice.
+  const [uploaded, setUploaded] = useState<{ file: File; runId: string } | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const polling = run !== null && run.started && ACTIVE.has(run.status);
@@ -111,17 +115,22 @@ export function RestorePanel({ initial }: { initial: RestoreView | null }) {
     setError(null);
     setProgress(0);
     try {
-      const created = await call<{
-        restore: RestoreView;
-        upload: { url: string; headers: Record<string, string> };
-      }>("/api/restores", { filename: file.name, size: file.size });
-      setRun(created.restore);
-      await upload(created.upload.url, created.upload.headers, file, setProgress);
-      const started = await call<{ restore: RestoreView }>(
-        `/api/restores/${created.restore.id}/start`,
-        { mode },
-      );
+      let runId = uploaded?.file === file ? uploaded.runId : null;
+      if (!runId) {
+        const created = await call<{
+          restore: RestoreView;
+          upload: { url: string; headers: Record<string, string> };
+        }>("/api/restores", { filename: file.name, size: file.size });
+        setRun(created.restore);
+        await upload(created.upload.url, created.upload.headers, file, setProgress);
+        runId = created.restore.id;
+        setUploaded({ file, runId });
+      }
+      const started = await call<{ restore: RestoreView }>(`/api/restores/${runId}/start`, {
+        mode,
+      });
       setRun(started.restore);
+      setUploaded(null);
       setFile(null);
       if (inputRef.current) inputRef.current.value = "";
     } catch (startError) {

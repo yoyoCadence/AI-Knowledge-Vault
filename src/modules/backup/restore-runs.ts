@@ -22,6 +22,11 @@ import { restoreArchive, type RestoreLimits } from "./restore";
 
 export const RESTORE_JOB_TYPE = "restore.run";
 const UPLOAD_TTL_SECONDS = 3600;
+/**
+ * The signed upload URL can be replayed until it expires, recreating the archive after we
+ * deleted it. Until then (plus clock skew) the key is kept, so the sweep keeps deleting it.
+ */
+export const UPLOAD_REPLAY_WINDOW_MS = (UPLOAD_TTL_SECONDS + 5 * 60) * 1000;
 /** An upload not started within this long is abandoned: the run fails, the archive is deleted. */
 export const ABANDONED_RESTORE_AFTER_MS = 24 * 60 * 60 * 1000;
 
@@ -174,16 +179,19 @@ export async function listRestores(db: DbExecutor, actor: Actor, limit = 10) {
 }
 
 /**
- * Deletes a run's uploaded archive (the owner's copy, not ours to keep), then forgets its key.
- * A failed deletion keeps the key, so a job retry or the maintenance sweep tries again.
+ * Deletes a run's uploaded archive (the owner's copy, not ours to keep), then forgets its key
+ * once its upload URL can no longer be replayed. A failed deletion keeps the key, so a job
+ * retry or the maintenance sweep tries again.
  */
 async function releaseUpload(
   db: DbExecutor,
   storage: StorageAdapter,
-  run: Pick<RestoreRun, "id" | "sourceStorageKey">,
+  run: Pick<RestoreRun, "id" | "sourceStorageKey" | "createdAt">,
+  now = new Date(),
 ) {
   if (!run.sourceStorageKey) return;
   await storage.deleteObject(run.sourceStorageKey);
+  if (now.getTime() - run.createdAt.getTime() < UPLOAD_REPLAY_WINDOW_MS) return;
   await db.update(restoreRuns).set({ sourceStorageKey: null }).where(eq(restoreRuns.id, run.id));
 }
 
@@ -307,7 +315,8 @@ export function restoreJobDefinition(
 /**
  * Maintenance (hourly, with the export cleanup). Fails runs whose archive was uploaded but never
  * started within ABANDONED_RESTORE_AFTER_MS, then deletes the archives of every ended run that
- * still holds one (abandoned, or a deletion that failed). Idempotent; returns archives deleted.
+ * still holds a key: abandoned, a deletion that failed, or one still inside its upload URL's
+ * replay window. Idempotent; returns the number of runs visited.
  */
 export async function cleanupRestoreUploads(
   db: DbExecutor,
@@ -336,7 +345,11 @@ export async function cleanupRestoreUploads(
   return eachRowIndependently(
     (afterId, limit) =>
       db
-        .select({ id: restoreRuns.id, sourceStorageKey: restoreRuns.sourceStorageKey })
+        .select({
+          id: restoreRuns.id,
+          sourceStorageKey: restoreRuns.sourceStorageKey,
+          createdAt: restoreRuns.createdAt,
+        })
         .from(restoreRuns)
         .where(
           and(
@@ -347,7 +360,7 @@ export async function cleanupRestoreUploads(
         )
         .orderBy(restoreRuns.id)
         .limit(limit),
-    (run) => releaseUpload(db, storage, run),
+    (run) => releaseUpload(db, storage, run, now),
     options,
   );
 }
