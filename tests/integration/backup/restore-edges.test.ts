@@ -95,6 +95,31 @@ describe("export failure handling", () => {
   });
 });
 
+describe("export output failures", () => {
+  it("an output that cannot be opened rejects the export instead of crashing", async () => {
+    process.on("uncaughtException", onUncaught);
+    try {
+      const actor = await seed([
+        { filename: "edge-output.html", bytes: htmlDocument({ title: `輸出 ${Math.random()}` }) },
+      ]);
+      const existing = path.join(dir, "already-there.zip");
+      await writeFile(existing, "do not overwrite");
+      await expect(
+        writeExport(
+          db,
+          getStorage(),
+          actor.workspaceId,
+          createWriteStream(existing, { flags: "wx" }),
+        ),
+      ).rejects.toMatchObject({ code: "EEXIST" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+  });
+});
+
 describe("restore edge cases", () => {
   it("re-running skip_existing is idempotent even when the ids belong to another workspace", async () => {
     // The source workspace still exists, so every archived id is taken by someone else.

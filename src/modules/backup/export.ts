@@ -194,6 +194,16 @@ export async function writeExport(
   options: { now?: Date } = {},
 ): Promise<ExportSummary> {
   const now = options.now ?? new Date();
+  // Observe the output before the first await: a stream that fails to open (an existing
+  // `--out` file, a full or missing temp directory) emits 'error' asynchronously, and an
+  // 'error' with no listener would crash the process instead of rejecting this export.
+  const outputFailed = new Promise<never>((_, reject) => output.on("error", reject));
+  outputFailed.catch(() => undefined);
+  const reading = db.transaction((tx) => readSnapshot(tx, workspaceId), {
+    isolationLevel: "repeatable read",
+    accessMode: "read only",
+  });
+  reading.catch(() => undefined);
   const {
     workspace,
     projectRows,
@@ -203,10 +213,7 @@ export async function writeExport(
     linkRows,
     documents,
     dbMigration,
-  } = await db.transaction((tx) => readSnapshot(tx, workspaceId), {
-    isolationLevel: "repeatable read",
-    accessMode: "read only",
-  });
+  } = await Promise.race([reading, outputFailed]);
   const documentById = new Map(documents.map((document) => [document.id, document]));
 
   const projects: ProjectV1[] = projectRows.map((row) => ({
@@ -379,7 +386,7 @@ export async function writeExport(
   const writing = pipeline(zip.outputStream, output);
   writing.catch(() => undefined);
   try {
-    await Promise.race([writing, failed]);
+    await Promise.race([writing, failed, outputFailed]);
   } catch (error) {
     // Stop writing a truncated archive; callers delete their partial output.
     (zip.outputStream as unknown as { destroy(error?: Error): void }).destroy();
