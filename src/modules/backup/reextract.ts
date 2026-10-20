@@ -120,7 +120,9 @@ export async function reextractVersion(
           previewKind,
           previewEntryPath: rejection ? null : classification.previewEntryPath,
           previewStatus: previewKind === "unsupported" ? "unavailable" : "ready",
-          processingStatus: failed || rejection ? "failed" : "ready",
+          // Same rule as imports: a rejected archive keeps a readable extraction and is "ready";
+          // only the preview becomes unavailable.
+          processingStatus: failed ? "failed" : "ready",
           contentHash:
             !failed && extraction.plainText
               ? contentHash(extraction.plainText)

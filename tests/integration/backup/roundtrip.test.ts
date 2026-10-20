@@ -255,7 +255,7 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(report.failures).toEqual([]);
     expect(report.counts.artifacts).toMatchObject({ restored: 5, skipped: 0, copied: 0 });
     expect(report.counts.artifactVersions.restored).toBe(6);
-    expect(report.counts.fileAssets).toEqual({ stored: 6, reused: 0 });
+    expect(report.counts.fileAssets).toEqual({ stored: 6, reused: 0, repaired: 0 });
     expect(report.reextractJobs).toBe(6);
 
     const after = await snapshot(target.workspaceId);
@@ -331,7 +331,7 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
       limits: restoreLimitsFromEnv(getEnv()),
     });
     expect(report.counts.artifacts).toMatchObject({ restored: 0, skipped: 5, copied: 0 });
-    expect(report.counts.fileAssets).toEqual({ stored: 0, reused: 6 });
+    expect(report.counts.fileAssets).toEqual({ stored: 0, reused: 6, repaired: 0 });
     expect(await workspaceRowCounts(target.workspaceId)).toEqual(counts);
   });
 
@@ -347,7 +347,7 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
       limits: restoreLimitsFromEnv(getEnv()),
     });
     expect(report.counts.artifacts).toMatchObject({ restored: 0, skipped: 0, copied: 5 });
-    expect(report.counts.fileAssets).toEqual({ stored: 0, reused: 6 });
+    expect(report.counts.fileAssets).toEqual({ stored: 0, reused: 6, repaired: 0 });
     const now = await workspaceRowCounts(target.workspaceId);
     expect(now).toEqual({
       artifacts: counts.artifacts + 5,
@@ -434,6 +434,31 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
         error.code === "CHECKSUM_MISMATCH" &&
         /manifest/.test(error.message),
     );
+  });
+
+  it("reads all export metadata from one repeatable-read snapshot", async () => {
+    // Postgres gives one snapshot to every statement of a REPEATABLE READ transaction, so an
+    // import committing mid-export cannot produce a version whose artifact is missing.
+    const actor = await createTestActor();
+    const configs: unknown[] = [];
+    const spy = new Proxy(db, {
+      get(target, property, receiver) {
+        if (property === "transaction") {
+          return (fn: Parameters<typeof db.transaction>[0], config?: unknown) => {
+            configs.push(config);
+            return target.transaction(fn, config as Parameters<typeof db.transaction>[1]);
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    await writeExport(
+      spy,
+      getStorage(),
+      actor.workspaceId,
+      createWriteStream(path.join(dir, "snap.zip")),
+    );
+    expect(configs).toEqual([{ isolationLevel: "repeatable read", accessMode: "read only" }]);
   });
 
   it("rejects archives that are not format v1 exports", async () => {

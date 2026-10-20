@@ -43,13 +43,15 @@ export function normalizedPath(versionId: string): string {
 
 /** Keeps the original name readable while making it a single, safe path segment. */
 export function sanitizeArchiveFilename(filename: string): string {
-  const cleaned = filename
+  const replaced = filename
     .normalize("NFC")
-    // Control characters, slashes and backslashes are exactly what we strip.
-    .replace(/[\u0000-\u001f\u007f/\\]/g, "_")
+    // Control characters, slashes, backslashes and lone surrogates (which ZIP and
+    // checksums.sha256 would encode differently from the JSON metadata) are replaced.
+    .replace(/[\u0000-\u001f\u007f/\\]|\p{Cs}/gu, "_")
     .replace(/^\.+/, "_")
-    .trim()
-    .slice(0, 200);
+    .trim();
+  // Truncate by code point, never inside a surrogate pair.
+  const cleaned = Array.from(replaced).slice(0, 200).join("");
   return cleaned.length > 0 ? cleaned : "original";
 }
 
@@ -259,7 +261,7 @@ This archive is readable without the application.
                          records the SHA-256 of checksums.sha256, so together they cover all)
 
 Verify the archive:   unzip export.zip -d export && cd export && sha256sum -c checksums.sha256
-Restore it:           pnpm restore <archive> --workspace <slug>   (docs/BACKUP_RECOVERY.md)
+Restore it:           pnpm backup:restore <archive> --workspace <slug>   (docs/BACKUP_RECOVERY.md)
 
 This archive is NOT encrypted. Encrypt it before storing it anywhere shared, for example:
   age --passphrase -o export.zip.age export.zip

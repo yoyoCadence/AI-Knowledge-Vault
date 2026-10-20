@@ -180,6 +180,24 @@ conversations. Update it at the end of every PR.
     `dist/backup-export.mjs`.
 
   - Migration `0004_backup_runs`: `export_runs`, `restore_runs`, `integrity_checks`.
+  - **Review fixes before merge** (Codex, plus an independent review):
+    - Export reads all metadata in one `REPEATABLE READ, READ ONLY` snapshot. Before this, an
+      import that committed mid-export could leave a version without its artifact.
+    - A stream error or `ORIGINAL_CORRUPT` while exporting an original used to raise an uncaught
+      `'error'`, which crashed the worker and left the export hanging. It now fails the export
+      cleanly, and the CLI deletes the partial file.
+    - In `skip_existing` mode, an id taken by another workspace maps to a deterministic
+      per-workspace id (`restore:{ws}:{id}`). A re-run therefore skips instead of duplicating.
+    - Existing artifacts get the versions they lack. Version-number conflicts are reported as
+      failed.
+    - Originals that already have rows are re-verified and re-written if storage lost them
+      (`repaired`).
+    - Archive filenames are truncated by code point and lone surrogates are replaced. A
+      200-character name ending in an emoji used to make the archive unrestorable.
+    - Re-extraction uses the import rule for `processing_status`.
+    - Id lookups are chunked or done with joins, staying under Postgres's 65,535-parameter
+      limit.
+    - Tests: `tests/integration/backup/restore-edges.test.ts`. All 5 fail on the pre-fix code.
 
 **Not done or not verified**
 

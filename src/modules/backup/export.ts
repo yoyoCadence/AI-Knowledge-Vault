@@ -3,9 +3,9 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { Transform, type Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import yazl from "yazl";
-import type { DbExecutor } from "@/infrastructure/database/client";
+import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import { MIGRATIONS_FOLDER } from "@/infrastructure/database/migrate";
 import {
   artifactFiles,
@@ -122,62 +122,91 @@ function verifyingStream(expected: string, label: string): Transform {
   });
 }
 
+/**
+ * Reads every metadata row of the workspace inside ONE repeatable-read, read-only transaction,
+ * so an import committing mid-export can never yield an archive whose versions reference an
+ * artifact (or file) that is not in it. Originals are content-addressed and immutable, so their
+ * bytes can safely be streamed after this snapshot is taken.
+ */
+async function readSnapshot(tx: DbExecutor, workspaceId: string) {
+  const [workspace] = await tx
+    .select({ id: workspaces.id, name: workspaces.name, slug: workspaces.slug })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId));
+  if (!workspace) throw new AppError("NOT_FOUND", "Workspace not found");
+
+  const projectRows = await tx
+    .select()
+    .from(researchProjects)
+    .where(eq(researchProjects.workspaceId, workspaceId))
+    .orderBy(asc(researchProjects.createdAt), asc(researchProjects.id));
+  const artifactRows = await tx
+    .select()
+    .from(artifacts)
+    .where(eq(artifacts.workspaceId, workspaceId))
+    .orderBy(asc(artifacts.createdAt), asc(artifacts.id));
+  const versionRows = await tx
+    .select()
+    .from(artifactVersions)
+    .where(eq(artifactVersions.workspaceId, workspaceId))
+    .orderBy(asc(artifactVersions.artifactId), asc(artifactVersions.versionNumber));
+  const assetRows = await tx
+    .select()
+    .from(fileAssets)
+    .where(eq(fileAssets.workspaceId, workspaceId))
+    .orderBy(asc(fileAssets.createdAt), asc(fileAssets.id));
+  // Joins (not `IN (…)` over every id): no bind-parameter limit on large workspaces.
+  const linkRows = await tx
+    .select({ link: artifactFiles })
+    .from(artifactFiles)
+    .innerJoin(artifactVersions, eq(artifactVersions.id, artifactFiles.artifactVersionId))
+    .where(eq(artifactVersions.workspaceId, workspaceId))
+    .orderBy(asc(artifactFiles.createdAt), asc(artifactFiles.id))
+    .then((rows) => rows.map((row) => row.link));
+  const documents = await tx
+    .select({ document: extractedDocuments })
+    .from(extractedDocuments)
+    .innerJoin(artifactVersions, eq(artifactVersions.activeExtractionId, extractedDocuments.id))
+    .where(
+      and(
+        eq(artifactVersions.workspaceId, workspaceId),
+        eq(extractedDocuments.workspaceId, workspaceId),
+      ),
+    )
+    .then((rows) => rows.map((row) => row.document));
+  return {
+    workspace,
+    projectRows,
+    artifactRows,
+    versionRows,
+    assetRows,
+    linkRows,
+    documents,
+    dbMigration: await currentMigrationTag(tx),
+  };
+}
+
 export async function writeExport(
-  db: DbExecutor,
+  db: Database,
   storage: StorageAdapter,
   workspaceId: string,
   output: Writable,
   options: { now?: Date } = {},
 ): Promise<ExportSummary> {
   const now = options.now ?? new Date();
-  const [workspace] = await db
-    .select({ id: workspaces.id, name: workspaces.name, slug: workspaces.slug })
-    .from(workspaces)
-    .where(eq(workspaces.id, workspaceId));
-  if (!workspace) throw new AppError("NOT_FOUND", "Workspace not found");
-
-  const projectRows = await db
-    .select()
-    .from(researchProjects)
-    .where(eq(researchProjects.workspaceId, workspaceId))
-    .orderBy(asc(researchProjects.createdAt), asc(researchProjects.id));
-  const artifactRows = await db
-    .select()
-    .from(artifacts)
-    .where(eq(artifacts.workspaceId, workspaceId))
-    .orderBy(asc(artifacts.createdAt), asc(artifacts.id));
-  const versionRows = await db
-    .select()
-    .from(artifactVersions)
-    .where(eq(artifactVersions.workspaceId, workspaceId))
-    .orderBy(asc(artifactVersions.artifactId), asc(artifactVersions.versionNumber));
-  const assetRows = await db
-    .select()
-    .from(fileAssets)
-    .where(eq(fileAssets.workspaceId, workspaceId))
-    .orderBy(asc(fileAssets.createdAt), asc(fileAssets.id));
-  const versionIds = versionRows.map((version) => version.id);
-  const linkRows = versionIds.length
-    ? await db
-        .select()
-        .from(artifactFiles)
-        .where(inArray(artifactFiles.artifactVersionId, versionIds))
-        .orderBy(asc(artifactFiles.createdAt), asc(artifactFiles.id))
-    : [];
-  const extractionIds = versionRows
-    .map((version) => version.activeExtractionId)
-    .filter((value): value is string => value !== null);
-  const documents = extractionIds.length
-    ? await db
-        .select()
-        .from(extractedDocuments)
-        .where(
-          and(
-            eq(extractedDocuments.workspaceId, workspaceId),
-            inArray(extractedDocuments.id, extractionIds),
-          ),
-        )
-    : [];
+  const {
+    workspace,
+    projectRows,
+    artifactRows,
+    versionRows,
+    assetRows,
+    linkRows,
+    documents,
+    dbMigration,
+  } = await db.transaction((tx) => readSnapshot(tx, workspaceId), {
+    isolationLevel: "repeatable read",
+    accessMode: "read only",
+  });
   const documentById = new Map(documents.map((document) => [document.id, document]));
 
   const projects: ProjectV1[] = projectRows.map((row) => ({
@@ -249,7 +278,6 @@ export async function writeExport(
   const buffers = new Map<string, Buffer>();
   const json = (value: unknown) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
   buffers.set(PATHS.readme, Buffer.from(README_TEXT, "utf8"));
-  const dbMigration = await currentMigrationTag(db);
   buffers.set(
     PATHS.schemaVersion,
     json({ format: EXPORT_FORMAT, formatVersion: EXPORT_FORMAT_VERSION, dbMigration }),
@@ -316,7 +344,10 @@ export async function writeExport(
 
   const zip = new yazl.ZipFile();
   const mtime = now;
-  const failed = new Promise<never>((_, reject) => zip.on("error", reject));
+  // Any stream failure (storage error, ORIGINAL_CORRUPT from the verifier) is routed to the
+  // zip's 'error' event, which fails the export. Nothing may be left as an unhandled 'error'
+  // event: that would crash the worker process.
+  const failed = new Promise<never>((_, reject) => zip.once("error", reject));
   failed.catch(() => undefined);
   zip.addBuffer(buffers.get(PATHS.readme)!, PATHS.readme, { mtime });
   zip.addBuffer(json(manifest), PATHS.manifest, { mtime });
@@ -335,6 +366,7 @@ export async function writeExport(
           .then(({ body }) => {
             const verify = verifyingStream(asset.sha256, archivePath);
             body.on("error", (error) => verify.destroy(error));
+            verify.on("error", (error) => zip.emit("error", error));
             callback(null, body.pipe(verify));
           })
           .catch((error: unknown) => callback(error, undefined as never));
@@ -344,6 +376,15 @@ export async function writeExport(
   zip.addBuffer(checksums, PATHS.checksums, { mtime });
   zip.end();
 
-  await Promise.race([pipeline(zip.outputStream, output), failed]);
+  const writing = pipeline(zip.outputStream, output);
+  writing.catch(() => undefined);
+  try {
+    await Promise.race([writing, failed]);
+  } catch (error) {
+    // Stop writing a truncated archive; callers delete their partial output.
+    (zip.outputStream as unknown as { destroy(error?: Error): void }).destroy();
+    output.destroy();
+    throw error;
+  }
   return { filename: exportFilename(workspace.slug, now), manifest };
 }

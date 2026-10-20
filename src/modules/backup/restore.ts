@@ -21,7 +21,7 @@ import { AppError } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { SafeZip, ZipRejectedError, type ZipLimits } from "@/modules/extraction";
 import { storeOriginal } from "@/modules/files/originals";
-import { saveExtraction } from "@/modules/imports/derive";
+import { deterministicId, saveExtraction } from "@/modules/imports/derive";
 import { enqueueJob } from "@/modules/jobs";
 import {
   ArtifactFileV1,
@@ -84,7 +84,8 @@ export interface RestoreReport {
     researchProjects: Tally;
     artifacts: Tally;
     artifactVersions: Tally;
-    fileAssets: { stored: number; reused: number };
+    /** stored: new originals; reused: already present by hash; repaired: object re-written. */
+    fileAssets: { stored: number; reused: number; repaired: number };
   };
   /** Old → new ids for everything restored under a new id (capped). */
   idMap: Record<string, string>;
@@ -244,27 +245,38 @@ async function verifyArchive(zip: SafeZip) {
   return { manifest, verified: listed.size, projects, artifactList, versions, assets, links };
 }
 
+/** Postgres caps bind parameters at 65,535; id lookups are done in chunks well below that. */
+const ID_CHUNK = 10_000;
+
+async function inChunks<T>(ids: string[], query: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
+  const rows: T[] = [];
+  for (let start = 0; start < ids.length; start += ID_CHUNK) {
+    rows.push(...(await query(ids.slice(start, start + ID_CHUNK))));
+  }
+  return rows;
+}
+
+/** id → owning workspace (null for tables without a workspace column), for ids that exist. */
 async function existingIds(
   db: DbExecutor,
   table:
     typeof artifacts | typeof researchProjects | typeof artifactVersions | typeof artifactFiles,
   ids: string[],
-) {
-  if (ids.length === 0) return new Map<string, string | null>();
-  const column = table.id;
-  const rows =
+): Promise<Map<string, string | null>> {
+  const rows = await inChunks(ids, async (chunk) =>
     table === artifactFiles
       ? (
           await db
             .select({ id: artifactFiles.id })
             .from(artifactFiles)
-            .where(inArray(artifactFiles.id, ids))
-        ).map((row) => ({ id: row.id, workspaceId: null }))
+            .where(inArray(artifactFiles.id, chunk))
+        ).map((row) => ({ id: row.id, workspaceId: null as string | null }))
       : await db
-          .select({ id: column, workspaceId: (table as typeof artifacts).workspaceId })
+          .select({ id: table.id, workspaceId: (table as typeof artifacts).workspaceId })
           .from(table as typeof artifacts)
-          .where(inArray(column, ids));
-  return new Map(rows.map((row) => [row.id, row.workspaceId as string | null]));
+          .where(inArray(table.id, chunk)),
+  );
+  return new Map(rows.map((row) => [row.id, row.workspaceId]));
 }
 
 export async function restoreArchive(
@@ -304,7 +316,7 @@ export async function restoreArchive(
         researchProjects: tally(),
         artifacts: tally(),
         artifactVersions: tally(),
-        fileAssets: { stored: 0, reused: 0 },
+        fileAssets: { stored: 0, reused: 0, repaired: 0 },
       },
       idMap: {},
       failures: [],
@@ -317,33 +329,40 @@ export async function restoreArchive(
         report.idMap[oldId] = newIdValue;
     };
 
+    /** Deterministic per-target-workspace id for an archived id that belongs to someone else. */
+    const derivedId = (oldId: string) => deterministicId(`restore:${workspaceId}:${oldId}`);
+    /**
+     * Where an archived row goes. skip_existing: its own id when free or already ours, else a
+     * deterministic id (so re-running the same restore finds it instead of duplicating it).
+     * copy: its own id when free, else a fresh id (copy duplicates on purpose).
+     */
+    const place = (oldId: string, owners: Map<string, string | null>) => {
+      const owner = owners.get(oldId);
+      if (owner === undefined) return { id: oldId, existing: false, remapped: false };
+      if (mode === "copy") return { id: newId(), existing: false, remapped: true };
+      if (owner === workspaceId) return { id: oldId, existing: true, remapped: false };
+      const derived = derivedId(oldId);
+      const derivedOwner = owners.get(derived);
+      if (derivedOwner === undefined) return { id: derived, existing: false, remapped: true };
+      if (derivedOwner === workspaceId) return { id: derived, existing: true, remapped: true };
+      return { id: newId(), existing: false, remapped: true };
+    };
+    const withDerived = (ids: string[]) => [...ids, ...ids.map(derivedId)];
+
     // ---- 1. Originals (content-addressed; the target workspace dedups by hash) ----
+    // Every original is re-verified and written idempotently, also when its row already exists:
+    // that repairs objects lost from storage while the database survived.
     const assetIdMap = new Map<string, string>();
     const takenAssetIds = new Set(
       (
-        await db
-          .select({ id: fileAssets.id })
-          .from(fileAssets)
-          .where(
-            inArray(
-              fileAssets.id,
-              archive.assets.map((asset) => asset.id),
-            ),
-          )
+        await inChunks(
+          archive.assets.map((asset) => asset.id),
+          (chunk) =>
+            db.select({ id: fileAssets.id }).from(fileAssets).where(inArray(fileAssets.id, chunk)),
+        )
       ).map((row) => row.id),
     );
     for (const asset of archive.assets) {
-      const [existing] = await db
-        .select({ id: fileAssets.id })
-        .from(fileAssets)
-        .where(and(eq(fileAssets.workspaceId, workspaceId), eq(fileAssets.sha256, asset.sha256)));
-      if (existing) {
-        assetIdMap.set(asset.id, existing.id);
-        remember(asset.id, existing.id);
-        report.counts.fileAssets.reused += 1;
-        continue;
-      }
-      // Re-verify while copying out: the bytes written are exactly the bytes checked.
       const file = path.join(tmp, asset.sha256);
       const hash = createHash("sha256");
       await pipeline(
@@ -358,7 +377,7 @@ export async function restoreArchive(
       );
       if (hash.digest("hex") !== asset.sha256)
         throw checksumMismatch("an original changed while restoring", [asset.archivePath]);
-      const { storageKey } = await storeOriginal(storage, {
+      const { storageKey, created } = await storeOriginal(storage, {
         workspaceId,
         sha256: asset.sha256,
         size: asset.byteSize,
@@ -366,6 +385,18 @@ export async function restoreArchive(
         sourcePath: file,
       });
       await rm(file, { force: true });
+
+      const [existing] = await db
+        .select({ id: fileAssets.id })
+        .from(fileAssets)
+        .where(and(eq(fileAssets.workspaceId, workspaceId), eq(fileAssets.sha256, asset.sha256)));
+      if (existing) {
+        assetIdMap.set(asset.id, existing.id);
+        remember(asset.id, existing.id);
+        report.counts.fileAssets.reused += 1;
+        if (created) report.counts.fileAssets.repaired += 1;
+        continue;
+      }
       const id = takenAssetIds.has(asset.id) ? newId() : asset.id;
       const [inserted] = await db
         .insert(fileAssets)
@@ -405,21 +436,20 @@ export async function restoreArchive(
     const projectOwners = await existingIds(
       db,
       researchProjects,
-      archive.projects.map((project) => project.id),
+      withDerived(archive.projects.map((project) => project.id)),
     );
     for (const project of archive.projects) {
-      const owner = projectOwners.get(project.id);
-      if (owner === workspaceId && mode === "skip_existing") {
-        projectIdMap.set(project.id, project.id);
+      const placed = place(project.id, projectOwners);
+      projectIdMap.set(project.id, placed.id);
+      if (placed.existing) {
         report.counts.researchProjects.skipped += 1;
         continue;
       }
-      const copy = owner !== undefined;
-      const id = copy ? newId() : project.id;
+      const ownedHere = projectOwners.get(project.id) === workspaceId;
       await db.insert(researchProjects).values({
-        id,
+        id: placed.id,
         workspaceId,
-        title: copy && owner === workspaceId ? `${project.title}${COPY_SUFFIX}` : project.title,
+        title: ownedHere ? `${project.title}${COPY_SUFFIX}` : project.title,
         description: project.description,
         status: project.status,
         createdBy: input.userId,
@@ -427,12 +457,11 @@ export async function restoreArchive(
         updatedAt: new Date(project.updatedAt),
         deletedAt: project.deletedAt ? new Date(project.deletedAt) : null,
       });
-      projectIdMap.set(project.id, id);
-      remember(project.id, id);
-      report.counts.researchProjects[copy ? "copied" : "restored"] += 1;
+      remember(project.id, placed.id);
+      report.counts.researchProjects[placed.remapped ? "copied" : "restored"] += 1;
     }
 
-    // ---- 3. Artifacts, one transaction each ----
+    // ---- 3. Artifacts and versions, one transaction per artifact ----
     const versionsByArtifact = new Map<string, typeof archive.versions>();
     for (const version of archive.versions) {
       const list = versionsByArtifact.get(version.artifactId) ?? [];
@@ -448,49 +477,183 @@ export async function restoreArchive(
     const artifactOwners = await existingIds(
       db,
       artifacts,
-      archive.artifactList.map((artifact) => artifact.id),
+      withDerived(archive.artifactList.map((artifact) => artifact.id)),
     );
-    const takenVersionIds = await existingIds(
+    const versionOwners = await existingIds(
       db,
       artifactVersions,
-      archive.versions.map((version) => version.id),
+      withDerived(archive.versions.map((version) => version.id)),
     );
     const takenLinkIds = await existingIds(
       db,
       artifactFiles,
-      archive.links.map((link) => link.id),
+      withDerived(archive.links.map((link) => link.id)),
     );
+    const linkId = (oldId: string) =>
+      !takenLinkIds.has(oldId)
+        ? oldId
+        : !takenLinkIds.has(derivedId(oldId))
+          ? derivedId(oldId)
+          : newId();
+
+    /** Inserts one version with its files, fallback text and re-extraction job. */
+    const insertVersion = async (
+      tx: DbExecutor,
+      version: (typeof archive.versions)[number],
+      versionId: string,
+      artifactId: string,
+    ) => {
+      await tx.insert(artifactVersions).values({
+        id: versionId,
+        workspaceId,
+        artifactId,
+        versionNumber: version.versionNumber,
+        primaryFileId: assetIdMap.get(version.primaryFileId)!,
+        contentKind: version.contentKind,
+        previewKind: version.previewKind,
+        previewStatus: "pending",
+        previewEntryPath: version.previewEntryPath,
+        processingStatus: "pending",
+        contentHash: version.contentHash,
+        sourcePlatform: version.sourcePlatform,
+        sourceModel: version.sourceModel,
+        originalPrompt: version.originalPrompt,
+        sourceUrl: version.sourceUrl,
+        researchDate: version.researchDate,
+        author: version.author,
+        referenceSources: version.referenceSources.map((reference) =>
+          reference.title ? { title: reference.title, url: reference.url } : { url: reference.url },
+        ),
+        changeSummary: version.changeSummary,
+        analysis: version.analysis,
+        createdBy: input.userId,
+        createdAt: new Date(version.createdAt),
+        updatedAt: new Date(version.updatedAt),
+      });
+      for (const link of linksByVersion.get(version.id) ?? []) {
+        await tx.insert(artifactFiles).values({
+          id: mode === "copy" ? newId() : linkId(link.id),
+          artifactVersionId: versionId,
+          fileAssetId: assetIdMap.get(link.fileAssetId)!,
+          role: link.role,
+          displayName: link.displayName,
+          createdAt: new Date(link.createdAt),
+        });
+      }
+      // Fallback text right away; re-extraction replaces it with a full extraction.
+      const normalized = normalizedPath(version.id);
+      if (zip.has(normalized)) {
+        const { title, body } = markdownBody(
+          (await zip.readBuffer(normalized, MAX_METADATA_BYTES)).toString("utf8"),
+        );
+        await saveExtraction(tx, {
+          workspaceId,
+          versionId,
+          extraction: {
+            method: RESTORE_EXTRACTION_METHOD,
+            version: EXPORT_FORMAT_VERSION,
+            status: "partial",
+            title,
+            language: null,
+            plainText: body,
+            markdown: body,
+            sections: [],
+            metadata: {},
+            references: [],
+            warnings: ["RESTORED_FROM_ARCHIVE: archived text pending re-extraction"],
+          },
+        });
+      }
+      await enqueueJob(tx, {
+        type: REEXTRACT_JOB_TYPE,
+        idempotencyKey: `${REEXTRACT_JOB_TYPE}:${versionId}`,
+        workspaceId,
+        payload: { versionId },
+      });
+      if (versionId !== version.id) remember(version.id, versionId);
+    };
+
+    const fail = (artifact: (typeof archive.artifactList)[number], error: unknown) => {
+      report.failures.push({
+        artifactId: artifact.id,
+        title: artifact.title.slice(0, 200),
+        error: error instanceof Error ? error.message.slice(0, 500) : String(error),
+      });
+    };
 
     for (const artifact of archive.artifactList) {
       const versions = versionsByArtifact.get(artifact.id) ?? [];
-      const owner = artifactOwners.get(artifact.id);
-      if (owner === workspaceId && mode === "skip_existing") {
-        report.counts.artifacts.skipped += 1;
-        report.counts.artifactVersions.skipped += versions.length;
-        continue;
-      }
-      if (owner !== undefined && owner !== workspaceId) {
+      const placed = place(artifact.id, artifactOwners);
+      if (placed.remapped && artifactOwners.get(artifact.id) !== workspaceId) {
         report.warnings.push(
-          `artifact ${artifact.id} exists in another workspace; restored under a new id`,
+          `artifact ${artifact.id} exists in another workspace; restored as ${placed.id}`,
         );
       }
-      const copy = owner !== undefined;
-      const artifactId = copy ? newId() : artifact.id;
+
+      if (placed.existing) {
+        // skip_existing keeps the artifact as it is, but versions it lacks (e.g. newer ones in
+        // the archive than in a database restored to an earlier point) are added to it.
+        report.counts.artifacts.skipped += 1;
+        const missing = versions
+          .map((version) => ({ version, at: place(version.id, versionOwners) }))
+          .filter(({ at }) => !at.existing);
+        report.counts.artifactVersions.skipped += versions.length - missing.length;
+        if (missing.length === 0) continue;
+        try {
+          const added = await db.transaction(async (tx) => {
+            await tx
+              .select({ id: artifacts.id })
+              .from(artifacts)
+              .where(eq(artifacts.id, placed.id))
+              .for("update");
+            const taken = new Set(
+              (
+                await tx
+                  .select({ number: artifactVersions.versionNumber })
+                  .from(artifactVersions)
+                  .where(eq(artifactVersions.artifactId, placed.id))
+              ).map((row) => row.number),
+            );
+            let count = 0;
+            for (const { version, at } of missing) {
+              if (taken.has(version.versionNumber)) {
+                report.counts.artifactVersions.failed += 1;
+                report.warnings.push(
+                  `version ${version.id}: artifact ${placed.id} already has a different version ${version.versionNumber}; not restored`,
+                );
+                continue;
+              }
+              await insertVersion(tx, version, at.id, placed.id);
+              count += 1;
+            }
+            return count;
+          });
+          report.reextractJobs += added;
+          report.counts.artifactVersions.restored += added;
+        } catch (error) {
+          report.counts.artifactVersions.failed += missing.length;
+          fail(artifact, error);
+        }
+        continue;
+      }
+
+      const ownedHere = artifactOwners.get(artifact.id) === workspaceId;
       try {
-        const jobs = await db.transaction(async (tx) => {
+        await db.transaction(async (tx) => {
           await tx.insert(artifacts).values({
-            id: artifactId,
+            id: placed.id,
             workspaceId,
             projectId: artifact.projectId ? (projectIdMap.get(artifact.projectId) ?? null) : null,
-            title:
-              copy && owner === workspaceId ? `${artifact.title}${COPY_SUFFIX}` : artifact.title,
+            title: ownedHere ? `${artifact.title}${COPY_SUFFIX}` : artifact.title,
             description: artifact.description,
             summary: artifact.summary,
             visibility: artifact.visibility,
             sensitivity: artifact.sensitivity,
             reviewStatus: artifact.reviewStatus,
             identityKey: artifact.identityKey,
-            originRef: copy ? `restore:${input.restoreId}:${artifact.id}` : artifact.originRef,
+            originRef: placed.remapped
+              ? `restore:${input.restoreId}:${artifact.id}`
+              : artifact.originRef,
             metadata: artifact.metadata,
             createdBy: input.userId,
             createdAt: new Date(artifact.createdAt),
@@ -498,102 +661,27 @@ export async function restoreArchive(
             deletedAt: artifact.deletedAt ? new Date(artifact.deletedAt) : null,
           });
           const versionIdMap = new Map<string, string>();
-          let reextract = 0;
           for (const version of versions) {
-            const versionId = copy || takenVersionIds.has(version.id) ? newId() : version.id;
+            const versionId =
+              placed.remapped && mode === "copy" ? newId() : place(version.id, versionOwners).id;
             versionIdMap.set(version.id, versionId);
-            await tx.insert(artifactVersions).values({
-              id: versionId,
-              workspaceId,
-              artifactId,
-              versionNumber: version.versionNumber,
-              primaryFileId: assetIdMap.get(version.primaryFileId)!,
-              contentKind: version.contentKind,
-              previewKind: version.previewKind,
-              previewStatus: "pending",
-              previewEntryPath: version.previewEntryPath,
-              processingStatus: "pending",
-              contentHash: version.contentHash,
-              sourcePlatform: version.sourcePlatform,
-              sourceModel: version.sourceModel,
-              originalPrompt: version.originalPrompt,
-              sourceUrl: version.sourceUrl,
-              researchDate: version.researchDate,
-              author: version.author,
-              referenceSources: version.referenceSources.map((reference) =>
-                reference.title
-                  ? { title: reference.title, url: reference.url }
-                  : { url: reference.url },
-              ),
-              changeSummary: version.changeSummary,
-              analysis: version.analysis,
-              createdBy: input.userId,
-              createdAt: new Date(version.createdAt),
-              updatedAt: new Date(version.updatedAt),
-            });
-            for (const link of linksByVersion.get(version.id) ?? []) {
-              await tx.insert(artifactFiles).values({
-                id: copy || takenLinkIds.has(link.id) ? newId() : link.id,
-                artifactVersionId: versionId,
-                fileAssetId: assetIdMap.get(link.fileAssetId)!,
-                role: link.role,
-                displayName: link.displayName,
-                createdAt: new Date(link.createdAt),
-              });
-            }
-            // Fallback text right away; re-extraction replaces it with a full extraction.
-            const normalized = normalizedPath(version.id);
-            if (zip.has(normalized)) {
-              const { title, body } = markdownBody(
-                (await zip.readBuffer(normalized, MAX_METADATA_BYTES)).toString("utf8"),
-              );
-              await saveExtraction(tx, {
-                workspaceId,
-                versionId,
-                extraction: {
-                  method: RESTORE_EXTRACTION_METHOD,
-                  version: EXPORT_FORMAT_VERSION,
-                  status: "partial",
-                  title,
-                  language: null,
-                  plainText: body,
-                  markdown: body,
-                  sections: [],
-                  metadata: {},
-                  references: [],
-                  warnings: ["RESTORED_FROM_ARCHIVE: archived text pending re-extraction"],
-                },
-              });
-            }
-            await enqueueJob(tx, {
-              type: REEXTRACT_JOB_TYPE,
-              idempotencyKey: `${REEXTRACT_JOB_TYPE}:${versionId}`,
-              workspaceId,
-              payload: { versionId },
-            });
-            reextract += 1;
-            if (versionId !== version.id) remember(version.id, versionId);
+            await insertVersion(tx, version, versionId, placed.id);
           }
           if (artifact.currentVersionId) {
             await tx
               .update(artifacts)
               .set({ currentVersionId: versionIdMap.get(artifact.currentVersionId)! })
-              .where(eq(artifacts.id, artifactId));
+              .where(eq(artifacts.id, placed.id));
           }
-          return reextract;
         });
-        report.reextractJobs += jobs;
-        report.counts.artifacts[copy ? "copied" : "restored"] += 1;
-        report.counts.artifactVersions[copy ? "copied" : "restored"] += versions.length;
-        remember(artifact.id, artifactId);
+        report.reextractJobs += versions.length;
+        report.counts.artifacts[placed.remapped ? "copied" : "restored"] += 1;
+        report.counts.artifactVersions[placed.remapped ? "copied" : "restored"] += versions.length;
+        remember(artifact.id, placed.id);
       } catch (error) {
         report.counts.artifacts.failed += 1;
         report.counts.artifactVersions.failed += versions.length;
-        report.failures.push({
-          artifactId: artifact.id,
-          title: artifact.title.slice(0, 200),
-          error: error instanceof Error ? error.message.slice(0, 500) : String(error),
-        });
+        fail(artifact, error);
       }
     }
 

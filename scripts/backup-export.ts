@@ -6,6 +6,7 @@
  * The archive is NOT encrypted; encrypt it before storing it anywhere shared (see §4).
  */
 import { createWriteStream } from "node:fs";
+import { rm } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { eq } from "drizzle-orm";
 import { getEnv } from "@/infrastructure/config/env";
@@ -28,12 +29,18 @@ async function main(): Promise<void> {
     .where(eq(workspaces.slug, values.workspace));
   if (!workspace) throw new Error(`workspace "${values.workspace}" not found`);
   const out = values.out ?? `./knowledge-vault-export-${workspace.slug}.zip`;
-  const { manifest } = await writeExport(
-    db,
-    getStorage(),
-    workspace.id,
-    createWriteStream(out, { flags: "wx", mode: 0o600 }),
-  );
+  let manifest;
+  try {
+    ({ manifest } = await writeExport(
+      db,
+      getStorage(),
+      workspace.id,
+      createWriteStream(out, { flags: "wx", mode: 0o600 }),
+    ));
+  } catch (error) {
+    await rm(out, { force: true }); // never leave a truncated archive behind
+    throw error;
+  }
   const { sha256, size } = await sha256OfFile(out);
   console.log(`Exported workspace "${workspace.slug}" to ${out}`);
   console.log(`  ${size} bytes, sha256 ${sha256}`);
