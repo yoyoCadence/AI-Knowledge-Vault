@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,6 +11,10 @@ import { artifacts, artifactVersions, fileAssets } from "@/infrastructure/databa
 import { getStorage, LocalStorageAdapter } from "@/infrastructure/storage";
 import { AppError } from "@/lib/errors";
 import { restoreArchive, restoreLimitsFromEnv, writeExport } from "@/modules/backup";
+import { hashEntry } from "@/modules/backup/restore";
+import { deterministicId } from "@/modules/imports/derive";
+import { SafeZip } from "@/modules/extraction";
+import { buildZip } from "@tests/fixtures/zip";
 import { htmlDocument, markdownDocument } from "@tests/fixtures/builders";
 import { closeTestDb, testDb } from "../helpers/db";
 import { createTestActor, drainJobs, newBatch, uploadFile } from "../helpers/imports";
@@ -209,5 +214,57 @@ describe("restore edge cases", () => {
     const report = await restore(archive, target, fresh);
     expect(report.failures).toEqual([]);
     expect(report.counts.fileAssets.stored).toBe(1);
+  });
+});
+
+describe("restore abort", () => {
+  it("stops hashing inside a single large entry once the job is aborted", async () => {
+    const file = path.join(dir, "one-big-entry.zip");
+    await writeFile(file, buildZip([{ name: "big.bin", data: randomBytes(8 * 1024 * 1024) }]));
+    const zip = await SafeZip.open(file, restoreLimitsFromEnv(getEnv()));
+    try {
+      expect(await hashEntry(zip, "big.bin")).toMatch(/^[0-9a-f]{64}$/);
+      const controller = new AbortController();
+      controller.abort(new Error("PROCESSING_TIMEOUT"));
+      await expect(hashEntry(zip, "big.bin", controller.signal)).rejects.toThrow(
+        "PROCESSING_TIMEOUT",
+      );
+    } finally {
+      zip.close();
+    }
+  });
+});
+
+describe("restore id collisions", () => {
+  it("a derived id owned by another workspace falls back deterministically, so retries skip", async () => {
+    const source = await seed([
+      { filename: "collision.html", bytes: htmlDocument({ title: `衝突 ${Math.random()}` }) },
+    ]);
+    const archivePath = await exportOf(source.workspaceId);
+    const [original] = await db
+      .select({ id: artifacts.id })
+      .from(artifacts)
+      .where(eq(artifacts.workspaceId, source.workspaceId));
+    const target = await createTestActor();
+    const other = await createTestActor();
+    // Another workspace already owns the id this restore would derive for the artifact (it
+    // can, e.g., after restoring an export of an earlier restore there).
+    await db.insert(artifacts).values({
+      id: deterministicId(`restore:${target.workspaceId}:${original!.id}`),
+      workspaceId: other.workspaceId,
+      title: "blocker",
+    });
+
+    const first = await restore(archivePath, target);
+    expect(first.counts.artifacts).toMatchObject({ copied: 1, failed: 0 });
+    const retry = await restore(archivePath, target); // e.g. the job retried after a failure
+    expect(retry.counts.artifacts).toMatchObject({ copied: 0, skipped: 1, failed: 0 });
+    const restored = await db
+      .select({ id: artifacts.id })
+      .from(artifacts)
+      .where(eq(artifacts.workspaceId, target.workspaceId));
+    expect(restored.map((row) => row.id)).toEqual([
+      deterministicId(`restore:${target.workspaceId}:${original!.id}:fallback`),
+    ]);
   });
 });

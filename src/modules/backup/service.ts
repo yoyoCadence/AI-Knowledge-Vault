@@ -2,7 +2,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import { exportRuns } from "@/infrastructure/database/schema";
 import { storageKeys, type SignedRequest, type StorageAdapter } from "@/infrastructure/storage";
@@ -14,6 +14,8 @@ import { sha256OfFile } from "@/modules/files/hash";
 import { enqueueJob, type JobContext, type JobDefinition } from "@/modules/jobs";
 import { EXPORT_FORMAT_VERSION } from "./format";
 import { writeExport } from "./export";
+import { eachRowIndependently } from "./each-independently";
+import { cleanupRestoreUploads } from "./restore-runs";
 
 /**
  * Export runs (BACKUP_RECOVERY §3): request → `export.create` job → archive in storage under
@@ -206,34 +208,53 @@ export function exportJobDefinition(timeoutMs: number): JobDefinition {
   };
 }
 
-/** Deletes expired export archives (called by the maintenance job). Idempotent. */
+/**
+ * Deletes expired export archives (called by the maintenance job). Idempotent. An object that
+ * cannot be deleted does not stop the others; the call throws afterwards so the job reports it.
+ */
 export async function deleteExpiredExports(
   db: DbExecutor,
   storage: StorageAdapter,
   now = new Date(),
+  options: { signal?: AbortSignal } = {},
 ): Promise<number> {
-  const expired = await db
-    .select()
-    .from(exportRuns)
-    .where(
-      and(
-        eq(exportRuns.status, "completed"),
-        lt(exportRuns.expiresAt, now),
-        sql`${exportRuns.storageKey} is not null`,
-      ),
-    )
-    .limit(200);
-  for (const run of expired) {
-    await storage.deleteObject(run.storageKey!);
-    await db.update(exportRuns).set({ storageKey: null }).where(eq(exportRuns.id, run.id));
-  }
-  return expired.length;
+  return eachRowIndependently(
+    (afterId, limit) =>
+      db
+        .select({ id: exportRuns.id, storageKey: exportRuns.storageKey })
+        .from(exportRuns)
+        .where(
+          and(
+            eq(exportRuns.status, "completed"),
+            lt(exportRuns.expiresAt, now),
+            sql`${exportRuns.storageKey} is not null`,
+            afterId ? gt(exportRuns.id, afterId) : undefined,
+          ),
+        )
+        .orderBy(exportRuns.id)
+        .limit(limit),
+    async (run) => {
+      await storage.deleteObject(run.storageKey!);
+      await db.update(exportRuns).set({ storageKey: null }).where(eq(exportRuns.id, run.id));
+    },
+    options,
+  );
 }
 
 export function exportCleanupJobDefinition(): JobDefinition {
   return {
     type: EXPORT_CLEANUP_JOB_TYPE,
     timeoutMs: 10 * 60 * 1000,
-    handler: async ({ db, storage }) => ({ deleted: await deleteExpiredExports(db, storage) }),
+    // The two phases run independently: a stuck export object must not starve restore cleanup.
+    handler: async ({ db, storage, signal }) => {
+      const now = new Date();
+      const [exports, restores] = await Promise.allSettled([
+        deleteExpiredExports(db, storage, now, { signal }),
+        cleanupRestoreUploads(db, storage, now, { signal }),
+      ]);
+      if (exports.status === "rejected") throw exports.reason;
+      if (restores.status === "rejected") throw restores.reason;
+      return { deleted: exports.value, restoreUploadsDeleted: restores.value };
+    },
   };
 }

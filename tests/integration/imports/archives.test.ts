@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { text } from "node:stream/consumers";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
 import { closeDb } from "@/infrastructure/database/client";
 import {
@@ -23,7 +23,7 @@ import {
   toItemDto,
 } from "@/modules/imports";
 import { claimJobs, enqueueJob } from "@/modules/jobs";
-import { enqueueDueMaintenance } from "@/worker/scheduler";
+import { enqueueDueMaintenance, MAINTENANCE_JOBS } from "@/worker/scheduler";
 import { getEnv } from "@/infrastructure/config/env";
 import {
   claudeDesignZipEntries,
@@ -448,5 +448,18 @@ describe("maintenance (P1A-RECOVERY)", () => {
       .from(processingJobs)
       .where(and(eq(processingJobs.type, "maintenance.cleanup_imports")));
     expect(scheduled.length).toBeGreaterThanOrEqual(1);
+
+    // Leave no runnable maintenance behind: the queue is shared by every test file, and a
+    // later drainJobs() would otherwise run e.g. the weekly integrity scheduling, which queues
+    // a check in every workspace (and broke integrity.test.ts when it ran after this file).
+    await db.delete(processingJobs).where(
+      and(
+        inArray(
+          processingJobs.type,
+          MAINTENANCE_JOBS.map((job) => job.type),
+        ),
+        eq(processingJobs.status, "queued"),
+      ),
+    );
   });
 });

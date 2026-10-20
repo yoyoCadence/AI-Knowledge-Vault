@@ -64,6 +64,8 @@ export const restoreRuns = pgTable(
     requestedBy: requestedBy(),
     status: text("status").$type<RunStatus>().notNull().default("queued"),
     sourceStorageKey: text("source_storage_key"),
+    sourceFilename: text("source_filename"),
+    sourceByteSize: bigint("source_byte_size", { mode: "number" }),
     sourceSha256: char("source_sha256", { length: 64 }),
     mode: text("mode").$type<RestoreMode>().notNull().default("skip_existing"),
     report: jsonb("report").$type<Record<string, unknown>>(),

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { requirePageActor } from "@/app/_lib/session";
 import { ExportPanel, type ExportView } from "@/components/backup/export-panel";
 import { IntegrityPanel, type IntegrityView } from "@/components/backup/integrity-panel";
+import { RestorePanel, type RestoreView } from "@/components/backup/restore-panel";
 import { ImportWorkspace } from "@/components/import/import-workspace";
 import { Badge } from "@/components/ui/badge";
 import { getEnv } from "@/infrastructure/config/env";
@@ -9,7 +10,14 @@ import { getDb } from "@/infrastructure/database/client";
 import { formatDateTime } from "@/lib/format";
 import { t, tOptional } from "@/lib/i18n";
 import { roleAllows } from "@/modules/auth/policy";
-import { latestIntegrityCheck, listExports, toExportDto, toIntegrityDto } from "@/modules/backup";
+import {
+  latestIntegrityCheck,
+  listExports,
+  listRestores,
+  toExportDto,
+  toIntegrityDto,
+  toRestoreDto,
+} from "@/modules/backup";
 import { ALLOWED_EXTENSIONS, listBatches } from "@/modules/imports";
 
 export const metadata: Metadata = { title: t("nav.importBackup") };
@@ -22,6 +30,11 @@ export default async function ImportPage() {
   const exports: ExportView[] = canExport
     ? JSON.parse(JSON.stringify((await listExports(getDb(), actor)).map(toExportDto)))
     : [];
+  const canRestore = roleAllows(actor.role, "backup:restore");
+  const [latestRestore] = canRestore ? await listRestores(getDb(), actor, 1) : [];
+  const restore: RestoreView | null = latestRestore
+    ? JSON.parse(JSON.stringify(toRestoreDto(latestRestore)))
+    : null;
   const latestCheck = await latestIntegrityCheck(getDb(), actor);
   const integrity: IntegrityView | null = latestCheck
     ? JSON.parse(JSON.stringify(toIntegrityDto(latestCheck)))
@@ -74,6 +87,7 @@ export default async function ImportPage() {
       </section>
 
       {canExport ? <ExportPanel initial={exports} /> : null}
+      {canRestore ? <RestorePanel initial={restore} /> : null}
       <IntegrityPanel initial={integrity} canRun={canExport} />
     </div>
   );

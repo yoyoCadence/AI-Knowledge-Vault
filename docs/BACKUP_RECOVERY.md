@@ -58,7 +58,7 @@ Properties:
    checksums would be circular.)
 5. **Migratable.** The restore code keeps a reader per `formatVersion`, and newer readers
    upgrade older formats in memory.
-6. **Re-importable.** `pnpm backup:restore <file>` (implemented); `POST /api/restores` (planned).
+6. **Re-importable.** Import & Backup → 從備份還原 (`POST /api/restores`), or `pnpm backup:restore <file>`.
 7. **No secrets.** See §1.
 
 ## 3. Export process
@@ -122,12 +122,21 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    - If `(target_workspace, sha256)` already exists, reuse it.
    - Otherwise, put the bytes to `ws/{ws}/originals/{sha256}` and insert `file_assets`
      (verified hash).
-5. **ID mapping.** UUIDs are globally unique, so restoring into a clean environment **keeps
-   the original IDs**. When an ID already exists in the target:
-   - `mode = skip_existing` (default): keep the existing row and report it as `skipped`.
-   - `mode = copy`: new IDs are generated, every FK is rewritten through the mapping table,
-     `origin_ref = restore:{restoreId}:{oldId}` is set, and the title is suffixed
-     `（還原副本）`.
+5. **ID mapping.** Every new ID is _derived_ (UUID v5), never random, so a retried attempt of
+   the same run finds the rows an earlier attempt inserted instead of inserting them again.
+   - `mode = skip_existing` (default): UUIDs are globally unique, so restoring into a clean
+     environment **keeps the original IDs**. A row whose ID already exists in the target
+     workspace is kept and reported as `skipped`; one whose ID belongs to another workspace is
+     restored under `uuidv5("restore:{targetWorkspace}:{oldId}")`. If that id is taken by
+     yet another workspace (an export of an earlier restore restored elsewhere), a second
+     derived id `…:fallback` is used, and copy mode works the same way; if both are taken,
+     the restore is refused (`CONFLICT`) rather than given a random id that a retry could
+     not find again.
+   - `mode = copy`: the whole archive is duplicated. Every row gets
+     `uuidv5("restore-copy:{restoreId}:{oldId}")`, every FK is rewritten through the mapping,
+     `origin_ref = restore:{restoreId}:{oldId}` is set, and the title of an artifact that
+     already exists in the target is suffixed `（還原副本）`. Rows an earlier attempt of the
+     same run already copied count as `copied` again, not as duplicates.
 
    Workspace IDs are always remapped to the target workspace. User references
    (`created_by`, `author_id`) map to the restoring user.
@@ -145,6 +154,34 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    - checksum results
    - warnings
    - duration
+
+### Over HTTP (import page → 備份還原)
+
+1. `POST /api/restores {filename, size}` creates a `queued` run and returns a signed PUT for
+   `ws/{ws}/restores/{restoreId}.zip` (TTL 1 hour, size capped by
+   `RESTORE_MAX_ARCHIVE_BYTES`).
+2. `POST /api/restores/:id/start {mode}` checks the uploaded size and enqueues `restore.run`
+   (idempotency key `restore.run:{id}`, up to 3 attempts, timeout `EXPORT_JOB_TIMEOUT_MS`).
+3. The job downloads the archive to a temp file, records its SHA-256 and runs the steps above
+   with the job's abort signal: a timed-out attempt stops writing at the next step, and its
+   final status write only applies while the run is still `running`, so it can never
+   overwrite the failure recorded for the timeout.
+4. The uploaded archive is the owner's copy, not ours to keep: it is deleted when the run
+   ends. `source_storage_key` is cleared only after the deletion succeeded and a day has
+   passed since the signed upload URL expired (a PUT authorized just before expiry can still
+   be transferring a large archive), so an archive recreated by a replayed or late PUT is
+   deleted again by the sweep. Archives that repeat a primary id in their metadata are
+   refused during verification; a report says "nothing written" only for failures of that
+   pre-write verification, not for a mismatch found later while storing originals. The panel retries an ambiguous start on the
+   run it already uploaded to; it never creates a second run for the same file. The hourly
+   `maintenance.cleanup_exports` job finishes any deletion that failed, and fails runs whose
+   archive was uploaded but never started within 24 hours (`UPLOAD_INCOMPLETE`), deleting the
+   archive. Such a run can no longer be started; upload again. Export and restore cleanup run
+   independently, item by item, so one object that cannot be deleted never blocks the rest.
+5. The report describes the attempt that completed the run. When that was a retry, it says
+   so (`attempt`, and a `RETRIED_RUN` warning): what an interrupted earlier attempt wrote is
+   in place but counted as skipped or reused (`skip_existing`), or as reused originals and
+   copied rows (`copy`).
 
 ### CLI
 

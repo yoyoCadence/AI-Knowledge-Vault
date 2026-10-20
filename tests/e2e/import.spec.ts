@@ -81,6 +81,35 @@ test.describe("import → library → artifact (Scenario A)", () => {
     await expect(page.getByTestId("integrity-result").getByText("全部正常")).toBeVisible({
       timeout: 30_000,
     });
+
+    // Restore the archive we just downloaded: verified, and everything already exists.
+    // The first /start response is lost after the server accepted it; retrying must start the
+    // same run, never create (and upload) a second one.
+    const creates: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/restores")
+        creates.push(request.url());
+    });
+    let dropped = false;
+    await page.route("**/api/restores/*/start", async (route) => {
+      if (dropped) return route.continue();
+      dropped = true;
+      await route.fetch(); // the server starts the run...
+      await route.abort("connectionreset"); // ...but the browser never hears back
+    });
+    await page.getByTestId("restore-file").setInputFiles({
+      name: archive.suggestedFilename(),
+      mimeType: "application/zip",
+      buffer: archiveBytes,
+    });
+    await page.getByTestId("restore-start").click();
+    await expect(page.getByTestId("restore-start")).toBeEnabled();
+    expect(dropped).toBe(true);
+    await page.getByTestId("restore-start").click();
+    const result = page.getByTestId("restore-result");
+    await expect(result.getByText("完成", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(result.getByText(/作品：還原 0 · 略過 2 · 副本 0 · 失敗 0/)).toBeVisible();
+    expect(creates).toHaveLength(1);
   });
 
   test("anonymous visitors cannot reach import or artifact APIs", async ({ request }) => {
