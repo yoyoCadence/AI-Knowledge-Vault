@@ -7,11 +7,12 @@ const nextConfig: NextConfig = {
   // Native / Node-only packages are loaded at runtime instead of bundled.
   serverExternalPackages: ["sharp", "pg", "pino", "yauzl", "yazl", "unpdf"],
   async headers() {
-    // Baseline hardening for the app origin. Preview-origin responses set their own,
-    // stricter headers in the preview route handler (docs/SECURITY.md §5).
+    // Baseline hardening for the app origin. Preview responses (`/p/*`, preview host only) are
+    // excluded: they set their own, stricter headers in the preview route handler, and
+    // X-Frame-Options: DENY would stop the app from framing them (docs/SECURITY.md §5).
     return [
       {
-        source: "/:path*",
+        source: "/((?!p/).*)",
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

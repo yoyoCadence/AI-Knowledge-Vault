@@ -22,6 +22,15 @@ function hostOf(origin: string | undefined): string | null {
   }
 }
 
+function decodable(pathname: string): boolean {
+  try {
+    decodeURIComponent(pathname);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const previewHost = hostOf(process.env.PREVIEW_ORIGIN);
@@ -29,7 +38,11 @@ export function proxy(request: NextRequest) {
   const isPreviewPath = pathname === "/p" || pathname.startsWith("/p/");
 
   if (previewHost && host === previewHost) {
-    return isPreviewPath ? NextResponse.next() : new NextResponse(null, { status: 404 });
+    // Malformed percent-encoding is refused here like any other bad preview path, before the
+    // router can turn it into a generic error page on the preview origin.
+    return isPreviewPath && decodable(pathname)
+      ? NextResponse.next()
+      : new NextResponse(null, { status: 404 });
   }
   if (isPreviewPath) return new NextResponse(null, { status: 404 });
 

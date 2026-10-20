@@ -19,7 +19,9 @@
 >
 > 匯入涵蓋 HTML、Claude Design 文件與 ZIP、Markdown、TXT、PDF、圖片。
 >
-> 閱讀模式、安全預覽、搜尋、分享**尚未實作**，介面上以「規劃中」或說明文字明確標示。
+> - 安全預覽：HTML 與 Claude Design／靜態網站在獨立網域的沙箱中顯示，停用所有指令碼
+>
+> 閱讀模式、搜尋、分享**尚未實作**，介面上以「規劃中」或說明文字明確標示。
 > 實際進度以 [`task.md`](task.md) 與 [`docs/HANDOFF.md`](docs/HANDOFF.md) 為準。
 
 ## 產品能力（規劃）
@@ -164,11 +166,14 @@ pnpm build && pnpm test:e2e  # Playwright E2E（使用獨立的 vault_e2e 資料
 - App Shell（深淺色、手機版）
 - 健康檢查 API
 - 預覽 Origin 的 host 隔離路由
+- 安全預覽（作品詳細頁）：
+  - 只在獨立的預覽網域提供，網址帶 15 分鐘的簽章 token
+  - 嚴格 CSP 與 iframe sandbox，所有指令碼都不會執行；`.js` 一律以純文字提供
+  - 作品刪除後立即失效
 
 尚未實作：
 
-- 預覽的提供（預覽檔已產生，但獨立預覽網域的路由尚未實作）
-- 閱讀模式與預覽
+- 閱讀模式（PDF、圖片、純文字的檢視也在其中）
 - 搜尋
 - 分享
 - 所有 AI 功能

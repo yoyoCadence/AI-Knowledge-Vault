@@ -50,7 +50,7 @@
 | ----------------- | ----------------------------------------------------------------------------- | ---- |
 | P1B-LIBRARY       | Library 首頁（最近新增/閱讀、收藏、分類、統計、保存狀態）、Grid/List Cards    | 🚧   |
 | P1B-DETAIL        | Artifact Detail（版本、來源資訊、下載、metadata 編輯）                        | 🚧   |
-| P1B-PREVIEW       | 獨立 Preview Origin、token、CSP、sandbox iframe                               | 📝   |
+| P1B-PREVIEW       | 獨立 Preview Origin、token、CSP、sandbox iframe                               | ✅   |
 | P1B-READER        | Reading Mode（安全 Markdown renderer、TOC、手機排版）                         | 📝   |
 | P1B-ORG           | Research Projects、Collections（階層）、Tags（正規化、合併）                  | 📝   |
 | P1B-NOTES         | Notes、Reading Status、Favorites                                              | 📝   |

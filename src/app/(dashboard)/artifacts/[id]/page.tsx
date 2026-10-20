@@ -1,19 +1,22 @@
-import { ArrowLeft, Download, FileWarning, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Download, Eye, FileWarning, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requirePageActor } from "@/app/_lib/session";
 import { label } from "@/components/library/artifact-card";
 import { KindIcon } from "@/components/library/kind-icon";
+import { PreviewFrame } from "@/components/preview/preview-frame";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getEnv } from "@/infrastructure/config/env";
 import { getDb } from "@/infrastructure/database/client";
 import { isAppError } from "@/lib/errors";
 import { formatBytes, formatDate, formatDateTime } from "@/lib/format";
 import { isUuid } from "@/lib/ids";
 import { t, tOptional } from "@/lib/i18n";
 import { getArtifactDetail, getVersionOverview } from "@/modules/artifacts";
+import { issuePreviewUrl } from "@/modules/preview";
 
 async function load(id: string) {
   const actor = await requirePageActor();
@@ -22,7 +25,10 @@ async function load(id: string) {
     const detail = await getArtifactDetail(getDb(), actor, id);
     const currentId = detail.artifact.currentVersionId ?? detail.versions[0]?.id;
     const overview = currentId ? await getVersionOverview(getDb(), actor, id, currentId) : null;
-    return { ...detail, overview };
+    const preview = currentId
+      ? await issuePreviewUrl(getDb(), actor, { artifactId: id, versionId: currentId }, getEnv())
+      : null;
+    return { ...detail, overview, preview };
   } catch (error) {
     if (isAppError(error) && error.code === "NOT_FOUND") notFound();
     throw error;
@@ -39,6 +45,16 @@ export async function generateMetadata({
   return { title: artifact.title };
 }
 
+/** Why there is no preview, in the user's terms (the original is always downloadable). */
+function previewNotice(version: { previewKind: string; previewStatus: string }): string {
+  if (version.previewStatus === "pending") return t("preview.pending");
+  if (version.previewStatus === "failed") return t("preview.failed");
+  if (version.previewKind === "framework_source") return t("preview.framework");
+  // PDF, image and text versions get their view in reading mode (P1B-READ), not this frame.
+  if (["pdf", "image", "text_only"].includes(version.previewKind)) return t("preview.notYet");
+  return t("preview.unavailable");
+}
+
 function Field({ name, value }: { name: string; value: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
@@ -50,7 +66,7 @@ function Field({ name, value }: { name: string; value: React.ReactNode }) {
 
 export default async function ArtifactPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { artifact, versions, overview } = await load(id);
+  const { artifact, versions, overview, preview } = await load(id);
   const version = overview?.version;
   const unknown = <span className="text-muted-foreground">{t("artifact.unknown")}</span>;
   const warnings = [...(overview?.extraction?.warnings ?? [])];
@@ -100,6 +116,35 @@ export default async function ArtifactPage({ params }: { params: Promise<{ id: s
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="flex min-w-0 flex-col gap-6">
+          {version ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Eye className="size-4" aria-hidden />
+                  {t("preview.title")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {preview ? (
+                  <PreviewFrame
+                    artifactId={artifact.id}
+                    versionId={version.id}
+                    title={artifact.title}
+                    initial={{
+                      url: preview.url,
+                      expiresAt: preview.expiresAt.toISOString(),
+                      expiresInSeconds: preview.expiresInSeconds,
+                    }}
+                  />
+                ) : (
+                  <p className="text-muted-foreground text-sm" data-testid="preview-notice">
+                    {previewNotice(version)}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          ) : null}
+
           <Card>
             <CardContent className="text-muted-foreground flex items-start gap-3 pt-5 text-sm">
               <FileWarning className="mt-0.5 size-4 shrink-0" aria-hidden />

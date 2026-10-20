@@ -114,7 +114,21 @@ export const zhTW = {
   "artifact.processing.pending": "等待處理",
   "artifact.processing.processing": "處理中",
   "artifact.references": "文件內引用的來源",
-  "artifact.readingSoon": "閱讀模式與安全預覽將在下一個版本提供。目前可以下載原始檔，在本機開啟。",
+  "artifact.readingSoon":
+    "閱讀模式將在下一個版本提供。目前可以使用上方的安全預覽，或下載原始檔在本機開啟。",
+
+  "preview.title": "安全預覽",
+  "preview.isolated": "預覽在獨立的網域中顯示，並停用所有指令碼；互動功能不會執行。",
+  "preview.frameTitle": "{title} 的預覽",
+  "preview.reload": "重新載入",
+  "preview.openInNewTab": "在新分頁開啟",
+  "preview.expired": "預覽連結已過期，頁面內的連結與圖片可能無法載入。請按「重新載入」。",
+  "preview.reloadFailed": "暫時無法取得新的預覽連結，請稍後再試。",
+  "preview.pending": "預覽產生中，請稍後重新整理頁面。",
+  "preview.failed": "預覽產生失敗。原始檔已完整保存，可以下載後在本機開啟。",
+  "preview.framework": "這是需要建置的原始碼專案。為了安全，不在此執行；可以下載原始檔在本機建置。",
+  "preview.unavailable": "這個作品沒有可安全顯示的網頁預覽。",
+  "preview.notYet": "此格式的預覽將在閱讀模式中提供。目前可以下載原始檔。",
   "artifact.warnings": "處理備註",
 
   "import.title": "匯入與備份",
