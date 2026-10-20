@@ -11,12 +11,13 @@ import { GET as listRoute, POST as createRoute } from "@/app/api/restores/route"
 import { PUT as localUpload } from "@/app/api/storage/local/upload/route";
 import { getEnv } from "@/infrastructure/config/env";
 import { closeDb } from "@/infrastructure/database/client";
-import { artifacts, auditLogs, restoreRuns } from "@/infrastructure/database/schema";
+import { artifacts, auditLogs, exportRuns, restoreRuns } from "@/infrastructure/database/schema";
 import { getStorage, storageKeys, type StorageAdapter } from "@/infrastructure/storage";
 import { newId } from "@/lib/ids";
 import {
   ABANDONED_RESTORE_AFTER_MS,
   cleanupRestoreUploads,
+  exportCleanupJobDefinition,
   restoreLimitsFromEnv,
   runRestore,
   writeExport,
@@ -122,13 +123,18 @@ function hookedStorage(hooks: Partial<StorageAdapter>): StorageAdapter {
 }
 
 /** Runs the restore job handler directly, as one attempt of the worker would. */
-async function runAttempt(restoreId: string, storage: StorageAdapter, signal: AbortSignal) {
+async function runAttempt(
+  restoreId: string,
+  storage: StorageAdapter,
+  signal: AbortSignal,
+  attemptCount = 1,
+) {
   const ctx = {
     db,
     storage,
     signal,
     logger: pino({ level: "silent" }),
-    job: { payload: { restoreId } },
+    job: { payload: { restoreId }, attemptCount },
     reportProgress: async () => undefined,
   } as unknown as JobContext;
   return runRestore(ctx, {
@@ -344,5 +350,59 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
     expect((await start(cookie, fresh.id)).status).toBe(202);
     await drainJobs();
     expect((await read(cookie, fresh.id)).status).toBe("completed");
+  });
+
+  it("a retried run's report says it covers only the final attempt", async () => {
+    const { cookie } = await owner();
+    const restore = await uploadArchive(cookie, archive);
+    await db.update(restoreRuns).set({ status: "running" }).where(eq(restoreRuns.id, restore.id));
+    await runAttempt(restore.id, getStorage(), new AbortController().signal, 2);
+    const [run] = await db.select().from(restoreRuns).where(eq(restoreRuns.id, restore.id));
+    const report = run!.report as { attempt: number; warnings: string[] };
+    expect(report.attempt).toBe(2);
+    expect(report.warnings[0]).toMatch(/^RETRIED_RUN: this report covers attempt 2/);
+  });
+
+  it("maintenance cleans what it can when some deletions keep failing", async () => {
+    const { cookie, actor } = await owner();
+    const stuckExportKey = storageKeys.export(actor.workspaceId, newId());
+    await getStorage().putObject(stuckExportKey, Buffer.from("expired export"));
+    await db.insert(exportRuns).values({
+      workspaceId: actor.workspaceId,
+      status: "completed",
+      formatVersion: 1,
+      storageKey: stuckExportKey,
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+    const ended: string[] = [];
+    for (let index = 0; index < 2; index += 1) {
+      const restore = await uploadArchive(cookie, archive);
+      await db
+        .update(restoreRuns)
+        .set({ status: "failed", completedAt: new Date() })
+        .where(eq(restoreRuns.id, restore.id));
+      ended.push(storageKeys.restoreUpload(actor.workspaceId, restore.id));
+    }
+    const [stuckRestoreKey, cleanableKey] = ended as [string, string];
+    const stuck = new Set([stuckExportKey, stuckRestoreKey]);
+    const storage = hookedStorage({
+      deleteObject: async (key) => {
+        if (stuck.has(key)) throw new Error("object locked");
+        return getStorage().deleteObject(key);
+      },
+    });
+
+    const cleanup = exportCleanupJobDefinition();
+    const ctx = { db, storage } as unknown as JobContext;
+    await expect(cleanup.handler(ctx)).rejects.toThrow(/cleanup step\(s\) failed/);
+    // Neither the stuck export nor the stuck restore upload starved the remaining upload.
+    expect(await getStorage().headObject(cleanableKey)).toBeNull();
+    expect(await getStorage().headObject(stuckRestoreKey)).not.toBeNull();
+    expect(await getStorage().headObject(stuckExportKey)).not.toBeNull();
+    await getStorage().deleteObject(stuckExportKey);
+    await db
+      .update(exportRuns)
+      .set({ storageKey: null })
+      .where(eq(exportRuns.storageKey, stuckExportKey));
   });
 });

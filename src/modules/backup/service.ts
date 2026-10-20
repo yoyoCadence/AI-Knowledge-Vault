@@ -14,6 +14,7 @@ import { sha256OfFile } from "@/modules/files/hash";
 import { enqueueJob, type JobContext, type JobDefinition } from "@/modules/jobs";
 import { EXPORT_FORMAT_VERSION } from "./format";
 import { writeExport } from "./export";
+import { eachIndependently } from "./each-independently";
 import { cleanupRestoreUploads } from "./restore-runs";
 
 /**
@@ -207,7 +208,10 @@ export function exportJobDefinition(timeoutMs: number): JobDefinition {
   };
 }
 
-/** Deletes expired export archives (called by the maintenance job). Idempotent. */
+/**
+ * Deletes expired export archives (called by the maintenance job). Idempotent. An object that
+ * cannot be deleted does not stop the others; the call throws afterwards so the job reports it.
+ */
 export async function deleteExpiredExports(
   db: DbExecutor,
   storage: StorageAdapter,
@@ -224,10 +228,10 @@ export async function deleteExpiredExports(
       ),
     )
     .limit(200);
-  for (const run of expired) {
+  await eachIndependently(expired, async (run) => {
     await storage.deleteObject(run.storageKey!);
     await db.update(exportRuns).set({ storageKey: null }).where(eq(exportRuns.id, run.id));
-  }
+  });
   return expired.length;
 }
 
@@ -235,9 +239,15 @@ export function exportCleanupJobDefinition(): JobDefinition {
   return {
     type: EXPORT_CLEANUP_JOB_TYPE,
     timeoutMs: 10 * 60 * 1000,
-    handler: async ({ db, storage }) => ({
-      deleted: await deleteExpiredExports(db, storage),
-      restoreUploadsDeleted: await cleanupRestoreUploads(db, storage),
-    }),
+    // The two phases run independently: a stuck export object must not starve restore cleanup.
+    handler: async ({ db, storage }) => {
+      const [exports, restores] = await Promise.allSettled([
+        deleteExpiredExports(db, storage),
+        cleanupRestoreUploads(db, storage),
+      ]);
+      if (exports.status === "rejected") throw exports.reason;
+      if (restores.status === "rejected") throw restores.reason;
+      return { deleted: exports.value, restoreUploadsDeleted: restores.value };
+    },
   };
 }

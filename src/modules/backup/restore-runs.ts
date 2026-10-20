@@ -9,6 +9,7 @@ import { recordAudit, type RequestMeta } from "@/modules/audit";
 import type { Actor } from "@/modules/auth";
 import { downloadToTempFile } from "@/modules/files/staging";
 import { enqueueJob, type JobContext, type JobDefinition } from "@/modules/jobs";
+import { eachIndependently } from "./each-independently";
 import { restoreArchive, type RestoreLimits } from "./restore";
 
 /**
@@ -240,7 +241,15 @@ export async function runRestore(
       limits,
       signal: ctx.signal,
     });
-    await finish(db, storage, run, { status: "completed", report: { ...report } });
+    // Each attempt reports what it saw. Rows an interrupted earlier attempt of this run wrote
+    // are already in place, so they show up as skipped or reused: say so instead of guessing.
+    const attempt = ctx.job.attemptCount;
+    if (attempt > 1) {
+      report.warnings.unshift(
+        `RETRIED_RUN: this report covers attempt ${attempt}; rows that an earlier, interrupted attempt of this run wrote are counted as skipped (projects, artifacts, versions) or reused (originals)`,
+      );
+    }
+    await finish(db, storage, run, { status: "completed", report: { ...report, attempt } });
     return { restoreId: run.id, counts: report.counts };
   } catch (error) {
     if (isAppError(error) && !error.retryable) {
@@ -323,6 +332,6 @@ export async function cleanupRestoreUploads(
       ),
     )
     .limit(200);
-  for (const run of ended) await releaseUpload(db, storage, run);
+  await eachIndependently(ended, (run) => releaseUpload(db, storage, run));
   return ended.length;
 }

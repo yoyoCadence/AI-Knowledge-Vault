@@ -166,7 +166,11 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    ends, and `source_storage_key` is cleared only after the deletion succeeded. The hourly
    `maintenance.cleanup_exports` job finishes any deletion that failed, and fails runs whose
    archive was uploaded but never started within 24 hours (`UPLOAD_INCOMPLETE`), deleting the
-   archive. Such a run can no longer be started; upload again.
+   archive. Such a run can no longer be started; upload again. Export and restore cleanup run
+   independently, item by item, so one object that cannot be deleted never blocks the rest.
+5. The report describes the attempt that completed the run. When that was a retry, it says
+   so (`attempt`, and a `RETRIED_RUN` warning): rows an interrupted earlier attempt wrote are
+   in place but counted as skipped or reused.
 
 ### CLI
 
