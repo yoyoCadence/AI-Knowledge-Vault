@@ -58,7 +58,7 @@ Properties:
    checksums would be circular.)
 5. **Migratable.** The restore code keeps a reader per `formatVersion`, and newer readers
    upgrade older formats in memory.
-6. **Re-importable.** `pnpm backup:restore <file>` (implemented); `POST /api/restores` (planned).
+6. **Re-importable.** Import & Backup → 從備份還原 (`POST /api/restores`), or `pnpm backup:restore <file>`.
 7. **No secrets.** See §1.
 
 ## 3. Export process

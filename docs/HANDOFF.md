@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 8: integrity check)
+## 1. Snapshot (2026-10-20, after PR 9: restore through the UI — Phase 1A complete)
 
 **Merged and tested**
 
@@ -211,11 +211,29 @@ conversations. Update it at the end of every PR.
   - Tests: `tests/integration/backup/integrity.test.ts` (all OK, then a deleted object →
     `missing`, rewritten bytes → `corrupt`, workspace isolation) and an E2E step.
 
+- **PR 9, P1A-RESTORE through the API and UI** (`src/modules/backup/restore-runs.ts`):
+  - `POST /api/restores` `{filename, size}` (owner only, `backup:restore`): creates a
+    `restore_runs` row (migration `0005_restore_upload`, which adds `source_filename` and
+    `source_byte_size`) and returns a signed upload to `storageKeys.restoreUpload`. Archives
+    are capped at `RESTORE_MAX_ARCHIVE_BYTES` (5 GiB).
+  - `POST /api/restores/:id/start` `{mode}`: checks the uploaded size and queues `restore.run`.
+    Idempotent; returns 409 before the upload exists.
+  - The `restore.run` job downloads the archive, records its SHA-256, runs `restoreArchive`,
+    stores the report, and deletes the uploaded archive. An invalid archive
+    (`CHECKSUM_MISMATCH`, wrong format) fails the run with its details and writes nothing.
+  - `GET /api/restores` and `GET /api/restores/:id`. Requests and starts are audited.
+  - UI: a "從備份還原" panel on `/import`. Choose a file and a mode (each mode is explained),
+    see upload progress, then the report: counts, warnings, failures, and "nothing written" on
+    verification failures.
+  - Tests: `tests/integration/api/restores-api.test.ts` (end to end, idempotent start, tampered
+    archive → `CHECKSUM_MISMATCH` with nothing written, start before upload, oversize, workspace
+    isolation). The E2E test now restores the archive it just exported through the UI
+    (`略過 2`).
+
 **Not done or not verified**
 
 - Preview files are stored but **not yet served**. The preview origin route (`/p/:token/*`) is
   P1B-PREVIEW.
-- Restore is CLI-only. There is no `/api/restores` or UI yet (PR 9).
 - Export archives are unencrypted (P1A-ENC). The UI and CLI warn about this.
 - HTML extraction can join adjacent inline labels without a space. This is cosmetic.
 - The S3 adapter has not been verified against real R2.
@@ -250,19 +268,25 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 ## 4. Next steps (exact)
 
-**PR 9: restore through the API and UI** (BACKUP_RECOVERY.md §6):
+**Phase 1A is feature-complete.** Remaining Phase 1A items:
 
-1. `POST /api/restores` `{filename, size}` (permission `backup:restore`, owner only) creates a
-   `restore_runs` row and returns a signed upload to `storageKeys.restoreUpload`. Reuse the
-   import upload path, which already caps size and checks the content length.
-2. `POST /api/restores/:id/start` `{mode}` enqueues `restore.run`. The handler downloads to a
-   temp file (`downloadToTempFile`, cap `RESTORE_MAX_TOTAL_BYTES`), calls `restoreArchive` with
-   the run's ID, and stores the report or error code. Delete the uploaded archive afterwards.
-3. `GET /api/restores/:id` (report) and `GET /api/restores` (recent runs).
-4. UI on `/import`: a restore card (choose a file, choose a mode with an explanation, then a
-   report: counts, warnings, failures).
-5. Tests: restore over HTTP end to end; viewer and editor are refused; a tampered upload sets
-   the run to failed with `CHECKSUM_MISMATCH`.
+- P1A-ENC: built-in `age` encryption for exports.
+- Verify the S3 adapter against real R2. This needs the owner's credentials.
+
+**PR 10: P1B-PREVIEW** (SECURITY.md §5, ARCHITECTURE.md preview origin):
+
+1. `POST /api/artifacts/:id/versions/:versionId/preview-token` returns a short-lived HMAC
+   path token, using `PREVIEW_TOKEN_SECRET` and `src/lib/signed-token.ts`.
+2. Route `/p/:token/*` on `PREVIEW_ORIGIN` only (`proxy.ts` already routes by host):
+   - resolve the token to `(workspace, version)`
+   - serve `derived_assets` `preview_file` rows by `path` with a strict CSP (`sandbox`,
+     `default-src 'none'`, `img-src`/`style-src`/`font-src 'self'`, no scripts),
+     `X-Content-Type-Options: nosniff`, and `Cross-Origin-Resource-Policy`
+   - never serve from `APP_ORIGIN`
+3. Detail page: an iframe (`sandbox` without `allow-scripts`) pointing at the preview origin,
+   plus a "open in new tab" link.
+4. Tests: token tamper/expiry, path traversal in `*`, the CSP header, a request on the app
+   origin → 404, and an E2E check that the Claude Design preview renders.
 
 **Then Phase 1B:**
 

@@ -84,6 +84,8 @@ const EnvSchema = z
     EXPORT_JOB_TIMEOUT_MS: positiveInt(30 * 60_000),
     RESTORE_MAX_ENTRIES: positiveInt(200_000),
     RESTORE_MAX_TOTAL_BYTES: positiveInt(50 * 1024 * MiB),
+    /** Largest backup archive accepted for upload through the API (restores via the UI). */
+    RESTORE_MAX_ARCHIVE_BYTES: positiveInt(5 * 1024 * MiB),
 
     WORKER_CONCURRENCY: positiveInt(2),
     WORKER_POLL_INTERVAL_MS: positiveInt(1_000),

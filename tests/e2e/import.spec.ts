@@ -81,6 +81,17 @@ test.describe("import → library → artifact (Scenario A)", () => {
     await expect(page.getByTestId("integrity-result").getByText("全部正常")).toBeVisible({
       timeout: 30_000,
     });
+
+    // Restore the archive we just downloaded: verified, and everything already exists.
+    await page.getByTestId("restore-file").setInputFiles({
+      name: archive.suggestedFilename(),
+      mimeType: "application/zip",
+      buffer: archiveBytes,
+    });
+    await page.getByTestId("restore-start").click();
+    const result = page.getByTestId("restore-result");
+    await expect(result.getByText("完成", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(result.getByText(/作品：還原 0 · 略過 2 · 副本 0 · 失敗 0/)).toBeVisible();
   });
 
   test("anonymous visitors cannot reach import or artifact APIs", async ({ request }) => {

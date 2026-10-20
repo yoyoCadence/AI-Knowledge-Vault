@@ -9,6 +9,19 @@ export {
 } from "./restore";
 export { reextractVersion, reextractJobDefinition } from "./reextract";
 export {
+  createRestore,
+  startRestore,
+  getRestore,
+  listRestores,
+  runRestore,
+  restoreJobDefinition,
+  toRestoreDto,
+  CreateRestoreInput,
+  StartRestoreInput,
+  RESTORE_JOB_TYPE,
+  type RestoreRun,
+} from "./restore-runs";
+export {
   requestIntegrityCheck,
   latestIntegrityCheck,
   runIntegrityCheck,

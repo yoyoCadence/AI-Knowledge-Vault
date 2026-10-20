@@ -33,7 +33,7 @@
 | P1A-RECOVERY      | staging 清理、過期處理、reconciliation                                                               | ✅   |
 | P1A-IMPORT-UI     | 拖曳/多選上傳、進度、匯入報告、重試                                                                  | ✅   |
 | P1A-EXPORT        | 可攜式匯出 v1（manifest、checksums.sha256、metadata、originals、normalized）                         | ✅   |
-| P1A-RESTORE       | 還原（驗證、ID mapping、衝突模式、重建、報告）+ CLI                                                  | 🚧   |
+| P1A-RESTORE       | 還原（驗證、ID mapping、衝突模式、重建、報告）+ CLI                                                  | ✅   |
 | P1A-INTEGRITY     | 完整性檢查 job 與狀態                                                                                | ✅   |
 | P1A-ENC           | 內建 age 加密匯出                                                                                    | 📝   |
 

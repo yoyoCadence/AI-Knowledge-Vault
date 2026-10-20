@@ -4,10 +4,11 @@ _Last updated: 2026-10-20 by the implementing agent._
 
 ## Current focus
 
-**PR 8 (this branch): P1A-INTEGRITY.** The integrity check job, API, panel and weekly schedule.
+**PR 9 (this branch): restore through the API and UI.** This completes Phase 1A, apart from
+P1A-ENC and the real-R2 check.
 
-**Next: PR 9, restore through the API and UI. Then Phase 1B, starting with the preview
-origin.** The exact steps are in `docs/HANDOFF.md` §4.
+**Next: Phase 1B, starting with P1B-PREVIEW (PR 10).** The exact steps are in
+`docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.
@@ -42,7 +43,7 @@ findings handled. If the review bot is unavailable, run an independent review fi
    - security tests (traversal, bomb, symlink)
 5. ✅ P1A import UI: dropzone, progress and report, plus the library grid and detail page (PR 5).
    - ✅ Hardening (PR 6): the review findings on PRs 1–4.
-6. 🚧 P1A export and restore (PR 7 ✅ export + restore core; PR 8 ✅ integrity; PR 9 restore UI):
+6. ✅ P1A export and restore (PR 7 export + restore core; PR 8 integrity; PR 9 restore UI).
    - format v1, export job, restore job, CLI
    - integrity check
    - round-trip and tamper tests

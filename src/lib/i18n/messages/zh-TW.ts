@@ -160,6 +160,31 @@ export const zhTW = {
   "import.batchStatus.completed": "完成",
   "import.batchStatus.completed_with_errors": "完成（有錯誤）",
   "import.batchStatus.cancelled": "已取消",
+  "restore.title": "從備份還原",
+  "restore.description":
+    "上傳之前匯出的 ZIP。系統會先驗證所有校驗碼，任何檔案不符就整個拒絕，不寫入任何資料；通過後才還原，並在背景重建文字、章節、縮圖與預覽。",
+  "restore.choose": "選擇備份檔",
+  "restore.mode": "已存在的作品",
+  "restore.mode.skip_existing": "略過已存在（建議）",
+  "restore.mode.skip_existing.hint":
+    "已在知識庫中的作品保持不變，只補回缺少的作品、版本與遺失的原始檔。重複執行不會產生重複資料。",
+  "restore.mode.copy": "建立副本",
+  "restore.mode.copy.hint": "已存在的作品會以新 ID 另存一份，標題加上「（還原副本）」。",
+  "restore.start": "開始還原",
+  "restore.uploading": "上傳中 {percent}%",
+  "restore.status.uploading": "等待上傳",
+  "restore.status.queued": "排隊中",
+  "restore.status.running": "驗證與還原中",
+  "restore.status.completed": "完成",
+  "restore.status.failed": "失敗",
+  "restore.counts.artifacts":
+    "作品：還原 {restored} · 略過 {skipped} · 副本 {copied} · 失敗 {failed}",
+  "restore.counts.versions":
+    "版本：還原 {restored} · 略過 {skipped} · 副本 {copied} · 失敗 {failed}",
+  "restore.counts.files": "原始檔：新存 {stored} · 已存在 {reused} · 修復 {repaired}",
+  "restore.reextract": "{count} 個版本正在背景重建內容",
+  "restore.warnings": "{count} 則說明",
+  "restore.nothingWritten": "驗證未通過，沒有寫入任何資料。",
   "integrity.title": "完整性檢查",
   "integrity.description":
     "重新計算每一個原始檔的 SHA-256，確認儲存空間中的檔案沒有遺失或損毀。系統每週自動檢查一次。",
@@ -193,7 +218,7 @@ export const zhTW = {
   "backup.unencrypted":
     "匯出檔未加密。存放到雲端或交給他人之前，請先加密，例如：age --passphrase -o export.zip.age export.zip",
   "backup.restoreHint":
-    "還原：在伺服器上執行 pnpm backup:restore <檔案> --workspace <slug>（會先驗證所有校驗碼，未通過則不寫入任何資料）。網頁介面的還原將在下一個版本提供。",
+    "還原：使用下方的「從備份還原」，或在伺服器上執行 pnpm backup:restore <檔案> --workspace <slug>。",
   "settings.title": "設定",
 } as const;
 
