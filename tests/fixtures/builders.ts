@@ -9,13 +9,13 @@ import sharp from "sharp";
 export function htmlDocument(
   options: { title?: string; body?: string; lang?: string } = {},
 ): string {
-  const title = options.title ?? "形態發生研究筆記";
+  const title = options.title ?? "城市熱島研究筆記";
   return `<!DOCTYPE html>
 <html lang="${options.lang ?? "zh-Hant-TW"}">
 <head>
 <meta charset="utf-8">
 <title>${title}</title>
-<meta name="description" content="胚胎發育中的圖案形成機制摘要。">
+<meta name="description" content="都市熱島效應的成因與對策摘要。">
 <style>body{font-family:serif}</style>
 <script>window.tracking = "should never be extracted";</script>
 </head>
@@ -23,7 +23,7 @@ export function htmlDocument(
 <h1>${title}</h1>
 ${
   options.body ??
-  `<p>胚胎沒有藍圖，只有規則。這份筆記整理形態發生的主要機制與證據強度。</p>
+  `<p>城市沒有恆溫器，只有材料。這份筆記整理城市熱島的主要成因與證據強度。</p>
 <h2>位置資訊</h2>
 <p>細胞透過形態素濃度梯度得知自己的位置（positional information）。</p>
 <ul><li>Bicoid 梯度</li><li>Sonic hedgehog</li></ul>
@@ -43,7 +43,7 @@ ${
  * Mimics the structure of a Claude Design ("dc") export document: <x-dc>, <helmet> includes,
  * {{ bindings }}, <sc-if> and a text/x-dc component script (ARCHITECTURE_REVIEW F-03).
  */
-export function claudeDesignDocument(title = "胚胎沒有藍圖，只有規則"): string {
+export function claudeDesignDocument(title = "城市沒有恆溫器，只有材料"): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -59,7 +59,7 @@ export function claudeDesignDocument(title = "胚胎沒有藍圖，只有規則"
 </helmet>
 <main>
 <header><h1>${title}</h1><p>一顆受精卵如何「知道」要長出頭、手和眼睛？</p></header>
-<section><h2>30 秒答案</h2><p>形態發生依靠局部規則與訊號梯度。</p></section>
+<section><h2>30 秒答案</h2><p>城市熱島來自鋪面蓄熱與綠地不足。</p></section>
 <sc-if value="{{ show2 }}"><section><h2>劑量實驗</h2><p>目前劑量：{{ doseLabel }}</p></section></sc-if>
 <section><h2>來源</h2><p><a href="https://doi.org/10.1126/science.1252960">Science 2014</a></p></section>
 </main>
@@ -96,7 +96,7 @@ export const BIG5_SAMPLE = Buffer.from([0xa4, 0xa4, 0xa4, 0xe5, 0xb4, 0xfa, 0xb8
 
 /** Builds a minimal, valid multi-page PDF with a text layer (Helvetica, ASCII only). */
 export function pdfDocument(
-  pages: string[] = ["Hello Vault PDF page one", "Second page about morphogenesis"],
+  pages: string[] = ["Hello Vault PDF page one", "Second page about urban heat"],
   title = "Vault Test PDF",
 ): Buffer {
   const objects: string[] = [];
@@ -146,7 +146,7 @@ export async function pngImage(
  * A Claude-Design-like export archive: <name>.dc.html + support.js + _ds/ design system +
  * .thumbnail (WebP). Mirrors the layout analysed in ARCHITECTURE_REVIEW F-03; content synthetic.
  */
-export async function claudeDesignZipEntries(title = "胚胎沒有藍圖，只有規則") {
+export async function claudeDesignZipEntries(title = "城市沒有恆溫器，只有材料") {
   const thumbnail = await sharp({
     create: { width: 160, height: 100, channels: 3, background: { r: 200, g: 120, b: 60 } },
   })
@@ -155,7 +155,7 @@ export async function claudeDesignZipEntries(title = "胚胎沒有藍圖，只�
   return [
     { name: ".thumbnail", data: thumbnail },
     {
-      name: "Morphogenesis Report.dc.html",
+      name: "Urban Heat Report.dc.html",
       data: claudeDesignDocument(title),
       method: "deflate" as const,
     },

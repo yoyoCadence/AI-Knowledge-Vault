@@ -79,7 +79,7 @@ describe("import pipeline — single files (Phase 1A exit criteria 1, 3, 5, 6)",
     const batch = await newBatch(actor);
     const html = htmlDocument();
     const queued = await uploadFile(actor, batch.id, {
-      filename: "形態發生筆記.html",
+      filename: "城市熱島筆記.html",
       bytes: html,
     });
     expect(queued.status).toBe("queued");
@@ -94,10 +94,10 @@ describe("import pipeline — single files (Phase 1A exit criteria 1, 3, 5, 6)",
     });
 
     const { artifact, versions } = await getArtifactDetail(db, actor, item.resultArtifactId!);
-    expect(artifact.title).toBe("形態發生研究筆記");
+    expect(artifact.title).toBe("城市熱島研究筆記");
     expect(artifact.visibility).toBe("private");
     // The document's own description wins over a guessed first paragraph.
-    expect(artifact.summary).toBe("胚胎發育中的圖案形成機制摘要。");
+    expect(artifact.summary).toBe("都市熱島效應的成因與對策摘要。");
     expect(versions).toHaveLength(1);
     expect(versions[0]).toMatchObject({
       versionNumber: 1,
@@ -216,13 +216,13 @@ describe("import pipeline — single files (Phase 1A exit criteria 1, 3, 5, 6)",
     const actor = await createTestActor();
     const batch = await newBatch(actor);
     const queued = await uploadFile(actor, batch.id, {
-      filename: "Morphogenesis Report.dc.html",
+      filename: "Urban Heat Report.dc.html",
       bytes: claudeDesignDocument(),
     });
     await drainJobs();
     const item = await itemById(queued.id);
     const { artifact, versions } = await getArtifactDetail(db, actor, item.resultArtifactId!);
-    expect(artifact.title).toBe("胚胎沒有藍圖，只有規則");
+    expect(artifact.title).toBe("城市沒有恆溫器，只有材料");
     expect(versions[0]).toMatchObject({
       contentKind: "claude_design_document",
       sourcePlatform: "claude_design",
@@ -308,6 +308,10 @@ describe("duplicates and versions (FR-IMP-7/8/9)", () => {
     });
     const { artifact, versions } = await getArtifactDetail(db, actor, first.resultArtifactId!);
     expect(versions.map((version) => version.versionNumber)).toEqual([2, 1]);
+    const card = (await listArtifacts(db, actor, { limit: 50 })).items.find(
+      (item) => item.id === first.resultArtifactId,
+    );
+    expect(card).toMatchObject({ versionCount: 2, currentVersion: { versionNumber: 2 } });
     expect(artifact.currentVersionId).toBe(second.resultVersionId);
     // The artifact title is not silently rewritten by a new version.
     expect(artifact.title).toBe("市場結構研究 V1");

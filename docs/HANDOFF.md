@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 4: ZIP pipeline + recovery)
+## 1. Snapshot (2026-10-20, after PR 5: import UI + library)
 
 **Merged and tested**
 
@@ -46,12 +46,30 @@ conversations. Update it at the end of every PR.
   - **Tests:** 157 passing, including 22 ZIP security and classification unit tests and the
     50-item mixed batch (exit criterion 4).
   - **Verified locally on the owner's real Claude Design ZIP** (not committed): classified as
-    `claude_design_document`, title 「胚胎沒有藍圖，只有規則」, 31 sections, 39 references,
+    `claude_design_document`, Traditional Chinese title detected, 31 sections, 39 references,
     `.thumbnail` cover, 7 preview files.
+
+- **PR 5, P1A-IMPORT-UI + library basics:**
+  - `/import` page with `ImportWorkspace` (client component):
+    - drag and drop or file picker, with extension and size checks
+    - bounded parallel direct uploads (3) with progress through XHR
+    - `/complete` per file, then report polling every 1.5 s
+    - per-file status, outcome, links and errors, with retry for failed items
+    - batch options: auto-version by filename, and a source platform
+    - recent batches list
+  - Library grid (`/`) with cursor paging. Thumbnails come from `GET /api/artifacts/:id/thumbnail`
+    (authorized; our own WebP).
+  - Artifact detail (`/artifacts/:id`): kind, visibility, summary, outline from the sections,
+    the document's references, processing notes, file facts (name, size, SHA-256, status),
+    source facts ("未知" when unknown, never guessed), versions with downloads.
+  - Worker: optional `WORKER_HEALTH_PORT` (`GET /healthz` on localhost), used by Playwright to
+    start the worker in E2E.
+  - Fixed: `listBatches` counts were 0 (a correlated subquery bound to the wrong table). It now
+    uses a JOIN with GROUP BY, and a regression test covers it.
+  - E2E: `tests/e2e/import.spec.ts` (Scenario A end-to-end in a real browser).
 
 **Not done or not verified**
 
-- No upload UI and no library UI yet. Both the import API and the artifact API are complete.
 - Preview files are stored but **not yet served**. The preview origin route (`/p/:token/*`) is
   P1B-PREVIEW.
 - No export, restore or integrity job yet (P1A-EXPORT, P1A-RESTORE, P1A-INTEGRITY).
@@ -88,22 +106,42 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 ## 4. Next steps (exact)
 
-**PR 5: P1A-IMPORT-UI + a minimal library listing.**
+**PR 6: P1A-EXPORT + P1A-RESTORE + P1A-INTEGRITY** (BACKUP_RECOVERY.md):
 
-1. `src/app/(dashboard)/import/page.tsx`, replacing the FutureFeature placeholder:
-   - a client `ImportDropzone` (drag and drop plus a file picker)
-   - per file: `POST /api/imports/:batch/items` → `PUT upload.url` with progress via
-     `XMLHttpRequest.upload.onprogress` → `/complete`
-   - at most 3 parallel uploads
-   - poll `GET /api/imports/:batch` every 1.5 s until no item is `queued` or `processing`
-   - a report table with status, outcome, errors and warnings, a retry button for failed items,
-     and links to result artifacts
-2. Recent batches list (`GET /api/imports`).
-3. Library page: cards from `listArtifacts` (title, kind badge, source platform, date,
-   thumbnail via a new authorized route `GET /api/artifacts/:id/thumbnail`), plus an empty
-   state with an import link.
-4. E2E: log in → upload 3 fixtures (HTML, ZIP, a broken file) → see the report → open the
-   library and find the cards.
+1. Schema: `export_runs`, `restore_runs`, `integrity_checks`.
+2. `src/modules/backup/format.ts`:
+   - Zod schemas for manifest v1 and metadata files
+   - `checksums.sha256` writer and parser (GNU format)
+   - a `README.txt` template
+3. `export.ts` (job `export.create`): stream rows and originals into a ZIP (yazl) at
+   `storageKeys.export`, plus `export_runs` bookkeeping, audit, and
+   `GET /api/exports/:id/download` (signed URL).
+4. `restore.ts` (job `restore.run`):
+   - Use SafeZip with limits suitable for large archives.
+   - Verify every checksum **before writing anything**.
+   - Restore originals (content-addressed, dedup), then rows in dependency order, keeping IDs
+     unless they conflict (`skip_existing` | `copy`).
+   - Re-extract each version (reuse the import extraction code via a `restore.reextract_version`
+     job), and fall back to the archived normalized markdown.
+   - Write a report.
+5. CLI: `pnpm export --workspace <slug> --out <file>` and
+   `pnpm restore <file> --workspace <slug> [--mode]`.
+6. Integrity job: re-hash originals, update `storage_status` and `integrity_verified_at`, write
+   an `integrity_checks` row; show the last check on `/import`.
+7. Tests:
+   - round trip into a fresh schema and storage
+   - `skip_existing` idempotency
+   - `copy` mode
+   - a tampered archive aborts with `CHECKSUM_MISMATCH`
+   - `sha256sum -c` compatibility of `checksums.sha256`
 
-**PR 6: P1A-EXPORT + P1A-RESTORE + P1A-INTEGRITY.** See BACKUP_RECOVERY.md (format v1,
-round-trip test, tamper test).
+**Then Phase 1B:**
+
+- preview origin route `/p/:token/*` (derived files already exist) plus the iframe
+- reading mode (safe Markdown renderer)
+- CJK search
+- organization (projects, collections, tags)
+- notes, reading state
+- sharing
+- ops dashboard
+- remaining E2E

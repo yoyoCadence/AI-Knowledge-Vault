@@ -1,9 +1,11 @@
-import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import type { DbExecutor } from "@/infrastructure/database/client";
 import {
   artifacts,
   artifactVersions,
   derivedAssets,
+  documentSections,
+  extractedDocuments,
   fileAssets,
 } from "@/infrastructure/database/schema";
 import { notFound } from "@/lib/errors";
@@ -55,8 +57,10 @@ export async function listArtifacts(
       sourcePlatform: artifactVersions.sourcePlatform,
       sourceModel: artifactVersions.sourceModel,
       processingStatus: artifactVersions.processingStatus,
-      versionCount: sql<number>`(select count(*)::int from ${artifactVersions} v where v.artifact_id = ${artifacts.id})`,
-      hasThumbnail: sql<boolean>`exists (select 1 from ${derivedAssets} d where d.artifact_version_id = ${artifacts.currentVersionId} and d.kind = 'thumbnail')`,
+      // Outer columns are referenced as "artifacts".<col> explicitly: drizzle may render bare
+      // column names, which would silently bind to the subquery's own table.
+      versionCount: sql<number>`(select count(*)::int from ${artifactVersions} v where v.artifact_id = ${artifacts}.id)`,
+      hasThumbnail: sql<boolean>`exists (select 1 from ${derivedAssets} d where d.artifact_version_id = ${artifacts}.current_version_id and d.kind = 'thumbnail')`,
     })
     .from(artifacts)
     .leftJoin(artifactVersions, eq(artifactVersions.id, artifacts.currentVersionId))
@@ -174,4 +178,53 @@ export async function getVersionWithOriginal(
     );
   if (!row) throw notFound("Version");
   return row;
+}
+
+/** Version detail for the artifact page: extraction summary, outline and references. */
+export async function getVersionOverview(
+  db: DbExecutor,
+  actor: Actor,
+  artifactId: string,
+  versionId: string,
+) {
+  const { version, file } = await getVersionWithOriginal(db, actor, artifactId, versionId);
+  const [document] = version.activeExtractionId
+    ? await db
+        .select({
+          id: extractedDocuments.id,
+          status: extractedDocuments.status,
+          language: extractedDocuments.language,
+          charCount: extractedDocuments.charCount,
+          warnings: extractedDocuments.warnings,
+          errorCode: extractedDocuments.errorCode,
+          errorMessage: extractedDocuments.errorMessage,
+        })
+        .from(extractedDocuments)
+        .where(eq(extractedDocuments.id, version.activeExtractionId))
+    : [];
+  const outline = document
+    ? await db
+        .select({
+          heading: documentSections.heading,
+          level: documentSections.level,
+          anchor: documentSections.anchor,
+        })
+        .from(documentSections)
+        .where(eq(documentSections.extractedDocumentId, document.id))
+        .orderBy(asc(documentSections.ordinal))
+    : [];
+  return {
+    version,
+    file: {
+      id: file.id,
+      originalFilename: file.originalFilename,
+      byteSize: file.byteSize,
+      sha256: file.sha256,
+      mimeType: file.mimeType,
+      storageStatus: file.storageStatus,
+      integrityVerifiedAt: file.integrityVerifiedAt,
+    },
+    extraction: document ?? null,
+    outline: outline.filter((section) => section.heading),
+  };
 }

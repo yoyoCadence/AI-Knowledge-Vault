@@ -31,7 +31,7 @@
 | P1A-ZIP           | 安全 ZIP 讀取（限制、traversal、symlink、bomb）、分類 A/B/C/D、預覽檔衍生                            | ✅   |
 | P1A-VERSION       | 版本比對規則、疑似重複標示                                                                           | ✅   |
 | P1A-RECOVERY      | staging 清理、過期處理、reconciliation                                                               | ✅   |
-| P1A-IMPORT-UI     | 拖曳/多選上傳、進度、匯入報告、重試                                                                  | 📝   |
+| P1A-IMPORT-UI     | 拖曳/多選上傳、進度、匯入報告、重試                                                                  | ✅   |
 | P1A-EXPORT        | 可攜式匯出 v1（manifest、checksums.sha256、metadata、originals、normalized）                         | 📝   |
 | P1A-RESTORE       | 還原（驗證、ID mapping、衝突模式、重建、報告）+ CLI                                                  | 📝   |
 | P1A-INTEGRITY     | 完整性檢查 job 與狀態                                                                                | 📝   |
@@ -48,8 +48,8 @@
 
 | ID                | 任務                                                                          | 狀態 |
 | ----------------- | ----------------------------------------------------------------------------- | ---- |
-| P1B-LIBRARY       | Library 首頁（最近新增/閱讀、收藏、分類、統計、保存狀態）、Grid/List Cards    | 📝   |
-| P1B-DETAIL        | Artifact Detail（版本、來源資訊、下載、metadata 編輯）                        | 📝   |
+| P1B-LIBRARY       | Library 首頁（最近新增/閱讀、收藏、分類、統計、保存狀態）、Grid/List Cards    | 🚧   |
+| P1B-DETAIL        | Artifact Detail（版本、來源資訊、下載、metadata 編輯）                        | 🚧   |
 | P1B-PREVIEW       | 獨立 Preview Origin、token、CSP、sandbox iframe                               | 📝   |
 | P1B-READER        | Reading Mode（安全 Markdown renderer、TOC、手機排版）                         | 📝   |
 | P1B-ORG           | Research Projects、Collections（階層）、Tags（正規化、合併）                  | 📝   |

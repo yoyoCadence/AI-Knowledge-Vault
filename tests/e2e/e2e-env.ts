@@ -3,6 +3,7 @@ import path from "node:path";
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
 
 export const E2E_PORT = 3100;
+export const E2E_WORKER_HEALTH_PORT = 3191;
 export const E2E_ADMIN = {
   email: "e2e-admin@example.test",
   name: "E2E Admin",

@@ -86,7 +86,7 @@ default, and verified restore. Its main weaknesses are:
 ### F-06 Traditional Chinese full-text search will not work with stock PostgreSQL parsers
 
 - **Risk:** The `simple` and `english` parsers treat a run of CJK characters as one token, so
-  searching `形態` would not match `形態發生`. `zhparser` and `pg_jieba` are not available on
+  searching `熱島` would not match `城市熱島`. `zhparser` and `pg_jieba` are not available on
   Neon. `pg_trgm` cannot use its index for 1–2 character patterns, and most Chinese words
   are two characters.
 - **Resolution:** Tokenize in the application. CJK runs become overlapping bigrams plus

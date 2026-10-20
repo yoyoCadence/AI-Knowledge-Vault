@@ -4,12 +4,12 @@ import { canTransition, sanitizeFilename } from "@/modules/imports";
 
 describe("identityKeyFor (version matching)", () => {
   it.each([
-    ["Morphogenesis_Report_Design.zip", "morphogenesis report design"],
-    ["Morphogenesis_Report_Design (1).zip", "morphogenesis report design"],
-    ["Morphogenesis Report Design copy.zip", "morphogenesis report design"],
-    ["morphogenesis-report-design_v2.zip", "morphogenesis report design"],
-    ["Morphogenesis Report Design-2026-10-20.zip", "morphogenesis report design"],
-    ["Morphogenesis Report.dc.html", "morphogenesis report"],
+    ["Urban_Heat_Report_Design.zip", "urban heat report design"],
+    ["Urban_Heat_Report_Design (1).zip", "urban heat report design"],
+    ["Urban Heat Report Design copy.zip", "urban heat report design"],
+    ["urban-heat-report-design_v2.zip", "urban heat report design"],
+    ["Urban Heat Report Design-2026-10-20.zip", "urban heat report design"],
+    ["Urban Heat Report.dc.html", "urban heat report"],
     ["ＡＩ代理人組織研究 副本.html", "ai代理人組織研究"],
   ])("%s → %s", (filename, expected) => {
     expect(identityKeyFor(filename)).toBe(expected);

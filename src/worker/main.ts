@@ -8,6 +8,7 @@ import { getLogger } from "@/infrastructure/observability/logger";
 import { getStorage } from "@/infrastructure/storage";
 import { JobWorker } from "@/modules/jobs";
 import { buildJobRegistry } from "./registry";
+import { startHealthServer } from "./health";
 import { startScheduler } from "./scheduler";
 
 async function main(): Promise<void> {
@@ -28,6 +29,9 @@ async function main(): Promise<void> {
   });
 
   const stopScheduler = startScheduler(getDb(), logger);
+  const healthServer = env.WORKER_HEALTH_PORT
+    ? startHealthServer(env.WORKER_HEALTH_PORT, worker)
+    : null;
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
@@ -35,6 +39,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info({ signal }, "shutdown requested");
     stopScheduler();
+    healthServer?.close();
     await worker.stop();
     await closeDb();
     process.exit(0);
