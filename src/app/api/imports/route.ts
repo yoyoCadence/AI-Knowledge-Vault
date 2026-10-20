@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   createBatch,
   auditBatchCreated,
@@ -5,9 +6,15 @@ import {
   listBatches,
   toBatchDto,
 } from "@/modules/imports";
-import { json, parseJsonBody } from "../_lib/http";
+import { decodeCursor, encodeCursor } from "../_lib/cursor";
+import { json, parseJsonBody, parseQuery } from "../_lib/http";
 import { authedRoute } from "../_lib/route";
 import { services } from "../_lib/services";
+
+const Query = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  cursor: z.string().max(200).optional(),
+});
 
 /** POST /api/imports — create an import batch. */
 export const POST = authedRoute(
@@ -20,7 +27,12 @@ export const POST = authedRoute(
   },
 );
 
-/** GET /api/imports — recent batches with counts. */
-export const GET = authedRoute({ permission: "library:read" }, async ({ actor }) => {
-  return json({ items: await listBatches(services.db(), actor) });
+/** GET /api/imports — batches with counts, newest first, cursor-paginated. */
+export const GET = authedRoute({ permission: "library:read" }, async ({ request, actor }) => {
+  const query = parseQuery(request, Query);
+  const { items, nextCursor } = await listBatches(services.db(), actor, {
+    limit: query.limit,
+    cursor: decodeCursor(query.cursor),
+  });
+  return json({ items, nextCursor: encodeCursor(nextCursor) });
 });

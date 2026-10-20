@@ -199,8 +199,8 @@ export async function failJob(
  * Recovers jobs whose lease expired (worker crashed or hung). Jobs with attempts left go back
  * to the queue; exhausted jobs fail with LEASE_EXPIRED. Returns the number of recovered jobs.
  */
-export async function recoverExpiredLeases(db: DbExecutor): Promise<number> {
-  const rows = await db
+export async function recoverExpiredLeases(db: DbExecutor): Promise<JobRow[]> {
+  return db
     .update(processingJobs)
     .set({
       status: sql`case when ${processingJobs.attemptCount} >= ${processingJobs.maxAttempts} then 'failed' else 'queued' end`,
@@ -213,8 +213,7 @@ export async function recoverExpiredLeases(db: DbExecutor): Promise<number> {
       updatedAt: sql`now()`,
     })
     .where(and(eq(processingJobs.status, "running"), lte(processingJobs.lockedUntil, sql`now()`)))
-    .returning({ id: processingJobs.id });
-  return rows.length;
+    .returning();
 }
 
 /** Manually re-runs a failed or cancelled job from scratch (attempt counter reset). */

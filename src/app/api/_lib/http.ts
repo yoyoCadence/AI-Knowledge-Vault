@@ -3,6 +3,7 @@ import { getEnv } from "@/infrastructure/config/env";
 import { getLogger } from "@/infrastructure/observability/logger";
 import { AppError, isAppError } from "@/lib/errors";
 import { newErrorId } from "@/lib/ids";
+import { resolveClientIp } from "@/modules/auth";
 
 /**
  * Route-handler plumbing shared by every /api endpoint (docs/API_CONTRACT.md §1).
@@ -103,9 +104,8 @@ export function requestMeta(request: Request): {
   ipAddress: string | null;
   userAgent: string | null;
 } {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   return {
-    ipAddress: forwarded || request.headers.get("x-real-ip") || null,
+    ipAddress: resolveClientIp(request.headers, getEnv().TRUSTED_PROXIES),
     userAgent: request.headers.get("user-agent"),
   };
 }

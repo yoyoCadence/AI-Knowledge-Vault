@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { AppError } from "@/lib/errors";
 import { listArtifacts } from "@/modules/artifacts";
+import { decodeCursor, encodeCursor } from "../_lib/cursor";
 import { json, parseQuery } from "../_lib/http";
 import { authedRoute } from "../_lib/route";
 import { services } from "../_lib/services";
@@ -10,19 +10,6 @@ const Query = z.object({
   cursor: z.string().max(200).optional(),
 });
 
-function decodeCursor(cursor: string | undefined) {
-  if (!cursor) return undefined;
-  try {
-    const [createdAt, id] = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as [
-      string,
-      string,
-    ];
-    return { createdAt: new Date(createdAt), id };
-  } catch {
-    throw new AppError("VALIDATION_FAILED", "Invalid cursor");
-  }
-}
-
 /** GET /api/artifacts — library cards, newest first, cursor-paginated. */
 export const GET = authedRoute({ permission: "library:read" }, async ({ request, actor }) => {
   const query = parseQuery(request, Query);
@@ -30,12 +17,5 @@ export const GET = authedRoute({ permission: "library:read" }, async ({ request,
     limit: query.limit,
     cursor: decodeCursor(query.cursor),
   });
-  return json({
-    items,
-    nextCursor: nextCursor
-      ? Buffer.from(JSON.stringify([nextCursor.createdAt.toISOString(), nextCursor.id])).toString(
-          "base64url",
-        )
-      : null,
-  });
+  return json({ items, nextCursor: encodeCursor(nextCursor) });
 });

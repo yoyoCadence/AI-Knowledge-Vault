@@ -287,6 +287,64 @@ describe("analyzeArchive", () => {
     expect(outcome.extraction.plainText).toContain("Hello Vault PDF");
   });
 
+  it("keeps an oversized bundled PDF out of the preview (same byte budget as sites)", async () => {
+    const pdf = pdfDocument();
+    const outcome = await analyzeArchive(
+      await zipFile([{ name: "paper.pdf", data: pdf }]),
+      "big-paper.zip",
+      { ...limits, maxPreviewBytes: pdf.length - 1 },
+    );
+    outcome.zip?.close();
+    expect(outcome.classification).toMatchObject({
+      previewKind: "unsupported",
+      previewEntryPath: null,
+    });
+    expect(outcome.previewFiles).toEqual([]);
+    expect(outcome.extraction.warnings.join()).toMatch(/PREVIEW_TOO_LARGE/);
+    expect(outcome.extraction.plainText).toContain("Hello Vault PDF");
+  });
+
+  it("treats a package.json build script as a source project even without config files", async () => {
+    const outcome = await analyzeArchive(
+      await zipFile([
+        { name: "package.json", data: JSON.stringify({ scripts: { build: "webpack" } }) },
+        { name: "lib/widget.js", data: "export const widget = 1;" },
+        { name: "README.md", data: markdownDocument() },
+      ]),
+      "widget-src.zip",
+      limits,
+    );
+    outcome.zip?.close();
+    expect(outcome.classification).toMatchObject({
+      contentKind: "framework_project",
+      previewKind: "framework_source",
+    });
+    expect(outcome.extraction.warnings.join()).toMatch(/BUILD_REQUIRED/);
+    // A start-only script (e.g. a static file server) is not a build signal.
+    const served = await analyzeArchive(
+      await zipFile([
+        { name: "package.json", data: JSON.stringify({ scripts: { start: "serve ." } }) },
+        { name: "index.html", data: htmlDocument() },
+      ]),
+      "served-site.zip",
+      limits,
+    );
+    served.zip?.close();
+    expect(served.classification.contentKind).toBe("static_site");
+  });
+
+  it("rejects the archive when the cover image lies about its size", async () => {
+    const entries = (await claudeDesignZipEntries()).map((entry) =>
+      entry.name === ".thumbnail"
+        ? { ...entry, method: "deflate" as const, declaredSize: 16 }
+        : entry,
+    );
+    const outcome = await analyzeArchive(await zipFile(entries), "lying-cover.zip", limits);
+    expect(outcome.rejection?.code).toBe("ARCHIVE_REJECTED");
+    expect(outcome.extraction.errorMessage).toMatch(/ZIP_SIZE_MISMATCH/);
+    expect(outcome.zip).toBeNull();
+  });
+
   it("returns a rejection (never throws) for hostile archives, so the original can be preserved", async () => {
     const outcome = await analyzeArchive(
       await zipFile([{ name: "../../escape.html", data: htmlDocument() }]),

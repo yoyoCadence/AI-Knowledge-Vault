@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import {
   artifacts,
@@ -225,12 +225,22 @@ export async function completeItem(
   const head = await storage.headObject(current.stagingKey);
   if (!head) throw new AppError("UPLOAD_INCOMPLETE", "The file has not been uploaded yet");
   if (head.size !== current.declaredSize) {
-    await storage.deleteObject(current.stagingKey);
-    await transitionItem(db, current, "failed", {
-      errorCode: "SIZE_MISMATCH",
-      errorMessage: `uploaded ${head.size} bytes, declared ${current.declaredSize}`,
-      completedAt: new Date(),
+    await db.transaction(async (tx) => {
+      const item = await loadItem(tx, actor, batchId, itemId, true);
+      if (!["awaiting_upload", "uploaded"].includes(item.status)) return;
+      await transitionItem(tx, item, "failed", {
+        errorCode: "SIZE_MISMATCH",
+        errorMessage: `uploaded ${head.size} bytes, declared ${current.declaredSize}`,
+        completedAt: new Date(),
+      });
+      await refreshBatchStatus(tx, item.batchId);
     });
+    // The bytes are wrong, so the item cannot be retried; it must be uploaded again.
+    await storage.deleteObject(current.stagingKey);
+    await db
+      .update(importItems)
+      .set({ stagingCleanedAt: new Date() })
+      .where(eq(importItems.id, current.id));
     throw new AppError("SIZE_MISMATCH", "Uploaded size does not match the declared size");
   }
 
@@ -255,7 +265,19 @@ export async function completeItem(
   });
 }
 
-/** Re-queues a failed item. Requires the bytes to still exist (staging or stored original). */
+/**
+ * Whether a failed item can be re-queued. Processing always starts from the staged upload, so
+ * the staged bytes must still exist; and an item that already committed an artifact version
+ * (an archive rejected after its original was preserved) is final: re-running it would only
+ * find its own original again. Re-processing existing versions is a separate, future feature.
+ */
+export function isRetryable(
+  item: Pick<ImportItemRow, "status" | "resultVersionId" | "stagingCleanedAt">,
+): boolean {
+  return item.status === "failed" && item.resultVersionId === null && !item.stagingCleanedAt;
+}
+
+/** Re-queues a failed item whose staged upload still exists. */
 export async function retryItem(
   db: Database,
   storage: StorageAdapter,
@@ -267,9 +289,13 @@ export async function retryItem(
     const item = await loadItem(tx, actor, batchId, itemId, true);
     if (item.status !== "failed")
       throw new AppError("NOT_RETRYABLE", "Only failed items can be retried");
-    const hasBytes =
-      item.fileAssetId !== null || (await storage.headObject(item.stagingKey)) !== null;
-    if (!hasBytes) {
+    if (item.resultVersionId !== null) {
+      throw new AppError(
+        "NOT_RETRYABLE",
+        "This file was already preserved as an artifact; open it to inspect the original",
+      );
+    }
+    if (!isRetryable(item) || (await storage.headObject(item.stagingKey)) === null) {
       throw new AppError(
         "NOT_RETRYABLE",
         "The uploaded file is no longer available; upload it again",
@@ -347,8 +373,18 @@ export async function transitionItem(
   return updated;
 }
 
-/** Recomputes a batch's status from its items (counts are never denormalized). */
+/**
+ * Completes the batch once every item is terminal. Must run inside the transaction that made
+ * an item terminal: the batch row lock serializes concurrent finishers, so the last one to
+ * commit always counts the others' committed states (READ COMMITTED takes a fresh snapshot
+ * per statement) and no batch is left "processing" with only terminal items.
+ */
 export async function refreshBatchStatus(db: DbExecutor, batchId: string): Promise<void> {
+  await db
+    .select({ id: importBatches.id })
+    .from(importBatches)
+    .where(eq(importBatches.id, batchId))
+    .for("update");
   const rows = await db
     .select({ status: importItems.status, n: count() })
     .from(importItems)
@@ -408,8 +444,12 @@ export async function getBatchReport(
   };
 }
 
-export async function listBatches(db: DbExecutor, actor: Actor, limit = 20) {
-  return db
+export async function listBatches(
+  db: DbExecutor,
+  actor: Actor,
+  options: { limit: number; cursor?: { createdAt: Date; id: string } },
+) {
+  const rows = await db
     .select({
       id: importBatches.id,
       status: importBatches.status,
@@ -420,10 +460,30 @@ export async function listBatches(db: DbExecutor, actor: Actor, limit = 20) {
     })
     .from(importBatches)
     .leftJoin(importItems, eq(importItems.batchId, importBatches.id))
-    .where(eq(importBatches.workspaceId, actor.workspaceId))
+    .where(
+      and(
+        eq(importBatches.workspaceId, actor.workspaceId),
+        options.cursor
+          ? or(
+              lt(importBatches.createdAt, options.cursor.createdAt),
+              and(
+                eq(importBatches.createdAt, options.cursor.createdAt),
+                lt(importBatches.id, options.cursor.id),
+              ),
+            )
+          : undefined,
+      ),
+    )
     .groupBy(importBatches.id)
-    .orderBy(desc(importBatches.createdAt))
-    .limit(limit);
+    .orderBy(desc(importBatches.createdAt), desc(importBatches.id))
+    .limit(options.limit + 1);
+  const items = rows.slice(0, options.limit);
+  const last = items.at(-1);
+  return {
+    items,
+    nextCursor:
+      rows.length > options.limit && last ? { createdAt: last.createdAt, id: last.id } : null,
+  };
 }
 
 export async function auditBatchCreated(

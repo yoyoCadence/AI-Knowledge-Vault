@@ -21,6 +21,7 @@ interface ServerItem {
   resultArtifactTitle: string | null;
   errorCode: string | null;
   errorMessage: string | null;
+  retryable: boolean;
   warnings: string[];
 }
 
@@ -407,14 +408,23 @@ export function ImportWorkspace({
                               {item.errorCode}
                               {item.errorMessage ? `：${item.errorMessage}` : ""}
                             </span>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => retryServerItem(item.id)}
-                            >
-                              <RotateCcw />
-                              {t("import.retry")}
-                            </Button>
+                            {item.retryable ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => retryServerItem(item.id)}
+                              >
+                                <RotateCcw />
+                                {t("import.retry")}
+                              </Button>
+                            ) : item.resultArtifactId ? (
+                              <Link
+                                href={`/artifacts/${item.resultArtifactId}`}
+                                className="text-primary shrink-0 hover:underline"
+                              >
+                                {t("import.inspectOriginal")}
+                              </Link>
+                            ) : null}
                           </span>
                         ) : null}
                         {entry.phase === "uploadError" && !item ? (

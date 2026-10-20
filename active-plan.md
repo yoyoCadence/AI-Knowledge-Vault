@@ -4,14 +4,19 @@ _Last updated: 2026-10-20 by the implementing agent._
 
 ## Current focus
 
-**PR 1 (this branch): Phase 0 Foundation.** It is complete and will be merged.
+**PR 6 (this branch): hardening.** Fixes the 14 review findings left open on PRs 1–4 (see
+`docs/HANDOFF.md` §1).
 
-**Next: PR 2 — P1A-AUTH.**
+**Next: PR 7, P1A-EXPORT + P1A-RESTORE + P1A-INTEGRITY.** The exact steps are in
+`docs/HANDOFF.md` §4.
+
+**Merge rule:** CI must be green **and** the PR's code review must have been read and its
+findings handled. If the review bot is unavailable, run an independent review first.
 
 ## PR sequence (each merged to `main` before the next starts)
 
 1. ✅ Phase 0 foundation: docs, toolchain, DB, storage, jobs, shell, CI.
-2. P1A-AUTH:
+2. ✅ P1A-AUTH (PR 2):
    - Better Auth with Drizzle adapter and mapped tables
    - `admin:create` CLI, which creates the user, workspace and owner membership
    - `getActor`/`requireActor`
@@ -21,7 +26,7 @@ _Last updated: 2026-10-20 by the implementing agent._
    - DB rate limit on sign-in
    - audit events
    - integration tests: sign-in success/failure, disabled sign-up, rate limit, session revoke
-3. P1A import slice 1:
+3. ✅ P1A import slice 1 (PR 3):
    - schema (projects, artifacts, versions, file_assets with immutability trigger,
      artifact_files, derived_assets, import_batches/items, extracted_documents,
      document_sections)
@@ -29,15 +34,16 @@ _Last updated: 2026-10-20 by the implementing agent._
    - worker `import.process_item` for HTML/MD/TXT/PDF/image
    - download original
    - tests
-4. P1A import slice 2:
+4. ✅ P1A import slice 2 (PR 4):
    - safe ZIP reader, classification (Claude Design / static site / framework / unsupported)
    - derived preview files and thumbnails
    - version matching and suspected duplicates
    - retry and cancel, staging cleanup
    - 50-item batch test
    - security tests (traversal, bomb, symlink)
-5. P1A import UI: dropzone, progress and report.
-6. P1A export and restore:
+5. ✅ P1A import UI: dropzone, progress and report, plus the library grid and detail page (PR 5).
+   - ✅ Hardening (PR 6): the review findings on PRs 1–4.
+6. 🚧 P1A export and restore (PR 7):
    - format v1, export job, restore job, CLI
    - integrity check
    - round-trip and tamper tests

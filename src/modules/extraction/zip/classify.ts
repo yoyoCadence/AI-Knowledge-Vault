@@ -94,7 +94,22 @@ function coverCandidate(
   return named?.path ?? null;
 }
 
-export function classifyArchive(entries: ZipEntryInfo[]): ArchiveClassification {
+/** Archive path of the project's top-level package.json (under the common root), if any. */
+export function packageJsonPath(entries: ZipEntryInfo[]): string | null {
+  const files = entries.filter((entry) => !entry.isDirectory && !IGNORED.test(entry.path));
+  const path = `${commonRootPrefix(files.map((file) => file.path))}package.json`;
+  return files.some((file) => file.path === path) ? path : null;
+}
+
+export interface ClassifyHints {
+  /** Script names from the top-level package.json (names only; nothing is ever run). */
+  packageScripts?: string[];
+}
+
+export function classifyArchive(
+  entries: ZipEntryInfo[],
+  hints: ClassifyHints = {},
+): ArchiveClassification {
   const files = entries.filter((entry) => !entry.isDirectory && !IGNORED.test(entry.path));
   const rootPrefix = commonRootPrefix(files.map((file) => file.path));
   const relative = (path: string) => path.slice(rootPrefix.length);
@@ -132,10 +147,14 @@ export function classifyArchive(entries: ZipEntryInfo[]): ArchiveClassification 
       path,
     ),
   );
+  // A `build`/`dev` script means the files as shipped are sources, not the site.
+  const buildScripts = (hints.packageScripts ?? []).filter(
+    (name) => name === "build" || name === "dev",
+  );
   const prebuiltIndex = shallowest(
     rel.filter((path) => BUILD_DIRS.some((dir) => path === `${dir}/index.html`)),
   );
-  if (hasPackageJson && frameworkSignals.length > 0) {
+  if (hasPackageJson && (frameworkSignals.length > 0 || buildScripts.length > 0)) {
     if (prebuiltIndex) {
       const siteRoot = `${prebuiltIndex.split("/")[0]}/`;
       return {
@@ -160,7 +179,7 @@ export function classifyArchive(entries: ZipEntryInfo[]): ArchiveClassification 
       previewKind: "framework_source",
       entryPath: readme ? rootPrefix + readme : null,
       coverPath: coverCandidate(files, rootPrefix, null),
-      reason: `source project (${frameworkSignals.slice(0, 3).join(", ")}) — build required`,
+      reason: `source project (${[...frameworkSignals.slice(0, 3), ...buildScripts.map((name) => `scripts.${name}`)].join(", ")}) — build required`,
     };
   }
 

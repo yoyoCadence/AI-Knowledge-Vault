@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 5: import UI + library)
+## 1. Snapshot (2026-10-20, after PR 6: review-finding hardening)
 
 **Merged and tested**
 
@@ -68,6 +68,44 @@ conversations. Update it at the end of every PR.
     uses a JOIN with GROUP BY, and a regression test covers it.
   - E2E: `tests/e2e/import.spec.ts` (Scenario A end-to-end in a real browser).
 
+- **PR 6, hardening: the 14 Codex review findings on PRs 1–4.** They were never addressed,
+  because those PRs were merged as soon as CI went green, before the bot's review arrived.
+  **Rule from now on: before merging, wait for the PR's review (or, if the reviewer is
+  unavailable, run an independent review) and handle its findings.**
+  - Config: `APP_ENV` is required when `NODE_ENV=production`. Before this, a deployment that
+    forgot to set it validated as `development` and skipped the https and local-storage checks.
+  - Docker: `/app/.data/storage` is created and owned by `vault`.
+  - Jobs:
+    - A failure in a detached `execute()` (such as `failJob` during a DB outage) is logged and
+      no longer becomes an unhandled rejection.
+    - Lease recovery returns rows and runs `onFailed` for exhausted jobs at once. Maintenance
+      still reconciles as a backstop.
+    - `drain()` also recovers leases.
+  - Auth:
+    - Better Auth's `/get-session`, `/list-sessions`, `/revoke-session(s)` and
+      `/revoke-other-sessions` now return 404. They serialized session tokens and bypassed the
+      audited `/api/sessions` facade.
+    - Audit IPs come from `resolveClientIp` (Better Auth's trusted-proxy resolver), not from the
+      leftmost `X-Forwarded-For` entry. This applies to both the auth hook and `requestMeta`.
+  - Imports:
+    - `refreshBatchStatus` locks the batch row. Before this, two items finishing concurrently
+      could leave a batch `processing` forever. There is a test that fails without the lock.
+    - The size-mismatch failure now refreshes the batch.
+    - `GET /api/imports` honours `limit`/`cursor` and returns `nextCursor`. The shared cursor
+      codec, which validates its input, is in `src/app/api/_lib/cursor.ts`.
+    - Retry policy (`isRetryable`): an item that already committed a version (a rejected archive
+      whose original was preserved) is final. Retry needs the staged bytes. The DTO exposes
+      `retryable`, and the UI shows a link to inspect the original instead.
+  - ZIP:
+    - A lying size in a preview asset, found only while streaming, now rejects the archive and
+      keeps the original. Before this, the item failed without its original being linked.
+    - Fixed a **worker-crash bug** found while testing this: a preview stream that errored
+      before the storage adapter attached its listeners raised an uncaught `'error'`.
+    - Cover and `package.json` reads propagate integrity errors instead of swallowing them.
+    - An oversized bundled PDF respects `PREVIEW_MAX_TOTAL_BYTES`.
+    - A `package.json` `build`/`dev` script marks a source project.
+  - Tests: 172 passing (157 before), plus E2E.
+
 **Not done or not verified**
 
 - Preview files are stored but **not yet served**. The preview origin route (`/p/:token/*`) is
@@ -106,7 +144,7 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 ## 4. Next steps (exact)
 
-**PR 6: P1A-EXPORT + P1A-RESTORE + P1A-INTEGRITY** (BACKUP_RECOVERY.md):
+**PR 7: P1A-EXPORT + P1A-RESTORE + P1A-INTEGRITY** (BACKUP_RECOVERY.md):
 
 1. Schema: `export_runs`, `restore_runs`, `integrity_checks`.
 2. `src/modules/backup/format.ts`:

@@ -14,6 +14,7 @@ import {
 import { getLogger } from "@/infrastructure/observability/logger";
 import { newId } from "@/lib/ids";
 import { recordAudit } from "@/modules/audit";
+import { resolveClientIp } from "./client-ip";
 
 /**
  * Better Auth configuration (ADR-004, docs/SECURITY.md §6).
@@ -40,6 +41,13 @@ const DISABLED_PATHS = [
   "/unlink-account",
   "/list-accounts",
   "/sign-in/social",
+  // Session endpoints serialize session tokens and bypass our audited /api/sessions facade.
+  // Server code calls auth.api.getSession() directly, which disabledPaths does not affect.
+  "/get-session",
+  "/list-sessions",
+  "/revoke-session",
+  "/revoke-sessions",
+  "/revoke-other-sessions",
 ];
 
 /** One-way, non-reversible identifier for audit records of failed logins (no raw emails). */
@@ -102,10 +110,12 @@ export function createAuth(
     hooks: {
       after: createAuthMiddleware(async (ctx) => {
         if (ctx.path !== "/sign-in/email" && ctx.path !== "/sign-out") return;
-        const headers = ctx.headers;
+        const headers = ctx.headers ?? new Headers();
         const meta = {
-          ipAddress: headers?.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-          userAgent: headers?.get("user-agent") ?? null,
+          // Same resolver as the rate limiter: honours TRUSTED_PROXIES, so a client-supplied
+          // X-Forwarded-For entry cannot choose the audited address.
+          ipAddress: resolveClientIp(headers, env.TRUSTED_PROXIES),
+          userAgent: headers.get("user-agent"),
         };
         try {
           if (ctx.path === "/sign-in/email") {

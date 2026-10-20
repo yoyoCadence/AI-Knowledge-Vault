@@ -1,4 +1,5 @@
 import type { importBatches, importItems } from "@/infrastructure/database/schema";
+import { isRetryable } from "./service";
 
 /** API representations: internal fields (storage keys, workspace ids) never leave the server. */
 export function toItemDto(
@@ -22,6 +23,7 @@ export function toItemDto(
     targetArtifactId: item.targetArtifactId,
     errorCode: item.errorCode,
     errorMessage: item.errorMessage,
+    retryable: isRetryable(item),
     warnings: item.warnings,
     uploadExpiresAt: item.uploadExpiresAt,
     createdAt: item.createdAt,

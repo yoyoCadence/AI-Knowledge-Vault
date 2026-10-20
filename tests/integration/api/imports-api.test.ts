@@ -6,7 +6,7 @@ import { GET as listArtifactsRoute } from "@/app/api/artifacts/route";
 import { POST as completeRoute } from "@/app/api/imports/[batchId]/items/[itemId]/complete/route";
 import { POST as declareRoute } from "@/app/api/imports/[batchId]/items/route";
 import { GET as batchReportRoute } from "@/app/api/imports/[batchId]/route";
-import { POST as createBatchRoute } from "@/app/api/imports/route";
+import { POST as createBatchRoute, GET as listBatchesRoute } from "@/app/api/imports/route";
 import { GET as localDownload } from "@/app/api/storage/local/download/route";
 import { PUT as localUpload } from "@/app/api/storage/local/upload/route";
 import { getEnv } from "@/infrastructure/config/env";
@@ -41,6 +41,39 @@ async function loggedIn() {
 }
 
 describe("import API over HTTP handlers", () => {
+  it("paginates GET /api/imports with limit and an opaque cursor", async () => {
+    const { cookie } = await loggedIn();
+    const created: string[] = [];
+    for (let n = 0; n < 3; n += 1) {
+      const response = await createBatchRoute(
+        apiRequest("/api/imports", { method: "POST", cookie, body: {} }),
+        params({}),
+      );
+      created.push(((await response.json()) as { batch: { id: string } }).batch.id);
+    }
+    type Page = { items: { id: string }[]; nextCursor: string | null };
+    const first = (await (
+      await listBatchesRoute(apiRequest("/api/imports?limit=2", { cookie }), params({}))
+    ).json()) as Page;
+    expect(first.items.map((batch) => batch.id)).toEqual([created[2], created[1]]);
+    expect(first.nextCursor).toBeTruthy();
+
+    const second = (await (
+      await listBatchesRoute(
+        apiRequest(`/api/imports?limit=2&cursor=${first.nextCursor}`, { cookie }),
+        params({}),
+      )
+    ).json()) as Page;
+    expect(second.items.map((batch) => batch.id)).toEqual([created[0]]);
+    expect(second.nextCursor).toBeNull();
+
+    const invalid = await listBatchesRoute(
+      apiRequest("/api/imports?cursor=bm90LWEtY3Vyc29y", { cookie }),
+      params({}),
+    );
+    expect(invalid.status).toBe(400);
+  });
+
   it("runs the full browser flow: batch → declare → PUT upload → complete → report → download", async () => {
     const { cookie } = await loggedIn();
     const html = Buffer.from(htmlDocument({ title: "HTTP 流程測試" }));

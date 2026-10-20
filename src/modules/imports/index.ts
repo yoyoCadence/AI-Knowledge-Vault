@@ -3,6 +3,7 @@ export {
   declareItem,
   completeItem,
   retryItem,
+  isRetryable,
   cancelItem,
   getBatchReport,
   listBatches,
