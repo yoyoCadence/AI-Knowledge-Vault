@@ -9,6 +9,18 @@ export {
 } from "./restore";
 export { reextractVersion, reextractJobDefinition } from "./reextract";
 export {
+  requestIntegrityCheck,
+  latestIntegrityCheck,
+  runIntegrityCheck,
+  integrityJobDefinition,
+  integrityScheduleJobDefinition,
+  toIntegrityDto,
+  INTEGRITY_JOB_TYPE,
+  INTEGRITY_SCHEDULE_JOB_TYPE,
+  type IntegrityCheck,
+  type IntegrityFailure,
+} from "./integrity";
+export {
   requestExport,
   listExports,
   createExportDownload,

@@ -160,12 +160,13 @@ pnpm backup:restore ./knowledge-vault-export-….zip --workspace <slug> [--mode 
 3. Run `pnpm admin:create`, which creates the admin and their workspace.
 4. Run `pnpm backup:restore <archive> --workspace <slug>`.
 5. Start `web` and `worker`, and wait for the re-extraction jobs (visible in Import & Backup).
-6. Run the integrity check (P1A-INTEGRITY, next PR) and confirm every file asset is `stored`
+6. Run the integrity check (Import & Backup → 立即檢查, or `POST /api/integrity-checks`) and confirm every file asset is `stored`
    and verified.
 
 ## 7. Integrity checks
 
-Job `integrity.check` (manual, or a weekly schedule in Phase 4):
+Job `integrity.check` (manual via `POST /api/integrity-checks`, plus a weekly
+`maintenance.schedule_integrity_checks` run that queues one check per workspace):
 
 - Re-hash every `file_assets` object.
 - Update `storage_status` and `integrity_verified_at`.

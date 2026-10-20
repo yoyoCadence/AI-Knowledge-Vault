@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 7: portable export + restore)
+## 1. Snapshot (2026-10-20, after PR 8: integrity check)
 
 **Merged and tested**
 
@@ -199,11 +199,23 @@ conversations. Update it at the end of every PR.
       limit.
     - Tests: `tests/integration/backup/restore-edges.test.ts`. All 5 fail on the pre-fix code.
 
+- **PR 8, P1A-INTEGRITY** (`src/modules/backup/integrity.ts`):
+  - The `integrity.check` job re-hashes every original in a workspace (in pages, with progress)
+    and sets `file_assets.storage_status` to `stored`, `missing` or `corrupt`. Verified files
+    also get `integrity_verified_at`.
+  - It writes an `integrity_checks` row with the counts and up to 1,000 failing IDs.
+  - Only one check can be pending per workspace (the workspace row is locked).
+  - `POST /api/integrity-checks` and `GET /api/integrity-checks/latest`.
+  - A weekly `maintenance.schedule_integrity_checks` run queues one check per workspace.
+  - UI: an integrity panel on `/import` (last result, counts, damaged files, "立即檢查").
+  - Tests: `tests/integration/backup/integrity.test.ts` (all OK, then a deleted object →
+    `missing`, rewritten bytes → `corrupt`, workspace isolation) and an E2E step.
+
 **Not done or not verified**
 
 - Preview files are stored but **not yet served**. The preview origin route (`/p/:token/*`) is
   P1B-PREVIEW.
-- No integrity job yet (P1A-INTEGRITY). Restore is CLI-only (no `/api/restores` or UI yet).
+- Restore is CLI-only. There is no `/api/restores` or UI yet (PR 9).
 - Export archives are unencrypted (P1A-ENC). The UI and CLI warn about this.
 - HTML extraction can join adjacent inline labels without a space. This is cosmetic.
 - The S3 adapter has not been verified against real R2.
@@ -238,27 +250,19 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 ## 4. Next steps (exact)
 
-**PR 8: P1A-INTEGRITY plus restore through the API and UI** (BACKUP_RECOVERY.md §6–7):
+**PR 9: restore through the API and UI** (BACKUP_RECOVERY.md §6):
 
-1. `src/modules/backup/integrity.ts`, job `integrity.check` (one per workspace; idempotency key
-   per run):
-   - stream every `file_assets` object and re-hash it
-   - `storage_status` → `stored`, `missing` or `corrupt`, plus `integrity_verified_at`. Both
-     columns are allowed by the immutability trigger.
-   - write an `integrity_checks` row with the counts and failing IDs
-2. `POST /api/integrity-checks` and `GET /api/integrity-checks/latest`. Show "last verified" and
-   the counts on `/import`. Weekly schedule entry in `src/worker/scheduler.ts`.
-3. Restore over HTTP:
-   - `POST /api/restores` `{filename, size}` → a `restore_runs` row plus a signed upload to
-     `storageKeys.restoreUpload`
-   - `POST /api/restores/:id/start` `{mode}` → job `restore.run`, which downloads to a temp
-     file and calls `restoreArchive`
-   - `GET /api/restores/:id` → the report
-   - UI: upload an archive on `/import`, choose a mode, show the report
-4. Tests:
-   - integrity finds a deleted object (`missing`) and a modified local file (`corrupt`)
-   - restore over HTTP end to end
-5. Docs: API_CONTRACT status, BACKUP_RECOVERY runbook step 6, task.md, ROADMAP, this file.
+1. `POST /api/restores` `{filename, size}` (permission `backup:restore`, owner only) creates a
+   `restore_runs` row and returns a signed upload to `storageKeys.restoreUpload`. Reuse the
+   import upload path, which already caps size and checks the content length.
+2. `POST /api/restores/:id/start` `{mode}` enqueues `restore.run`. The handler downloads to a
+   temp file (`downloadToTempFile`, cap `RESTORE_MAX_TOTAL_BYTES`), calls `restoreArchive` with
+   the run's ID, and stores the report or error code. Delete the uploaded archive afterwards.
+3. `GET /api/restores/:id` (report) and `GET /api/restores` (recent runs).
+4. UI on `/import`: a restore card (choose a file, choose a mode with an explanation, then a
+   report: counts, warnings, failures).
+5. Tests: restore over HTTP end to end; viewer and editor are refused; a tampered upload sets
+   the run to failed with `CHECKSUM_MISMATCH`.
 
 **Then Phase 1B:**
 

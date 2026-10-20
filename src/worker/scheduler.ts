@@ -1,6 +1,6 @@
 import type { Database } from "@/infrastructure/database/client";
 import type { Logger } from "@/infrastructure/observability/logger";
-import { EXPORT_CLEANUP_JOB_TYPE } from "@/modules/backup";
+import { EXPORT_CLEANUP_JOB_TYPE, INTEGRITY_SCHEDULE_JOB_TYPE } from "@/modules/backup";
 import { IMPORT_CLEANUP_JOB_TYPE } from "@/modules/imports";
 import { enqueueJob } from "@/modules/jobs";
 
@@ -11,6 +11,8 @@ import { enqueueJob } from "@/modules/jobs";
 export const MAINTENANCE_JOBS = [
   { type: IMPORT_CLEANUP_JOB_TYPE, everyMs: 60 * 60 * 1000 },
   { type: EXPORT_CLEANUP_JOB_TYPE, everyMs: 60 * 60 * 1000 },
+  // Weekly re-hash of every original in every workspace (BACKUP_RECOVERY §7).
+  { type: INTEGRITY_SCHEDULE_JOB_TYPE, everyMs: 7 * 24 * 60 * 60 * 1000 },
 ] as const;
 
 export async function enqueueDueMaintenance(db: Database, now = new Date()): Promise<number> {

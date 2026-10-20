@@ -75,6 +75,12 @@ test.describe("import → library → artifact (Scenario A)", () => {
     expect(archive.suggestedFilename()).toMatch(/^knowledge-vault-export-.+\.zip$/);
     const archiveBytes = await readFile((await archive.path())!);
     expect(createHash("sha256").update(archiveBytes).digest("hex")).toBe(checksum);
+
+    // Integrity check re-hashes every stored original.
+    await page.getByTestId("integrity-run").click();
+    await expect(page.getByTestId("integrity-result").getByText("全部正常")).toBeVisible({
+      timeout: 30_000,
+    });
   });
 
   test("anonymous visitors cannot reach import or artifact APIs", async ({ request }) => {
