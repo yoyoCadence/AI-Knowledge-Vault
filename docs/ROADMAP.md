@@ -28,9 +28,9 @@
 | P1A-IMPORT-API    | Import batch/item API、signed upload、complete、retry、cancel、狀態機                                | ✅   |
 | P1A-IMPORT-WORKER | `import.process_item`：sniff、hash、dedupe、store、classify、extract、persist                        | ✅   |
 | P1A-EXTRACT       | HTML / Claude Design / Markdown / TXT / PDF / Image 抽取；sections；語言偵測                         | ✅   |
-| P1A-ZIP           | 安全 ZIP 讀取（限制、traversal、symlink、bomb）、分類 A/B/C/D、預覽檔衍生                            | 📝   |
+| P1A-ZIP           | 安全 ZIP 讀取（限制、traversal、symlink、bomb）、分類 A/B/C/D、預覽檔衍生                            | ✅   |
 | P1A-VERSION       | 版本比對規則、疑似重複標示                                                                           | ✅   |
-| P1A-RECOVERY      | staging 清理、過期處理、reconciliation                                                               | 📝   |
+| P1A-RECOVERY      | staging 清理、過期處理、reconciliation                                                               | ✅   |
 | P1A-IMPORT-UI     | 拖曳/多選上傳、進度、匯入報告、重試                                                                  | 📝   |
 | P1A-EXPORT        | 可攜式匯出 v1（manifest、checksums.sha256、metadata、originals、normalized）                         | 📝   |
 | P1A-RESTORE       | 還原（驗證、ID mapping、衝突模式、重建、報告）+ CLI                                                  | 📝   |

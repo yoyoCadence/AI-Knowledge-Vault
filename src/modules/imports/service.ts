@@ -320,6 +320,10 @@ export async function cancelItem(
     return result;
   });
   await storage.deleteObject(updated.stagingKey);
+  await db
+    .update(importItems)
+    .set({ stagingCleanedAt: new Date() })
+    .where(eq(importItems.id, updated.id));
   return updated;
 }
 

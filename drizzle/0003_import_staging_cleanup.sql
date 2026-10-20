@@ -1,0 +1,2 @@
+ALTER TABLE "import_items" ADD COLUMN "staging_cleaned_at" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX "import_items_staging_cleanup_idx" ON "import_items" USING btree ("status","completed_at") WHERE "import_items"."staging_cleaned_at" is null;

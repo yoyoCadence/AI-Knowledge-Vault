@@ -141,3 +141,36 @@ export async function pngImage(
     .png()
     .toBuffer();
 }
+
+/**
+ * A Claude-Design-like export archive: <name>.dc.html + support.js + _ds/ design system +
+ * .thumbnail (WebP). Mirrors the layout analysed in ARCHITECTURE_REVIEW F-03; content synthetic.
+ */
+export async function claudeDesignZipEntries(title = "胚胎沒有藍圖，只有規則") {
+  const thumbnail = await sharp({
+    create: { width: 160, height: 100, channels: 3, background: { r: 200, g: 120, b: 60 } },
+  })
+    .webp()
+    .toBuffer();
+  return [
+    { name: ".thumbnail", data: thumbnail },
+    {
+      name: "Morphogenesis Report.dc.html",
+      data: claudeDesignDocument(title),
+      method: "deflate" as const,
+    },
+    { name: "_ds/modernist/_ds_bundle.js", data: "(() => { window.Modernist = {}; })();" },
+    {
+      name: "_ds/modernist/styles.css",
+      data: ":root{--color-bg:#fff}body{margin:0}",
+      method: "deflate" as const,
+    },
+    { name: "_ds/modernist/readme.md", data: "# Design system\n" },
+    { name: "_ds/modernist/_adherence.oxlintrc.json", data: "{}" },
+    {
+      name: "support.js",
+      data: "/* runtime that would load React from a CDN */",
+      method: "deflate" as const,
+    },
+  ];
+}

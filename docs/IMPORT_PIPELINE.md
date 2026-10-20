@@ -44,10 +44,8 @@ treated as a ZIP. An `.html` that is really an executable is rejected.
 
 ## 3. ZIP classification
 
-> **Status:** designed. Implementation is P1A-ZIP, the next PR. Until then, ZIP uploads are
-> preserved byte-for-byte as `content_kind = archive_other` with extraction error
-> `ARCHIVE_ANALYSIS_UNAVAILABLE`. They become analysable through a reprocess job once the ZIP
-> pipeline lands.
+> **Status:** implemented (P1A-ZIP). The code is in `src/modules/extraction/zip/`: `reader.ts`
+> (SafeZip), `classify.ts` and `process.ts`.
 
 The worker builds an **inventory** (entry list with sizes) using the safe reader (§4), then
 classifies it:
@@ -103,8 +101,18 @@ These are configurable through env; defaults are in `src/infrastructure/config/e
 Violations make the item `failed`, with `error_code = ARCHIVE_REJECTED` and a precise reason
 (for example `ZIP_ENTRY_PATH_TRAVERSAL: ../../etc/passwd`). The original is still preserved:
 the immutable original is stored _before_ deep analysis, and an `unsupported` artifact version
-is created. This means a rejected ZIP can be downloaded and inspected later. **Exception:** if
-the outer file itself exceeds the size limit or fails magic sniffing, it is not preserved.
+is created and linked from the failed item (`result_artifact_id`). This means a rejected ZIP can
+be downloaded and inspected later, and it is never decompressed. **Exception:** if the outer file
+itself exceeds the size limit or fails magic sniffing, it is not preserved.
+
+Preview copies of a site are capped by `PREVIEW_MAX_FILES` (default 2,000) and
+`PREVIEW_MAX_TOTAL_BYTES` (default 256 MiB). Above either cap, the version keeps its original
+and its extracted text, but `preview_kind = unsupported`, and the warning `PREVIEW_TOO_LARGE`
+explains why.
+
+**Cover image:** the Claude Design `.thumbnail` (if it sniffs as an image), otherwise a
+conventionally named `cover|thumbnail|screenshot|preview|og-image` image. It is rendered to a
+WebP `derived_assets(kind = thumbnail)`.
 
 ## 5. Duplicate handling (FR-IMP-7/8/9)
 
@@ -166,15 +174,17 @@ the import item ID (UUIDv5; see ADR-008 amendment). A retry after a crash theref
 same derived objects instead of leaving orphans, and the commit transaction re-checks the item
 status under a row lock, so two runs can never both commit.
 
-| Scenario                                                      | Mechanism                                                                                                                                                                                             |
-| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Client retries item declaration                               | `unique(batch_id, client_key)` returns the existing item and a fresh upload URL                                                                                                                       |
-| Client calls complete twice                                   | Complete is a no-op once the item is `queued` or beyond; the job is created with `idempotency_key = import_item:{id}`, and `ON CONFLICT DO NOTHING`                                                   |
-| Worker crash after storing the original, before the DB commit | Re-run: the `If-None-Match` put sees an existing object → `headObject` verifies size and hash metadata → continues                                                                                    |
-| Worker crash after the DB commit, before the item update      | Item and artifact are updated in the same transaction, so this cannot happen                                                                                                                          |
-| Retry of a failed item                                        | `POST /api/imports/:batch/items/:item/retry` → status `queued`, job reset (`attempt_count = 0`, `run_after = now`). Allowed only if the staging object still exists or the original is already stored |
-| Staging object orphaned (item expired or cancelled)           | `maintenance.cleanup_staging` (hourly): deletes staging objects of items in a terminal state older than 24 h, and items in `awaiting_upload` past `upload_expires_at` → `expired`                     |
-| DB says stored, object missing                                | Integrity check (`integrity.check`) marks it `missing`; surfaced in the UI and restore docs                                                                                                           |
+| Scenario                                                                  | Mechanism                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Client retries item declaration                                           | `unique(batch_id, client_key)` returns the existing item and a fresh upload URL                                                                                                                                                                                                                                                                                                      |
+| Client calls complete twice                                               | Complete is a no-op once the item is `queued` or beyond; the job is created with `idempotency_key = import_item:{id}`, and `ON CONFLICT DO NOTHING`                                                                                                                                                                                                                                  |
+| Worker crash after storing the original, before the DB commit             | Re-run: the `If-None-Match` put sees an existing object → `headObject` verifies size and hash metadata → continues                                                                                                                                                                                                                                                                   |
+| Worker crash after the DB commit, before the item update                  | Item and artifact are updated in the same transaction, so this cannot happen                                                                                                                                                                                                                                                                                                         |
+| Retry of a failed item                                                    | `POST /api/imports/:batch/items/:item/retry` → status `queued`, job reset (`attempt_count = 0`, `run_after = now`). Allowed only if the staging object still exists or the original is already stored                                                                                                                                                                                |
+| Staging object orphaned (item expired or cancelled)                       | `maintenance.cleanup_imports`, which runs hourly and is scheduled by every worker under one idempotency key per hour. Items still `awaiting_upload` 1 h past `upload_expires_at` → `expired`. Staged bytes are deleted 24 h after a terminal state; failed items keep theirs for 7 days so they can still be retried. Each deletion is recorded in `import_items.staging_cleaned_at` |
+| Job ended without updating its item (lease expired with no attempts left) | The same maintenance job sets the item to `failed`, copying the job's `error_code`/`last_error`. The user can then retry                                                                                                                                                                                                                                                             |
+| Job table growth                                                          | The maintenance job prunes completed jobs after 30 days and failed or cancelled jobs after 90 days                                                                                                                                                                                                                                                                                   |
+| DB says stored, object missing                                            | Integrity check (`integrity.check`) marks it `missing`; surfaced in the UI and restore docs                                                                                                                                                                                                                                                                                          |
 
 ## 9. Concurrency
 

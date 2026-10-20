@@ -3,55 +3,59 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 3: import pipeline slice 1)
+## 1. Snapshot (2026-10-20, after PR 4: ZIP pipeline + recovery)
 
 **Merged and tested**
 
 - **PR 1, Phase 0:** foundation (docs, toolchain, DB, storage, jobs, shell, CI, Docker).
-- **PR 2, P1A-AUTH:**
-  - Better Auth with sign-up disabled and database rate limiting
-  - `admin:create`
-  - sessions API
-  - `authedRoute`
-  - login and settings UI
-  - Playwright E2E with a CI job
-- **PR 3, import slice 1** (P1A-FILES, IMPORT-API, IMPORT-WORKER, EXTRACT, VERSION):
-  - **Schema:** migration `0001_library_import` for projects, artifacts, versions, file_assets,
-    artifact_files, derived_assets, extracted_documents, document_sections, import_batches and
-    import_items. Migration `0002_file_assets_immutable` adds the trigger.
-  - **`modules/extraction`:** magic-byte sniffing, strict UTF-8 → Big5 decoding, zh-Hant/zh-Hans
-    language detection, and extractors for HTML (with Claude Design `{{ }}` stripping), Markdown
-    (front matter), text, PDF (unpdf, one section per page) and images (sharp thumbnail).
-    Sections carry exact character offsets into the plain text.
-  - **`modules/files`:** streamed staging download with SHA-256 and a byte cap, and
-    content-addressed conditional storage of originals.
-  - **`modules/imports`:** batch, declare (idempotent `clientKey`), complete (enqueues in the same
-    transaction), retry, cancel and report, plus a state machine.
-  - **Worker handler `import.process_item`:**
-    - same-hash duplicate detection under an advisory lock
-    - version matching (explicit target, or a distinctive filename stem)
-    - suspected duplicates flagged by text hash
-    - deterministic UUIDv5 IDs, so retries are idempotent
-    - the `onFailed` hook marks the item failed with a user-visible reason
-  - **`modules/artifacts`:** list, detail, and audited original download via a 5-minute signed
-    URL.
-  - **Routes:** `/api/imports/**`, `/api/artifacts/**`, and `/api/storage/local/{upload,download}`
-    (token-authorized, byte-capped).
-  - **Verified with production builds:** sign-in → upload of the owner's real Claude Design HTML
-    and ZIP over HTTP → the bundled worker processes them → the downloaded original's SHA-256
-    equals the uploaded file's.
+- **PR 2, P1A-AUTH:** Better Auth, `admin:create`, sessions, `authedRoute`, login/settings UI,
+  E2E.
+- **PR 3, single-file import pipeline:**
+  - schema and the immutability trigger
+  - extraction for HTML, Claude Design, MD, TXT/Big5, PDF and images
+  - import API and the idempotent worker job
+  - version matching, suspected duplicates
+  - signed original downloads
+- **PR 4, P1A-ZIP + P1A-RECOVERY:**
+  - `src/modules/extraction/zip/reader.ts` (`SafeZip`):
+    - yauzl's name and size validation
+    - plus our own checks: symlinks, encryption, control characters, depth, entry count,
+      compression ratio, total and per-entry limits on actual bytes
+    - nested archives and duplicate names are listed but never extracted
+  - `zip/classify.ts`: Claude Design (`*.dc.html`), static site (common root folder stripped),
+    prebuilt framework output (`dist|build|out`), framework source (BUILD_REQUIRED, never built),
+    document bundle, unsupported.
+  - `zip/process.ts`:
+    - entry-document extraction
+    - `.thumbnail`/cover → WebP thumbnail
+    - the preview-site file list (allowed types only; capped by `PREVIEW_MAX_FILES` and
+      `PREVIEW_MAX_TOTAL_BYTES`)
+    - `package.json` script _names_ only
+  - **Worker:**
+    - streams preview files from the ZIP into derived assets, hashing as it goes
+    - hostile ZIPs fail with `ARCHIVE_REJECTED`, but their original and an `unsupported`
+      version are preserved
+  - **`maintenance.cleanup_imports`**, scheduled hourly via `src/worker/scheduler.ts`, one
+    idempotency key per hour:
+    - expires abandoned uploads
+    - reconciles items whose job died
+    - deletes staging after retention (24 h; 7 days for failed items), recording
+      `staging_cleaned_at`
+    - prunes old job rows
+  - Migration `0003_import_staging_cleanup`.
+  - **Tests:** 157 passing, including 22 ZIP security and classification unit tests and the
+    50-item mixed batch (exit criterion 4).
+  - **Verified locally on the owner's real Claude Design ZIP** (not committed): classified as
+    `claude_design_document`, title 「胚胎沒有藍圖，只有規則」, 31 sections, 39 references,
+    `.thumbnail` cover, 7 preview files.
 
 **Not done or not verified**
 
-- ZIP files are preserved, but not analysed yet (`archive_other`, error code
-  `ARCHIVE_ANALYSIS_UNAVAILABLE`). P1A-ZIP is next.
-- There is no reconciliation for jobs whose lease expired with no attempts left. Their import
-  item stays `processing`. The `onFailed` hook covers every other failure path. Fix this in
-  P1A-RECOVERY with a maintenance job.
-- No staging cleanup job yet: abandoned uploads stay in `ws/*/staging/`.
-- There is no upload UI yet (P1A-IMPORT-UI); the API is complete.
-- HTML extraction joins adjacent inline elements without a space when the source has no
-  whitespace between them (e.g. flex-row `<span>` labels). This is cosmetic.
+- No upload UI and no library UI yet. Both the import API and the artifact API are complete.
+- Preview files are stored but **not yet served**. The preview origin route (`/p/:token/*`) is
+  P1B-PREVIEW.
+- No export, restore or integrity job yet (P1A-EXPORT, P1A-RESTORE, P1A-INTEGRITY).
+- HTML extraction can join adjacent inline labels without a space. This is cosmetic.
 - The S3 adapter has not been verified against real R2.
 
 ## 2. How to run
@@ -82,32 +86,24 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
   - Route handlers can be imported and called directly with `Request` objects (see
     `tests/integration/api/sessions-api.test.ts`).
 
-## 4. Next steps (exact): PR 4, P1A-ZIP + P1A-RECOVERY + batch/security tests
+## 4. Next steps (exact)
 
-1. `src/modules/extraction/zip/reader.ts`: a safe inventory using `yauzl.open(tempPath,
-{ lazyEntries: true, strictFileNames: true, validateEntrySizes: true })`.
-   - Normalize and validate every path (IMPORT_PIPELINE §4): traversal, absolute paths, drive
-     letters, NUL, depth, symlink mode bits and encrypted entries.
-   - Count actual bytes while streaming. Enforce the total, per-entry and compression-ratio
-     limits, as well as the entry count.
-2. `zip/classify.ts`: Claude Design (`*.dc.html` + `support.js`/`_ds`/`.thumbnail`), static
-   site, framework source, document bundle, unsupported.
-3. In `process-item.ts`, replace `archiveOutcome()`:
-   - Extract the allowed preview files into derived assets (`kind = preview_file`, `path` = the
-     normalized entry path).
-   - Run the HTML/MD/PDF extractor on the entry document.
-   - Use the `.thumbnail` or the first image as the thumbnail.
-   - Record the inventory summary and external dependencies in `analysis`.
-4. Add a `maintenance.reprocess_version` job to upgrade versions created as `archive_other`, and
-   a `maintenance.cleanup` job (hourly), which:
-   - expires stale `awaiting_upload` items
-   - deletes staging objects of terminal items
-   - fails items whose job ended `failed`
-5. Tests:
-   - zip-slip, absolute path, symlink, bomb (ratio and total), entry count, nested archive,
-     encrypted entry
-   - classification fixtures built in code with `yazl`
-   - a 50-item mixed batch (exit criterion 4)
-   - cleanup and reconciliation
+**PR 5: P1A-IMPORT-UI + a minimal library listing.**
 
-Then: PR 5 = P1A-IMPORT-UI, PR 6 = export/restore + integrity.
+1. `src/app/(dashboard)/import/page.tsx`, replacing the FutureFeature placeholder:
+   - a client `ImportDropzone` (drag and drop plus a file picker)
+   - per file: `POST /api/imports/:batch/items` → `PUT upload.url` with progress via
+     `XMLHttpRequest.upload.onprogress` → `/complete`
+   - at most 3 parallel uploads
+   - poll `GET /api/imports/:batch` every 1.5 s until no item is `queued` or `processing`
+   - a report table with status, outcome, errors and warnings, a retry button for failed items,
+     and links to result artifacts
+2. Recent batches list (`GET /api/imports`).
+3. Library page: cards from `listArtifacts` (title, kind badge, source platform, date,
+   thumbnail via a new authorized route `GET /api/artifacts/:id/thumbnail`), plus an empty
+   state with an import link.
+4. E2E: log in → upload 3 fixtures (HTML, ZIP, a broken file) → see the report → open the
+   library and find the cards.
+
+**PR 6: P1A-EXPORT + P1A-RESTORE + P1A-INTEGRITY.** See BACKUP_RECOVERY.md (format v1,
+round-trip test, tamper test).

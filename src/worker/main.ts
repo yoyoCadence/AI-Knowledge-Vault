@@ -8,6 +8,7 @@ import { getLogger } from "@/infrastructure/observability/logger";
 import { getStorage } from "@/infrastructure/storage";
 import { JobWorker } from "@/modules/jobs";
 import { buildJobRegistry } from "./registry";
+import { startScheduler } from "./scheduler";
 
 async function main(): Promise<void> {
   process.env.SERVICE_NAME ??= "vault-worker";
@@ -26,11 +27,14 @@ async function main(): Promise<void> {
     shutdownGraceMs: env.WORKER_SHUTDOWN_GRACE_MS,
   });
 
+  const stopScheduler = startScheduler(getDb(), logger);
+
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, "shutdown requested");
+    stopScheduler();
     await worker.stop();
     await closeDb();
     process.exit(0);

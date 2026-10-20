@@ -85,18 +85,18 @@ Rules:
 
 ## 6. Exit-criteria traceability (Phase 1A)
 
-| Exit criterion              | Test                                                |
-| --------------------------- | --------------------------------------------------- |
-| 1 HTML upload               | `tests/integration/import-pipeline.test.ts › html`  |
-| 2 ZIP upload                | `… › zip static site`, `… › claude design zip`      |
-| 3 PDF upload                | `… › pdf`                                           |
-| 4 50-item batch             | `tests/integration/import-batch.test.ts › 50 items` |
-| 5 Original download         | `tests/integration/files-download.test.ts`          |
-| 6 Hash verification         | `… › sha256 matches`; `integrity.test.ts`           |
-| 7 Partial failure isolation | `import-batch.test.ts › mixed batch`                |
-| 8 Retry without duplicates  | `import-idempotency.test.ts`                        |
-| 9 Export re-importable      | `backup-roundtrip.test.ts`                          |
-| 10 No unauthorized access   | `security-access.test.ts`                           |
+| Exit criterion              | Test                                                                                                                           |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 1 HTML upload               | `tests/integration/imports/pipeline.test.ts › imports an HTML file end-to-end`                                                 |
+| 2 ZIP upload                | `tests/integration/imports/archives.test.ts › Claude Design export`, `› framework source`; `tests/unit/extraction/zip.test.ts` |
+| 3 PDF upload                | `tests/integration/imports/pipeline.test.ts › imports PDF, Markdown, Big5 text and PNG`                                        |
+| 4 50-item batch             | `tests/integration/imports/archives.test.ts › batch of 50`                                                                     |
+| 5 Original download         | `pipeline.test.ts › HTML end-to-end` (byte-identical) and `tests/integration/api/imports-api.test.ts` (HTTP 302 → download)    |
+| 6 Hash verification         | `x-content-sha256` check in `imports-api.test.ts`; the integrity job arrives with P1A-INTEGRITY                                |
+| 7 Partial failure isolation | `pipeline.test.ts › a bad file fails…`, `archives.test.ts › batch of 50`                                                       |
+| 8 Retry without duplicates  | `pipeline.test.ts › completing twice…`, `› a crash after storing the original…`, `archives.test.ts › reconciles…`              |
+| 9 Export re-importable      | `backup-roundtrip.test.ts`                                                                                                     |
+| 10 No unauthorized access   | `pipeline.test.ts › authorization`, `api/imports-api.test.ts`, `api/sessions-api.test.ts`                                      |
 
 ## 7. Commands
 
