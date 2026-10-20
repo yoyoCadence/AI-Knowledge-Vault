@@ -160,7 +160,24 @@ export const zhTW = {
   "import.batchStatus.completed": "完成",
   "import.batchStatus.completed_with_errors": "完成（有錯誤）",
   "import.batchStatus.cancelled": "已取消",
-  "import.backupSoon": "可攜式匯出與還原將在下一個版本提供。",
+  "backup.title": "可攜式匯出",
+  "backup.description":
+    "把整個知識庫（原始檔、作品與版本資料、抽取出的文字）打包成一個 ZIP。這個檔案不需要本系統也能閱讀，並可用 sha256sum 驗證完整性。",
+  "backup.create": "建立匯出",
+  "backup.creating": "建立中…",
+  "backup.empty": "還沒有匯出紀錄。",
+  "backup.status.queued": "排隊中",
+  "backup.status.running": "製作中",
+  "backup.status.completed": "可下載",
+  "backup.status.failed": "失敗",
+  "backup.expired": "已過期",
+  "backup.download": "下載",
+  "backup.expires": "{date} 前可下載",
+  "backup.summary": "{artifacts} 件作品 · {versions} 個版本 · {files} 個原始檔",
+  "backup.unencrypted":
+    "匯出檔未加密。存放到雲端或交給他人之前，請先加密，例如：age --passphrase -o export.zip.age export.zip",
+  "backup.restoreHint":
+    "還原：在伺服器上執行 pnpm backup:restore <檔案> --workspace <slug>（會先驗證所有校驗碼，未通過則不寫入任何資料）。網頁介面的還原將在下一個版本提供。",
   "settings.title": "設定",
 } as const;
 

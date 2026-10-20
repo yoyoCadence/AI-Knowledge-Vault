@@ -1,0 +1,606 @@
+import { createHash } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { and, eq, inArray } from "drizzle-orm";
+import { z } from "zod";
+import type { Database, DbExecutor } from "@/infrastructure/database/client";
+import {
+  artifactFiles,
+  artifacts,
+  artifactVersions,
+  fileAssets,
+  researchProjects,
+  type RestoreMode,
+} from "@/infrastructure/database/schema";
+import type { StorageAdapter } from "@/infrastructure/storage";
+import { AppError } from "@/lib/errors";
+import { newId } from "@/lib/ids";
+import { SafeZip, ZipRejectedError, type ZipLimits } from "@/modules/extraction";
+import { storeOriginal } from "@/modules/files/originals";
+import { saveExtraction } from "@/modules/imports/derive";
+import { enqueueJob } from "@/modules/jobs";
+import {
+  ArtifactFileV1,
+  ArtifactV1,
+  ChecksumFormatError,
+  EXPORT_FORMAT,
+  EXPORT_FORMAT_VERSION,
+  FileAssetV1,
+  hashFromOriginalPath,
+  ManifestV1,
+  normalizedPath,
+  parseChecksums,
+  PATHS,
+  ProjectV1,
+  VersionV1,
+  type ManifestV1 as Manifest,
+} from "./format";
+
+/**
+ * Restore of a format v1 archive into a workspace (docs/BACKUP_RECOVERY.md §6).
+ *
+ * Order matters for safety:
+ * 1. The archive is opened with the same SafeZip defences as imports.
+ * 2. **Every** entry is hashed and compared with `checksums.sha256` (itself pinned by the
+ *    manifest) before anything is written. Any mismatch aborts with CHECKSUM_MISMATCH.
+ * 3. Metadata is schema-validated and cross-checked (every reference resolves).
+ * 4. Originals are written content-addressed (idempotent), then rows are inserted one artifact
+ *    per transaction, so a failure affects only that artifact and is reported.
+ *
+ * IDs are kept when free (restore into a clean environment reproduces the source exactly).
+ * An artifact that already exists in the target workspace is skipped (`skip_existing`) or
+ * duplicated under new IDs (`copy`). Rows whose IDs are taken by *another* workspace are always
+ * restored under new IDs. Derived data (sections, previews, thumbnails) is rebuilt by
+ * `restore.reextract_version` jobs; the archived Markdown is available immediately as a
+ * fallback extraction.
+ */
+
+export const REEXTRACT_JOB_TYPE = "restore.reextract_version";
+export const RESTORE_EXTRACTION_METHOD = "restore_archive";
+const COPY_SUFFIX = "（還原副本）";
+const MAX_METADATA_BYTES = 256 * 1024 * 1024;
+const MAX_LISTED_PROBLEMS = 50;
+
+export type RestoreLimits = ZipLimits;
+
+type Outcome = "restored" | "skipped" | "copied" | "failed";
+type Tally = Record<Outcome, number>;
+const tally = (): Tally => ({ restored: 0, skipped: 0, copied: 0, failed: 0 });
+
+export interface RestoreReport {
+  source: {
+    formatVersion: number;
+    appVersion: string;
+    dbMigration: string;
+    createdAt: string;
+    workspace: Manifest["workspace"];
+  };
+  checksums: { verified: number };
+  counts: {
+    researchProjects: Tally;
+    artifacts: Tally;
+    artifactVersions: Tally;
+    fileAssets: { stored: number; reused: number };
+  };
+  /** Old → new ids for everything restored under a new id (capped). */
+  idMap: Record<string, string>;
+  failures: { artifactId: string; title: string; error: string }[];
+  warnings: string[];
+  reextractJobs: number;
+  durationMs: number;
+}
+
+function checksumMismatch(message: string, files: string[]): AppError {
+  return new AppError("CHECKSUM_MISMATCH", message, {
+    details: { files: files.slice(0, MAX_LISTED_PROBLEMS), total: files.length },
+    retryable: false,
+  });
+}
+
+function invalidArchive(message: string, details?: Record<string, unknown>): AppError {
+  return new AppError("UNSUPPORTED_EXPORT_FORMAT", message, { details, retryable: false });
+}
+
+async function readJson<T>(zip: SafeZip, entryPath: string, schema: z.ZodType<T>): Promise<T> {
+  if (!zip.has(entryPath)) throw invalidArchive(`${entryPath} is missing`);
+  const raw = (await zip.readBuffer(entryPath, MAX_METADATA_BYTES)).toString("utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw invalidArchive(`${entryPath} is not valid JSON`);
+  }
+  const result = schema.safeParse(parsed);
+  if (!result.success) {
+    throw invalidArchive(`${entryPath} does not match export format v1`, {
+      issues: result.error.issues.slice(0, 10).map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })),
+    });
+  }
+  return result.data;
+}
+
+async function hashEntry(zip: SafeZip, entryPath: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of await zip.openStream(entryPath)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
+
+/** Strips the YAML front matter written by the exporter. */
+function markdownBody(text: string): { title: string | null; body: string } {
+  const match = /^---\n([\s\S]*?)\n---\n\n?/.exec(text);
+  if (!match) return { title: null, body: text };
+  const titleLine = /^title: (.*)$/m.exec(match[1]!);
+  let title: string | null = null;
+  if (titleLine) {
+    try {
+      title = (JSON.parse(titleLine[1]!) as string) || null;
+    } catch {
+      title = null;
+    }
+  }
+  return { title, body: text.slice(match[0].length).replace(/\n$/, "") };
+}
+
+/** Verifies the archive completely; returns its validated contents. Writes nothing. */
+async function verifyArchive(zip: SafeZip) {
+  const manifest = await readJson(zip, PATHS.manifest, ManifestV1.loose());
+  if (manifest.format !== EXPORT_FORMAT || manifest.formatVersion !== EXPORT_FORMAT_VERSION) {
+    throw invalidArchive(`unsupported export format ${manifest.format} v${manifest.formatVersion}`);
+  }
+  await readJson(
+    zip,
+    PATHS.schemaVersion,
+    z.object({ format: z.literal(EXPORT_FORMAT), formatVersion: z.literal(1) }).loose(),
+  );
+  if (!zip.has(PATHS.checksums)) throw invalidArchive("checksums.sha256 is missing");
+  const checksumsBytes = await zip.readBuffer(PATHS.checksums, MAX_METADATA_BYTES);
+  if (createHash("sha256").update(checksumsBytes).digest("hex") !== manifest.checksumsSha256) {
+    throw checksumMismatch("checksums.sha256 does not match the manifest", [PATHS.checksums]);
+  }
+  let listed: Map<string, string>;
+  try {
+    listed = parseChecksums(checksumsBytes.toString("utf8"));
+  } catch (error) {
+    if (error instanceof ChecksumFormatError) throw invalidArchive(error.message);
+    throw error;
+  }
+
+  // The manifest is the root of trust: it pins checksums.sha256, so it cannot be listed there.
+  const present = zip.inventory.entries
+    .filter(
+      (entry) =>
+        !entry.isDirectory && entry.path !== PATHS.checksums && entry.path !== PATHS.manifest,
+    )
+    .map((entry) => entry.path);
+  const unlisted = present.filter((entryPath) => !listed.has(entryPath));
+  const missing = [...listed.keys()].filter((entryPath) => !zip.has(entryPath));
+  if (unlisted.length > 0 || missing.length > 0) {
+    throw checksumMismatch("the archive's files do not match checksums.sha256", [
+      ...missing.map((entryPath) => `missing: ${entryPath}`),
+      ...unlisted.map((entryPath) => `not listed: ${entryPath}`),
+    ]);
+  }
+  const mismatched: string[] = [];
+  for (const [entryPath, expected] of listed) {
+    const actual = await hashEntry(zip, entryPath);
+    const addressed = hashFromOriginalPath(entryPath);
+    if (actual !== expected || (addressed !== null && addressed !== actual)) {
+      mismatched.push(entryPath);
+    }
+  }
+  if (mismatched.length > 0) {
+    throw checksumMismatch(
+      `${mismatched.length} file(s) in the archive do not match their checksums`,
+      mismatched,
+    );
+  }
+
+  const projects = await readJson(zip, PATHS.projects, z.array(ProjectV1));
+  const artifactList = await readJson(zip, PATHS.artifacts, z.array(ArtifactV1));
+  const versions = await readJson(zip, PATHS.versions, z.array(VersionV1));
+  const assets = await readJson(zip, PATHS.fileAssets, z.array(FileAssetV1));
+  const links = await readJson(zip, PATHS.artifactFiles, z.array(ArtifactFileV1));
+
+  // Referential integrity: every reference must resolve inside the archive.
+  const problems: string[] = [];
+  const projectIds = new Set(projects.map((project) => project.id));
+  const artifactIds = new Set(artifactList.map((artifact) => artifact.id));
+  const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+  const versionById = new Map(versions.map((version) => [version.id, version]));
+  for (const asset of assets) {
+    if (!listed.has(asset.archivePath) || hashFromOriginalPath(asset.archivePath) !== asset.sha256)
+      problems.push(`file asset ${asset.id}: original not in archive`);
+  }
+  for (const artifact of artifactList) {
+    if (artifact.projectId && !projectIds.has(artifact.projectId))
+      problems.push(`artifact ${artifact.id}: unknown project`);
+    if (
+      artifact.currentVersionId &&
+      versionById.get(artifact.currentVersionId)?.artifactId !== artifact.id
+    )
+      problems.push(`artifact ${artifact.id}: current version not among its versions`);
+  }
+  for (const version of versions) {
+    if (!artifactIds.has(version.artifactId)) problems.push(`version ${version.id}: no artifact`);
+    if (!assetById.has(version.primaryFileId))
+      problems.push(`version ${version.id}: primary file missing`);
+  }
+  for (const link of links) {
+    if (!versionById.has(link.artifactVersionId) || !assetById.has(link.fileAssetId))
+      problems.push(`artifact file ${link.id}: dangling reference`);
+  }
+  if (problems.length > 0) {
+    throw invalidArchive("the archive's metadata is inconsistent", {
+      problems: problems.slice(0, MAX_LISTED_PROBLEMS),
+    });
+  }
+  return { manifest, verified: listed.size, projects, artifactList, versions, assets, links };
+}
+
+async function existingIds(
+  db: DbExecutor,
+  table:
+    typeof artifacts | typeof researchProjects | typeof artifactVersions | typeof artifactFiles,
+  ids: string[],
+) {
+  if (ids.length === 0) return new Map<string, string | null>();
+  const column = table.id;
+  const rows =
+    table === artifactFiles
+      ? (
+          await db
+            .select({ id: artifactFiles.id })
+            .from(artifactFiles)
+            .where(inArray(artifactFiles.id, ids))
+        ).map((row) => ({ id: row.id, workspaceId: null }))
+      : await db
+          .select({ id: column, workspaceId: (table as typeof artifacts).workspaceId })
+          .from(table as typeof artifacts)
+          .where(inArray(column, ids));
+  return new Map(rows.map((row) => [row.id, row.workspaceId as string | null]));
+}
+
+export async function restoreArchive(
+  db: Database,
+  storage: StorageAdapter,
+  input: {
+    archivePath: string;
+    workspaceId: string;
+    userId: string | null;
+    mode: RestoreMode;
+    restoreId: string;
+    limits: RestoreLimits;
+  },
+): Promise<RestoreReport> {
+  const startedAt = Date.now();
+  let zip: SafeZip;
+  try {
+    zip = await SafeZip.open(input.archivePath, input.limits);
+  } catch (error) {
+    if (error instanceof ZipRejectedError) throw invalidArchive(`not a safe ZIP: ${error.message}`);
+    throw error;
+  }
+  const tmp = await mkdtemp(path.join(tmpdir(), "vault-restore-"));
+  try {
+    const archive = await verifyArchive(zip);
+    const { workspaceId, mode } = input;
+    const report: RestoreReport = {
+      source: {
+        formatVersion: archive.manifest.formatVersion,
+        appVersion: archive.manifest.appVersion,
+        dbMigration: archive.manifest.dbMigration,
+        createdAt: archive.manifest.createdAt,
+        workspace: archive.manifest.workspace,
+      },
+      checksums: { verified: archive.verified },
+      counts: {
+        researchProjects: tally(),
+        artifacts: tally(),
+        artifactVersions: tally(),
+        fileAssets: { stored: 0, reused: 0 },
+      },
+      idMap: {},
+      failures: [],
+      warnings: [],
+      reextractJobs: 0,
+      durationMs: 0,
+    };
+    const remember = (oldId: string, newIdValue: string) => {
+      if (oldId !== newIdValue && Object.keys(report.idMap).length < 10_000)
+        report.idMap[oldId] = newIdValue;
+    };
+
+    // ---- 1. Originals (content-addressed; the target workspace dedups by hash) ----
+    const assetIdMap = new Map<string, string>();
+    const takenAssetIds = new Set(
+      (
+        await db
+          .select({ id: fileAssets.id })
+          .from(fileAssets)
+          .where(
+            inArray(
+              fileAssets.id,
+              archive.assets.map((asset) => asset.id),
+            ),
+          )
+      ).map((row) => row.id),
+    );
+    for (const asset of archive.assets) {
+      const [existing] = await db
+        .select({ id: fileAssets.id })
+        .from(fileAssets)
+        .where(and(eq(fileAssets.workspaceId, workspaceId), eq(fileAssets.sha256, asset.sha256)));
+      if (existing) {
+        assetIdMap.set(asset.id, existing.id);
+        remember(asset.id, existing.id);
+        report.counts.fileAssets.reused += 1;
+        continue;
+      }
+      // Re-verify while copying out: the bytes written are exactly the bytes checked.
+      const file = path.join(tmp, asset.sha256);
+      const hash = createHash("sha256");
+      await pipeline(
+        await zip.openStream(asset.archivePath),
+        new Transform({
+          transform(chunk: Buffer, _encoding, callback) {
+            hash.update(chunk);
+            callback(null, chunk);
+          },
+        }),
+        createWriteStream(file, { flags: "w", mode: 0o600 }),
+      );
+      if (hash.digest("hex") !== asset.sha256)
+        throw checksumMismatch("an original changed while restoring", [asset.archivePath]);
+      const { storageKey } = await storeOriginal(storage, {
+        workspaceId,
+        sha256: asset.sha256,
+        size: asset.byteSize,
+        mimeType: asset.mimeType,
+        sourcePath: file,
+      });
+      await rm(file, { force: true });
+      const id = takenAssetIds.has(asset.id) ? newId() : asset.id;
+      const [inserted] = await db
+        .insert(fileAssets)
+        .values({
+          id,
+          workspaceId,
+          storageProvider: storage.provider,
+          storageKey,
+          originalFilename: asset.originalFilename,
+          mimeType: asset.mimeType,
+          byteSize: asset.byteSize,
+          sha256: asset.sha256,
+          storageStatus: "stored",
+          integrityVerifiedAt: new Date(),
+          createdBy: input.userId,
+          createdAt: new Date(asset.createdAt),
+        })
+        .onConflictDoNothing({ target: [fileAssets.workspaceId, fileAssets.sha256] })
+        .returning({ id: fileAssets.id });
+      const finalId =
+        inserted?.id ??
+        (
+          await db
+            .select({ id: fileAssets.id })
+            .from(fileAssets)
+            .where(
+              and(eq(fileAssets.workspaceId, workspaceId), eq(fileAssets.sha256, asset.sha256)),
+            )
+        )[0]!.id;
+      assetIdMap.set(asset.id, finalId);
+      remember(asset.id, finalId);
+      report.counts.fileAssets.stored += 1;
+    }
+
+    // ---- 2. Research projects ----
+    const projectIdMap = new Map<string, string>();
+    const projectOwners = await existingIds(
+      db,
+      researchProjects,
+      archive.projects.map((project) => project.id),
+    );
+    for (const project of archive.projects) {
+      const owner = projectOwners.get(project.id);
+      if (owner === workspaceId && mode === "skip_existing") {
+        projectIdMap.set(project.id, project.id);
+        report.counts.researchProjects.skipped += 1;
+        continue;
+      }
+      const copy = owner !== undefined;
+      const id = copy ? newId() : project.id;
+      await db.insert(researchProjects).values({
+        id,
+        workspaceId,
+        title: copy && owner === workspaceId ? `${project.title}${COPY_SUFFIX}` : project.title,
+        description: project.description,
+        status: project.status,
+        createdBy: input.userId,
+        createdAt: new Date(project.createdAt),
+        updatedAt: new Date(project.updatedAt),
+        deletedAt: project.deletedAt ? new Date(project.deletedAt) : null,
+      });
+      projectIdMap.set(project.id, id);
+      remember(project.id, id);
+      report.counts.researchProjects[copy ? "copied" : "restored"] += 1;
+    }
+
+    // ---- 3. Artifacts, one transaction each ----
+    const versionsByArtifact = new Map<string, typeof archive.versions>();
+    for (const version of archive.versions) {
+      const list = versionsByArtifact.get(version.artifactId) ?? [];
+      list.push(version);
+      versionsByArtifact.set(version.artifactId, list);
+    }
+    const linksByVersion = new Map<string, typeof archive.links>();
+    for (const link of archive.links) {
+      const list = linksByVersion.get(link.artifactVersionId) ?? [];
+      list.push(link);
+      linksByVersion.set(link.artifactVersionId, list);
+    }
+    const artifactOwners = await existingIds(
+      db,
+      artifacts,
+      archive.artifactList.map((artifact) => artifact.id),
+    );
+    const takenVersionIds = await existingIds(
+      db,
+      artifactVersions,
+      archive.versions.map((version) => version.id),
+    );
+    const takenLinkIds = await existingIds(
+      db,
+      artifactFiles,
+      archive.links.map((link) => link.id),
+    );
+
+    for (const artifact of archive.artifactList) {
+      const versions = versionsByArtifact.get(artifact.id) ?? [];
+      const owner = artifactOwners.get(artifact.id);
+      if (owner === workspaceId && mode === "skip_existing") {
+        report.counts.artifacts.skipped += 1;
+        report.counts.artifactVersions.skipped += versions.length;
+        continue;
+      }
+      if (owner !== undefined && owner !== workspaceId) {
+        report.warnings.push(
+          `artifact ${artifact.id} exists in another workspace; restored under a new id`,
+        );
+      }
+      const copy = owner !== undefined;
+      const artifactId = copy ? newId() : artifact.id;
+      try {
+        const jobs = await db.transaction(async (tx) => {
+          await tx.insert(artifacts).values({
+            id: artifactId,
+            workspaceId,
+            projectId: artifact.projectId ? (projectIdMap.get(artifact.projectId) ?? null) : null,
+            title:
+              copy && owner === workspaceId ? `${artifact.title}${COPY_SUFFIX}` : artifact.title,
+            description: artifact.description,
+            summary: artifact.summary,
+            visibility: artifact.visibility,
+            sensitivity: artifact.sensitivity,
+            reviewStatus: artifact.reviewStatus,
+            identityKey: artifact.identityKey,
+            originRef: copy ? `restore:${input.restoreId}:${artifact.id}` : artifact.originRef,
+            metadata: artifact.metadata,
+            createdBy: input.userId,
+            createdAt: new Date(artifact.createdAt),
+            updatedAt: new Date(artifact.updatedAt),
+            deletedAt: artifact.deletedAt ? new Date(artifact.deletedAt) : null,
+          });
+          const versionIdMap = new Map<string, string>();
+          let reextract = 0;
+          for (const version of versions) {
+            const versionId = copy || takenVersionIds.has(version.id) ? newId() : version.id;
+            versionIdMap.set(version.id, versionId);
+            await tx.insert(artifactVersions).values({
+              id: versionId,
+              workspaceId,
+              artifactId,
+              versionNumber: version.versionNumber,
+              primaryFileId: assetIdMap.get(version.primaryFileId)!,
+              contentKind: version.contentKind,
+              previewKind: version.previewKind,
+              previewStatus: "pending",
+              previewEntryPath: version.previewEntryPath,
+              processingStatus: "pending",
+              contentHash: version.contentHash,
+              sourcePlatform: version.sourcePlatform,
+              sourceModel: version.sourceModel,
+              originalPrompt: version.originalPrompt,
+              sourceUrl: version.sourceUrl,
+              researchDate: version.researchDate,
+              author: version.author,
+              referenceSources: version.referenceSources.map((reference) =>
+                reference.title
+                  ? { title: reference.title, url: reference.url }
+                  : { url: reference.url },
+              ),
+              changeSummary: version.changeSummary,
+              analysis: version.analysis,
+              createdBy: input.userId,
+              createdAt: new Date(version.createdAt),
+              updatedAt: new Date(version.updatedAt),
+            });
+            for (const link of linksByVersion.get(version.id) ?? []) {
+              await tx.insert(artifactFiles).values({
+                id: copy || takenLinkIds.has(link.id) ? newId() : link.id,
+                artifactVersionId: versionId,
+                fileAssetId: assetIdMap.get(link.fileAssetId)!,
+                role: link.role,
+                displayName: link.displayName,
+                createdAt: new Date(link.createdAt),
+              });
+            }
+            // Fallback text right away; re-extraction replaces it with a full extraction.
+            const normalized = normalizedPath(version.id);
+            if (zip.has(normalized)) {
+              const { title, body } = markdownBody(
+                (await zip.readBuffer(normalized, MAX_METADATA_BYTES)).toString("utf8"),
+              );
+              await saveExtraction(tx, {
+                workspaceId,
+                versionId,
+                extraction: {
+                  method: RESTORE_EXTRACTION_METHOD,
+                  version: EXPORT_FORMAT_VERSION,
+                  status: "partial",
+                  title,
+                  language: null,
+                  plainText: body,
+                  markdown: body,
+                  sections: [],
+                  metadata: {},
+                  references: [],
+                  warnings: ["RESTORED_FROM_ARCHIVE: archived text pending re-extraction"],
+                },
+              });
+            }
+            await enqueueJob(tx, {
+              type: REEXTRACT_JOB_TYPE,
+              idempotencyKey: `${REEXTRACT_JOB_TYPE}:${versionId}`,
+              workspaceId,
+              payload: { versionId },
+            });
+            reextract += 1;
+            if (versionId !== version.id) remember(version.id, versionId);
+          }
+          if (artifact.currentVersionId) {
+            await tx
+              .update(artifacts)
+              .set({ currentVersionId: versionIdMap.get(artifact.currentVersionId)! })
+              .where(eq(artifacts.id, artifactId));
+          }
+          return reextract;
+        });
+        report.reextractJobs += jobs;
+        report.counts.artifacts[copy ? "copied" : "restored"] += 1;
+        report.counts.artifactVersions[copy ? "copied" : "restored"] += versions.length;
+        remember(artifact.id, artifactId);
+      } catch (error) {
+        report.counts.artifacts.failed += 1;
+        report.counts.artifactVersions.failed += versions.length;
+        report.failures.push({
+          artifactId: artifact.id,
+          title: artifact.title.slice(0, 200),
+          error: error instanceof Error ? error.message.slice(0, 500) : String(error),
+        });
+      }
+    }
+
+    report.durationMs = Date.now() - startedAt;
+    return report;
+  } finally {
+    zip.close();
+    await rm(tmp, { recursive: true, force: true });
+  }
+}

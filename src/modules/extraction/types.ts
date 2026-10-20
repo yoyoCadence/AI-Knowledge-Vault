@@ -26,7 +26,8 @@ export interface SourceMetadata {
 }
 
 export interface ExtractionResult {
-  method: "html" | "markdown" | "text" | "pdf" | "image" | "archive";
+  /** `restore_archive`: text taken from a backup's normalized Markdown until re-extracted. */
+  method: "html" | "markdown" | "text" | "pdf" | "image" | "archive" | "restore_archive";
   version: number;
   status: ExtractionStatus;
   title: string | null;

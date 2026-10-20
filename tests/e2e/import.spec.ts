@@ -60,6 +60,21 @@ test.describe("import → library → artifact (Scenario A)", () => {
     expect(createHash("sha256").update(downloaded).digest("hex")).toBe(
       createHash("sha256").update(zipBytes).digest("hex"),
     );
+
+    // Portable export of the library (same session: sign-in is rate limited).
+    await page.goto("/import");
+    await page.getByTestId("export-create").click();
+    const exportRow = page.getByTestId("export-row").first();
+    await expect(exportRow.getByTestId("export-download")).toBeVisible({ timeout: 30_000 });
+    const checksum = (await exportRow.getByText(/^SHA-256 /).textContent())!
+      .replace("SHA-256", "")
+      .trim();
+    const exportDownload = page.waitForEvent("download");
+    await exportRow.getByTestId("export-download").click();
+    const archive = await exportDownload;
+    expect(archive.suggestedFilename()).toMatch(/^knowledge-vault-export-.+\.zip$/);
+    const archiveBytes = await readFile((await archive.path())!);
+    expect(createHash("sha256").update(archiveBytes).digest("hex")).toBe(checksum);
   });
 
   test("anonymous visitors cannot reach import or artifact APIs", async ({ request }) => {

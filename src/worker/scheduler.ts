@@ -1,5 +1,6 @@
 import type { Database } from "@/infrastructure/database/client";
 import type { Logger } from "@/infrastructure/observability/logger";
+import { EXPORT_CLEANUP_JOB_TYPE } from "@/modules/backup";
 import { IMPORT_CLEANUP_JOB_TYPE } from "@/modules/imports";
 import { enqueueJob } from "@/modules/jobs";
 
@@ -9,6 +10,7 @@ import { enqueueJob } from "@/modules/jobs";
  */
 export const MAINTENANCE_JOBS = [
   { type: IMPORT_CLEANUP_JOB_TYPE, everyMs: 60 * 60 * 1000 },
+  { type: EXPORT_CLEANUP_JOB_TYPE, everyMs: 60 * 60 * 1000 },
 ] as const;
 
 export async function enqueueDueMaintenance(db: Database, now = new Date()): Promise<number> {

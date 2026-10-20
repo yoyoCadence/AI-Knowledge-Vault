@@ -81,6 +81,9 @@ const EnvSchema = z
     PREVIEW_MAX_FILES: positiveInt(2_000),
     PREVIEW_MAX_TOTAL_BYTES: positiveInt(256 * MiB),
     IMAGE_MAX_INPUT_PIXELS: positiveInt(100_000_000),
+    EXPORT_JOB_TIMEOUT_MS: positiveInt(30 * 60_000),
+    RESTORE_MAX_ENTRIES: positiveInt(200_000),
+    RESTORE_MAX_TOTAL_BYTES: positiveInt(50 * 1024 * MiB),
 
     WORKER_CONCURRENCY: positiveInt(2),
     WORKER_POLL_INTERVAL_MS: positiveInt(1_000),

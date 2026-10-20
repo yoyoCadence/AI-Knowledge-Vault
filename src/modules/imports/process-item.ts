@@ -1,47 +1,34 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { Transform } from "node:stream";
-import { readFile } from "node:fs/promises";
 import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
-import { v5 as uuidv5 } from "uuid";
 import type { DbExecutor } from "@/infrastructure/database/client";
 import {
   artifactFiles,
   artifacts,
   artifactVersions,
   derivedAssets,
-  documentSections,
-  extractedDocuments,
   fileAssets,
   importBatches,
   importItems,
   type MatchReason,
 } from "@/infrastructure/database/schema";
-import { StorageObjectNotFoundError, storageKeys } from "@/infrastructure/storage";
+import { StorageObjectNotFoundError } from "@/infrastructure/storage";
 import { AppError } from "@/lib/errors";
 import { identityKeyFor, isDistinctiveKey } from "@/modules/artifacts";
 import {
-  analyzeArchive,
-  ARCHIVE_ANALYZER_VERSION,
   contentHash,
-  extractSingleFile,
   fileExtension,
   filenameStem,
   sniffFormat,
-  THUMBNAIL_GENERATOR,
-  THUMBNAIL_GENERATOR_VERSION,
   type ArchiveLimits,
-  type ArchiveOutcome,
   type ExtractionResult,
-  type SingleFileOutcome,
-  ZipRejectedError,
 } from "@/modules/extraction";
 import { downloadToTempFile } from "@/modules/files/staging";
-import { sha256OfBuffer } from "@/modules/files/hash";
 import { storeOriginal } from "@/modules/files/originals";
 import type { JobContext, JobDefinition } from "@/modules/jobs";
 import { isTerminal } from "./state";
+import { deriveVersionContent, deterministicId, saveExtraction } from "./derive";
 import { IMPORT_JOB_TYPE, refreshBatchStatus, transitionItem } from "./service";
+
+export { deterministicId };
 
 /**
  * Worker handler for `import.process_item` (IMPORT_PIPELINE §1 stages 7–18).
@@ -58,12 +45,6 @@ import { IMPORT_JOB_TYPE, refreshBatchStatus, transitionItem } from "./service";
 export interface ProcessLimits extends ArchiveLimits {
   maxFileBytes: number;
 }
-
-const ID_NAMESPACE = "4f6f1c1e-3b7a-5d2e-9c1a-6b2f0e8d7a10";
-export const deterministicId = (name: string) => uuidv5(name, ID_NAMESPACE);
-
-const SINGLE_HTML_PREVIEW_GENERATOR = "copy-original";
-const ARCHIVE_PREVIEW_GENERATOR = "zip-extract";
 
 type ItemRow = typeof importItems.$inferSelect;
 
@@ -250,142 +231,20 @@ export async function processImportItem(
       sourcePath: staged.path,
     });
 
-    const bytes = staged.size <= limits.maxExtractBytes ? await readFile(staged.path) : null;
-    const outcome: SingleFileOutcome &
-      Partial<Pick<ArchiveOutcome, "previewFiles" | "zip" | "rejection">> =
-      sniff.format === "zip"
-        ? await analyzeArchive(staged.path, item.originalFilename, limits)
-        : await extractSingleFile({
-            bytes,
-            filename: item.originalFilename,
-            format: sniff.format,
-            limits,
-          });
     const versionId = deterministicId(`artifact-version:${item.id}`);
-    const derived: (typeof derivedAssets.$inferInsert)[] = [];
-    let { classification } = outcome;
-    let rejection = outcome.rejection;
-    try {
-      signal.throwIfAborted();
-      warnings.push(...outcome.extraction.warnings);
-
-      // Derived assets: written before the commit with deterministic keys (safe to overwrite on retry).
-      if (outcome.thumbnail) {
-        const id = deterministicId(`derived:${versionId}:thumbnail:`);
-        const key = storageKeys.derived(item.workspaceId, versionId, id);
-        await storage.putObject(key, outcome.thumbnail.bytes, {
-          contentType: outcome.thumbnail.mimeType,
-        });
-        derived.push({
-          id,
-          workspaceId: item.workspaceId,
-          artifactVersionId: versionId,
-          kind: "thumbnail",
-          path: "",
-          storageKey: key,
-          mimeType: outcome.thumbnail.mimeType,
-          byteSize: outcome.thumbnail.bytes.length,
-          sha256: sha256OfBuffer(outcome.thumbnail.bytes),
-          generator: THUMBNAIL_GENERATOR,
-          generatorVersion: THUMBNAIL_GENERATOR_VERSION,
-        });
-      }
-      if (
-        sniff.format === "html" &&
-        outcome.classification.previewKind === "static_html" &&
-        outcome.classification.previewEntryPath
-      ) {
-        const path = outcome.classification.previewEntryPath;
-        const id = deterministicId(`derived:${versionId}:preview_file:${path}`);
-        const key = storageKeys.derived(item.workspaceId, versionId, id);
-        await storage.putObject(key, createReadStream(staged.path), {
-          contentType: "text/html",
-          contentLength: staged.size,
-        });
-        derived.push({
-          id,
-          workspaceId: item.workspaceId,
-          artifactVersionId: versionId,
-          kind: "preview_file",
-          path,
-          storageKey: key,
-          mimeType: "text/html",
-          byteSize: staged.size,
-          sha256: staged.sha256,
-          generator: SINGLE_HTML_PREVIEW_GENERATOR,
-          generatorVersion: 1,
-        });
-      }
-      if (outcome.zip && outcome.previewFiles) {
-        // Lying size headers in a non-entry file only surface while it streams. That rejects
-        // the archive like any other integrity failure: the original is kept, no preview.
-        let archiveError: ZipRejectedError | undefined;
-        try {
-          for (const file of outcome.previewFiles) {
-            signal.throwIfAborted();
-            const id = deterministicId(`derived:${versionId}:preview_file:${file.sitePath}`);
-            const key = storageKeys.derived(item.workspaceId, versionId, id);
-            const hash = createHash("sha256");
-            const hashing = new Transform({
-              transform(chunk: Buffer, _encoding, callback) {
-                hash.update(chunk);
-                callback(null, chunk);
-              },
-            });
-            const source = await outcome.zip.openStream(file.archivePath);
-            source.on("error", (error) => {
-              if (error instanceof ZipRejectedError) archiveError = error;
-              hashing.destroy(error);
-            });
-            // The adapter may await (mkdir, network) before it attaches its own listeners; an
-            // early stream error must surface as putObject's rejection, never as an uncaught
-            // 'error' event that would crash the worker.
-            hashing.on("error", () => {});
-            await storage.putObject(key, source.pipe(hashing), {
-              contentType: file.mimeType,
-              contentLength: file.size,
-            });
-            derived.push({
-              id,
-              workspaceId: item.workspaceId,
-              artifactVersionId: versionId,
-              kind: "preview_file",
-              path: file.sitePath,
-              storageKey: key,
-              mimeType: file.mimeType,
-              byteSize: file.size,
-              sha256: hash.digest("hex"),
-              generator: ARCHIVE_PREVIEW_GENERATOR,
-              generatorVersion: ARCHIVE_ANALYZER_VERSION,
-            });
-          }
-        } catch (error) {
-          const cause = error instanceof ZipRejectedError ? error : archiveError;
-          if (!cause) throw error;
-          const previews = derived.filter((asset) => asset.kind === "preview_file");
-          await Promise.all(
-            previews.map((asset) => storage.deleteObject(asset.storageKey).catch(() => undefined)),
-          );
-          derived.splice(
-            0,
-            derived.length,
-            ...derived.filter((asset) => !previews.includes(asset)),
-          );
-          classification = {
-            ...classification,
-            previewKind: "unsupported",
-            previewEntryPath: null,
-          };
-          rejection = {
-            code: "ARCHIVE_REJECTED",
-            message: `${cause.message}. The original file was preserved for inspection.`,
-          };
-        }
-      }
-    } finally {
-      outcome.zip?.close();
-    }
-    const { extraction } = outcome;
+    const { extraction, classification, derived, rejection } = await deriveVersionContent({
+      storage,
+      workspaceId: item.workspaceId,
+      versionId,
+      filePath: staged.path,
+      filename: item.originalFilename,
+      size: staged.size,
+      sha256: staged.sha256,
+      format: sniff.format,
+      limits,
+      signal,
+    });
+    warnings.push(...extraction.warnings);
 
     const identityKey = identityKeyFor(item.originalFilename);
     const textHash = extraction.plainText ? contentHash(extraction.plainText) : null;
@@ -507,37 +366,7 @@ export async function processImportItem(
       });
       if (derived.length > 0) await tx.insert(derivedAssets).values(derived);
 
-      const [document] = await tx
-        .insert(extractedDocuments)
-        .values({
-          workspaceId: item.workspaceId,
-          artifactVersionId: versionId,
-          extractionMethod: extraction.method,
-          extractionVersion: extraction.version,
-          status: extraction.status,
-          title: extraction.title,
-          language: extraction.language,
-          plainText: extraction.plainText,
-          normalizedMarkdown: extraction.markdown,
-          contentHash: textHash,
-          charCount: extraction.plainText.length,
-          warnings: extraction.warnings,
-          errorCode: extraction.errorCode ?? null,
-          errorMessage: extraction.errorMessage ?? null,
-        })
-        .returning({ id: extractedDocuments.id });
-      if (extraction.sections.length > 0) {
-        await tx.insert(documentSections).values(
-          extraction.sections.map((section) => ({
-            ...section,
-            extractedDocumentId: document!.id,
-          })),
-        );
-      }
-      await tx
-        .update(artifactVersions)
-        .set({ activeExtractionId: document!.id })
-        .where(eq(artifactVersions.id, versionId));
+      await saveExtraction(tx, { workspaceId: item.workspaceId, versionId, extraction });
       await tx
         .update(artifacts)
         .set({ currentVersionId: versionId })

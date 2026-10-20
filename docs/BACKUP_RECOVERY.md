@@ -42,7 +42,7 @@ metadata/
   share_links.json             # without token_hash
 originals/{sha256[0:2]}/{sha256}/{sanitized_original_filename}
 normalized/{artifact_version_id}.md       # active extraction, with YAML front matter (title, artifact, version, language, extraction method/version)
-checksums.sha256               # "<sha256>  <path>" for every file except itself; verifiable with `sha256sum -c`
+checksums.sha256               # "<sha256>  <path>" for every file except itself and manifest.json; verifiable with `sha256sum -c`
 ```
 
 Properties:
@@ -52,16 +52,19 @@ Properties:
 2. **Originals fully retrievable.** The bytes are the originals, and the path includes the
    SHA-256.
 3. **Versioned.** `formatVersion` (integer) plus the DB migration tag.
-4. **Integrity.** `checksums.sha256` covers every entry. `manifest.json` also carries the
-   SHA-256 of `checksums.sha256` itself.
+4. **Integrity.** `checksums.sha256` covers every entry except itself and `manifest.json`.
+   `manifest.json` carries the SHA-256 of `checksums.sha256`, so the manifest is the root of
+   trust and the two files together cover the whole archive. (Listing the manifest in the
+   checksums would be circular.)
 5. **Migratable.** The restore code keeps a reader per `formatVersion`, and newer readers
    upgrade older formats in memory.
-6. **Re-importable.** `POST /api/restores` or `pnpm restore <file>`.
+6. **Re-importable.** `pnpm backup:restore <file>` (implemented); `POST /api/restores` (planned).
 7. **No secrets.** See §1.
 
 ## 3. Export process
 
-- Triggered by `POST /api/exports`, the UI, or the CLI `pnpm export --workspace <slug> --out <file>`.
+- Triggered by `POST /api/exports`, the Import & Backup page, or the CLI
+  `pnpm backup:export --workspace <slug> --out <file>` (`node dist/backup-export.mjs` in images).
 - Job `export.create`:
   1. read rows (workspace-scoped)
   2. stream originals from storage into the ZIP while hashing
@@ -70,8 +73,8 @@ Properties:
   5. record `byte_size` and `sha256` in `export_runs`
 - Download: `GET /api/exports/:id/download` returns a 5-minute signed URL. Each download is
   audited.
-- Retention: export archives expire after 7 days (`expires_at`), and a cleanup job deletes
-  them. **The exported file is the user's copy**; the app's storage is not the backup
+- Retention: export archives expire after 7 days (`expires_at`), and the hourly
+  `maintenance.cleanup_exports` job deletes them. **The exported file is the user's copy**; the app's storage is not the backup
   destination.
 
 ## 4. Encryption
@@ -99,7 +102,7 @@ Properties:
 | 2. DB point-in-time        | Neon PITR (plan-dependent retention)                           | provider                                                                                                                             | continuous               |
 | 3. Independent DB dump     | Different provider/account (e.g. Backblaze B2, or a local NAS) | `scripts/backup/pg-dump.sh` (custom-format `pg_dump`)                                                                                | daily                    |
 | 4. Independent object copy | Different provider/account                                     | `rclone sync r2:vault-primary b2:vault-backup` with `--backup-dir` versioning (deletes on the primary don't propagate destructively) | daily                    |
-| 5. Portable export         | Owner's offline storage (encrypted with `age`)                 | `pnpm export`                                                                                                                        | weekly / before upgrades |
+| 5. Portable export         | Owner's offline storage (encrypted with `age`)                 | `pnpm backup:export`                                                                                                                 | weekly / before upgrades |
 
 "Bucket deleted" scenario: copies 3 and 4 live under different credentials, so the primary's
 credentials cannot delete them. Use B2 Object Lock or append-only keys where available.
@@ -146,7 +149,8 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
 ### CLI
 
 ```bash
-pnpm restore ./knowledge-vault-export-….zip --workspace <slug> [--mode skip_existing|copy]
+pnpm backup:restore ./knowledge-vault-export-….zip --workspace <slug> [--mode skip_existing|copy]
+# production image: node dist/backup-restore.mjs …
 ```
 
 ### Clean-environment recovery runbook (Scenario C)
@@ -154,9 +158,10 @@ pnpm restore ./knowledge-vault-export-….zip --workspace <slug> [--mode skip_ex
 1. Provision an empty Postgres and an empty bucket (or local storage).
 2. Set the env vars and run `pnpm db:migrate`.
 3. Run `pnpm admin:create`, which creates the admin and their workspace.
-4. Run `pnpm restore <archive> --workspace <slug>`.
+4. Run `pnpm backup:restore <archive> --workspace <slug>`.
 5. Start `web` and `worker`, and wait for the re-extraction jobs (visible in Import & Backup).
-6. Run `pnpm integrity:check` and confirm every file asset is `stored` and verified.
+6. Run the integrity check (P1A-INTEGRITY, next PR) and confirm every file asset is `stored`
+   and verified.
 
 ## 7. Integrity checks
 

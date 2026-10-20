@@ -326,16 +326,16 @@ whitespace), `color?`, `created_at`. `unique(workspace_id, normalized_name)`.
 
 ### 4.5 Data protection (P1A)
 
-**export_runs**: `id`, `workspace_id`, `requested_by?`,
+**export_runs** (P1A, migration 0004): `id`, `workspace_id`, `requested_by?`, `filename?`,
 `status ∈ {queued, running, completed, failed}`, `format_version int`, `options jsonb`,
 `storage_key?`, `byte_size?`, `sha256?`, `manifest_summary jsonb?`, `error_message?`,
 `job_id?`, `created_at`, `completed_at?`, `expires_at?`.
 
-**restore_runs**: `id`, `workspace_id` (target), `requested_by?`, `status`,
+**restore_runs** (P1A, migration 0004): `id`, `workspace_id` (target), `requested_by?`, `status`, `error_code?`,
 `source_storage_key`, `source_sha256?`, `mode ∈ {skip_existing, copy}`, `report jsonb?`,
 `error_message?`, `job_id?`, `created_at`, `completed_at?`.
 
-**integrity_checks**: `id`, `workspace_id`, `status`, `checked_count`, `ok_count`,
+**integrity_checks** (table in migration 0004; job in P1A-INTEGRITY): `id`, `workspace_id`, `status`, `checked_count`, `ok_count`,
 `missing_count`, `corrupt_count`, `report jsonb`, `started_at`, `completed_at?`.
 
 ## 5. Planned tables (Phase 2–3), designed but not created

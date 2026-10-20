@@ -1,12 +1,14 @@
-import { Info } from "lucide-react";
 import type { Metadata } from "next";
 import { requirePageActor } from "@/app/_lib/session";
+import { ExportPanel, type ExportView } from "@/components/backup/export-panel";
 import { ImportWorkspace } from "@/components/import/import-workspace";
 import { Badge } from "@/components/ui/badge";
 import { getEnv } from "@/infrastructure/config/env";
 import { getDb } from "@/infrastructure/database/client";
 import { formatDateTime } from "@/lib/format";
 import { t, tOptional } from "@/lib/i18n";
+import { roleAllows } from "@/modules/auth/policy";
+import { listExports, toExportDto } from "@/modules/backup";
 import { ALLOWED_EXTENSIONS, listBatches } from "@/modules/imports";
 
 export const metadata: Metadata = { title: t("nav.importBackup") };
@@ -14,6 +16,11 @@ export const metadata: Metadata = { title: t("nav.importBackup") };
 export default async function ImportPage() {
   const actor = await requirePageActor();
   const { items: batches } = await listBatches(getDb(), actor, { limit: 10 });
+  const canExport = roleAllows(actor.role, "backup:export");
+  // Serialized for the client component (dates become ISO strings).
+  const exports: ExportView[] = canExport
+    ? JSON.parse(JSON.stringify((await listExports(getDb(), actor)).map(toExportDto)))
+    : [];
 
   return (
     <div className="flex max-w-4xl flex-col gap-8">
@@ -61,10 +68,7 @@ export default async function ImportPage() {
         )}
       </section>
 
-      <p className="text-muted-foreground flex items-start gap-2 text-sm">
-        <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
-        {t("import.backupSoon")}
-      </p>
+      {canExport ? <ExportPanel initial={exports} /> : null}
     </div>
   );
 }

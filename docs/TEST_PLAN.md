@@ -104,10 +104,10 @@ integration tests also cover CJK filenames.
 | 3 PDF upload                | `tests/integration/imports/pipeline.test.ts › imports PDF, Markdown, Big5 text and PNG`                                        |
 | 4 50-item batch             | `tests/integration/imports/archives.test.ts › batch of 50`                                                                     |
 | 5 Original download         | `pipeline.test.ts › HTML end-to-end` (byte-identical) and `tests/integration/api/imports-api.test.ts` (HTTP 302 → download)    |
-| 6 Hash verification         | `x-content-sha256` check in `imports-api.test.ts`; the integrity job arrives with P1A-INTEGRITY                                |
+| 6 Hash verification         | `x-content-sha256` in `imports-api.test.ts` and `exports-api.test.ts`; re-hash on export/restore; integrity job: P1A-INTEGRITY |
 | 7 Partial failure isolation | `pipeline.test.ts › a bad file fails…`, `archives.test.ts › batch of 50`                                                       |
 | 8 Retry without duplicates  | `pipeline.test.ts › completing twice…`, `› a crash after storing the original…`, `archives.test.ts › reconciles…`              |
-| 9 Export re-importable      | `backup-roundtrip.test.ts`                                                                                                     |
+| 9 Export re-importable      | `tests/integration/backup/roundtrip.test.ts` (round trip, `sha256sum -c`, idempotency, copy, tamper), E2E export download      |
 | 10 No unauthorized access   | `pipeline.test.ts › authorization`, `api/imports-api.test.ts`, `api/sessions-api.test.ts`                                      |
 
 ## 7. Commands
