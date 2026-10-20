@@ -98,8 +98,9 @@ See `.env.example` for the full annotated list. Required in staging and producti
 ### 5.4 First run
 
 1. Run `pnpm db:migrate`.
-2. Run `ADMIN_EMAIL=… pnpm admin:create`. It prompts for a password and creates the user and
-   workspace.
+2. Run `ADMIN_EMAIL=… ADMIN_NAME=… node dist/admin-create.mjs` in the container
+   (`pnpm admin:create` locally). It prompts for a password, or reads `ADMIN_PASSWORD` when
+   there is no TTY, and creates the user, workspace and owner membership.
 3. Log in at `APP_ORIGIN/login`.
 
 ### 5.5 Backups
@@ -107,6 +108,13 @@ See `.env.example` for the full annotated list. Required in staging and producti
 See BACKUP_RECOVERY §5. Schedule `scripts/backup/pg-dump.sh` and `rclone sync` on a machine
 or service with **separate credentials** (for example a home NAS cron job or a GitHub Actions
 scheduled workflow with its own secrets).
+
+### 5.6 Reverse proxy and client IPs
+
+Login rate limiting keys on the client IP taken from `x-forwarded-for`. The platform's edge
+proxy must overwrite, not append, this header. Alternatively, set `TRUSTED_PROXIES` (which feeds
+Better Auth `advanced.ipAddress.trustedProxies`) to the platform's proxy ranges. If neither is done, clients
+can spoof IPs to evade the per-IP limit.
 
 ## 6. What the owner must provide to deploy
 

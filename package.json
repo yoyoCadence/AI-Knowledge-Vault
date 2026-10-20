@@ -27,7 +27,9 @@
     "db:generate": "drizzle-kit generate",
     "db:generate:custom": "drizzle-kit generate --custom",
     "db:migrate": "tsx --env-file-if-exists=.env.local scripts/db-migrate.ts",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "admin:create": "tsx --env-file-if-exists=.env.local scripts/admin-create.ts",
+    "admin:create:prod": "node dist/admin-create.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1150.0",

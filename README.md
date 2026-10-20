@@ -9,8 +9,8 @@
 - 可完整匯出，並能在乾淨環境還原。
 - 未來加入跨文章 AI 問答、知識圖譜與知識缺口分析。
 
-> **目前狀態：Phase 0（Foundation）。** 已有架構文件、資料庫遷移、儲存抽象層、背景工作佇列與 App Shell。
-> 登入、匯入、閱讀、搜尋、分享、備份**尚未實作**，介面上以「規劃中」明確標示。
+> **目前狀態：Phase 0 完成，Phase 1A 進行中。** 已有架構文件、資料庫遷移、儲存抽象層、背景工作佇列、App Shell，以及管理者登入。
+> 匯入、閱讀、搜尋、分享、備份**尚未實作**，介面上以「規劃中」明確標示。
 > 實際進度以 [`task.md`](task.md) 與 [`docs/HANDOFF.md`](docs/HANDOFF.md) 為準。
 
 ## 產品能力（規劃）
@@ -58,8 +58,11 @@ cp .env.example .env.local
 createdb vault_dev && createdb vault_test
 pnpm db:migrate
 
-# 3. 啟動
-pnpm dev          # Web：http://localhost:3000（預覽 Origin：http://127.0.0.1:3000）
+# 3. 建立管理者（不開放公開註冊；密碼以隱藏輸入提示，或用 ADMIN_PASSWORD 環境變數）
+ADMIN_EMAIL=you@example.com ADMIN_NAME="Your Name" pnpm admin:create
+
+# 4. 啟動
+pnpm dev          # Web：http://localhost:3000/login（預覽 Origin：http://127.0.0.1:3000）
 pnpm worker:dev   # 背景工作程序（另開一個終端機）
 ```
 
@@ -94,6 +97,7 @@ pnpm test:unit
 pnpm test:integration
 S3_TEST_ENDPOINT=http://127.0.0.1:5055 pnpm test   # 另外跑 S3 adapter 測試（需本機 moto_server）
 pnpm build && pnpm build:node
+pnpm build && pnpm test:e2e  # Playwright E2E（使用獨立的 vault_e2e 資料庫）
 ```
 
 測試策略見 [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md)。CI（GitHub Actions）會對每個 PR 執行格式、lint、型別、全部測試與 build。
@@ -113,6 +117,9 @@ pnpm build && pnpm build:node
 
 可以運作且有測試的部分：
 
+- 管理者登入與登出：Email + 密碼、不開放註冊、資料庫式登入頻率限制
+- 登入裝置（Session）列表與撤銷
+- 稽核紀錄（audit log）
 - 環境變數驗證
 - 資料庫 migration
 - 本機與 S3 相容的儲存抽象層，含不可覆寫的條件寫入與簽章上傳／下載 URL
@@ -124,7 +131,6 @@ pnpm build && pnpm build:node
 
 尚未實作：
 
-- 登入
 - 匯入
 - 閱讀與預覽
 - 搜尋

@@ -39,6 +39,31 @@ export const zhTW = {
   "library.empty.body":
     "匯入功能完成後，你可以把 Claude Design、ChatGPT、Gemini 等工具產生的 HTML、ZIP、PDF 與 Markdown 拖曳到這裡保存。",
 
+  "auth.login.title": "登入",
+  "auth.login.subtitle": "這是私人知識庫，只有管理者可以登入。",
+  "auth.email": "電子郵件",
+  "auth.password": "密碼",
+  "auth.submit": "登入",
+  "auth.submitting": "登入中…",
+  "auth.error.invalid": "電子郵件或密碼錯誤。",
+  "auth.error.rateLimited": "嘗試次數過多，請稍後再試。",
+  "auth.error.generic": "登入失敗，請稍後再試。",
+  "auth.noSignup": "本系統不開放註冊。管理者帳號需由伺服器端指令建立。",
+  "auth.logout": "登出",
+  "auth.signedInAs": "已登入：{email}",
+
+  "sessions.title": "登入裝置與 Session",
+  "sessions.description": "這些是目前有效的登入 Session。若看到不認得的裝置，請立即撤銷。",
+  "sessions.current": "目前裝置",
+  "sessions.createdAt": "登入時間",
+  "sessions.expiresAt": "到期",
+  "sessions.ip": "IP",
+  "sessions.unknownDevice": "未知裝置",
+  "sessions.revoke": "撤銷",
+  "sessions.revokeOthers": "登出其他所有裝置",
+  "sessions.revoked": "已撤銷",
+  "sessions.error": "操作失敗，請重新整理後再試。",
+
   "import.title": "匯入與備份",
   "settings.title": "設定",
 } as const;
