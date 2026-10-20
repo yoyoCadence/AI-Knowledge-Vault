@@ -215,14 +215,21 @@ export async function runRestore(
 ): Promise<Record<string, unknown>> {
   const { db, storage } = ctx;
   const restoreId = String(ctx.job.payload.restoreId ?? "");
-  const [run] = await db.select().from(restoreRuns).where(eq(restoreRuns.id, restoreId));
-  if (!run) return { skipped: "missing_run" };
-  if (run.status === "completed" || run.status === "failed") {
-    await releaseUpload(db, storage, run);
-    return { skipped: run.status };
+  // Claim the run atomically: one that ended meanwhile (onFailed after a timeout fired while
+  // this attempt was starting) is never turned back into `running`.
+  const [run] = await db
+    .update(restoreRuns)
+    .set({ status: "running" })
+    .where(and(eq(restoreRuns.id, restoreId), inArray(restoreRuns.status, ["queued", "running"])))
+    .returning();
+  if (!run) {
+    const [ended] = await db.select().from(restoreRuns).where(eq(restoreRuns.id, restoreId));
+    if (!ended) return { skipped: "missing_run" };
+    await releaseUpload(db, storage, ended);
+    return { skipped: ended.status };
   }
+  ctx.signal.throwIfAborted();
   if (!run.sourceStorageKey) throw new AppError("UPLOAD_INCOMPLETE", "No archive for this run");
-  await db.update(restoreRuns).set({ status: "running" }).where(eq(restoreRuns.id, run.id));
 
   const staged = await downloadToTempFile(storage, run.sourceStorageKey, {
     maxBytes: limits.maxArchiveBytes,

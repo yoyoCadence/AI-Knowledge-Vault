@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,6 +11,9 @@ import { artifacts, artifactVersions, fileAssets } from "@/infrastructure/databa
 import { getStorage, LocalStorageAdapter } from "@/infrastructure/storage";
 import { AppError } from "@/lib/errors";
 import { restoreArchive, restoreLimitsFromEnv, writeExport } from "@/modules/backup";
+import { hashEntry } from "@/modules/backup/restore";
+import { SafeZip } from "@/modules/extraction";
+import { buildZip } from "@tests/fixtures/zip";
 import { htmlDocument, markdownDocument } from "@tests/fixtures/builders";
 import { closeTestDb, testDb } from "../helpers/db";
 import { createTestActor, drainJobs, newBatch, uploadFile } from "../helpers/imports";
@@ -209,5 +213,23 @@ describe("restore edge cases", () => {
     const report = await restore(archive, target, fresh);
     expect(report.failures).toEqual([]);
     expect(report.counts.fileAssets.stored).toBe(1);
+  });
+});
+
+describe("restore abort", () => {
+  it("stops hashing inside a single large entry once the job is aborted", async () => {
+    const file = path.join(dir, "one-big-entry.zip");
+    await writeFile(file, buildZip([{ name: "big.bin", data: randomBytes(8 * 1024 * 1024) }]));
+    const zip = await SafeZip.open(file, restoreLimitsFromEnv(getEnv()));
+    try {
+      expect(await hashEntry(zip, "big.bin")).toMatch(/^[0-9a-f]{64}$/);
+      const controller = new AbortController();
+      controller.abort(new Error("PROCESSING_TIMEOUT"));
+      await expect(hashEntry(zip, "big.bin", controller.signal)).rejects.toThrow(
+        "PROCESSING_TIMEOUT",
+      );
+    } finally {
+      zip.close();
+    }
   });
 });

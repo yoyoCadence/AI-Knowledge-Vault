@@ -133,9 +133,17 @@ async function readJson<T>(zip: SafeZip, entryPath: string, schema: z.ZodType<T>
   return result.data;
 }
 
-async function hashEntry(zip: SafeZip, entryPath: string): Promise<string> {
+/** SHA-256 of one entry. Checks `signal` per chunk, so even one huge entry stops on abort. */
+export async function hashEntry(
+  zip: SafeZip,
+  entryPath: string,
+  signal?: AbortSignal,
+): Promise<string> {
   const hash = createHash("sha256");
-  for await (const chunk of await zip.openStream(entryPath)) hash.update(chunk as Buffer);
+  for await (const chunk of await zip.openStream(entryPath)) {
+    signal?.throwIfAborted();
+    hash.update(chunk as Buffer);
+  }
   return hash.digest("hex");
 }
 
@@ -197,7 +205,7 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
   const mismatched: string[] = [];
   for (const [entryPath, expected] of listed) {
     signal?.throwIfAborted();
-    const actual = await hashEntry(zip, entryPath);
+    const actual = await hashEntry(zip, entryPath, signal);
     const addressed = hashFromOriginalPath(entryPath);
     if (actual !== expected || (addressed !== null && addressed !== actual)) {
       mismatched.push(entryPath);

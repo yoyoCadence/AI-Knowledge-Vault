@@ -453,4 +453,23 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
     expect(await getStorage().headObject(keys[2]!)).toBeNull();
     expect(await getStorage().headObject(keys[0]!)).not.toBeNull();
   });
+
+  it("a run its timeout already failed is never turned back into running", async () => {
+    const { cookie, actor } = await owner();
+    const restore = await uploadArchive(cookie, archive);
+    // onFailed ran (timeout) before this attempt's handler got to claim the run.
+    await db
+      .update(restoreRuns)
+      .set({ status: "failed", errorCode: "PROCESSING_TIMEOUT" })
+      .where(eq(restoreRuns.id, restore.id));
+    const result = await runAttempt(restore.id, getStorage(), new AbortController().signal);
+    expect(result).toEqual({ skipped: "failed" });
+    expect(await read(cookie, restore.id)).toMatchObject({
+      status: "failed",
+      errorCode: "PROCESSING_TIMEOUT",
+    });
+    expect(await artifactCount(actor.workspaceId)).toBe(0);
+    const uploadKey = storageKeys.restoreUpload(actor.workspaceId, restore.id);
+    expect(await getStorage().headObject(uploadKey)).toBeNull();
+  });
 });
