@@ -1,7 +1,12 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { MarkdownView, PlainTextView, safeHref } from "@/components/reader/markdown-view";
+import {
+  headingAnchors,
+  MarkdownView,
+  PlainTextView,
+  safeHref,
+} from "@/components/reader/markdown-view";
 import { extractHtml, extractMarkdown, extractPdf } from "@/modules/extraction";
 import {
   claudeDesignDocument,
@@ -37,6 +42,19 @@ describe("reading mode renderer (SECURITY.md §5 Reading mode)", () => {
     expect(html).toMatch(/<a href="#sec" class="[^"]*">in-page<\/a>/);
     expect(html).not.toMatch(/javascript:|data:text|href="\.\.\/secret"/);
     expect(html).toContain("<span>js</span>");
+  });
+
+  it("resolves reference-style links through the same allow-list", () => {
+    const html = render(
+      "[ok][1] [bad][2] [Case][ABC] [none][9]\n\n[1]: https://example.org/ref\n[2]: javascript:alert(1)\n[abc]: https://example.org/case",
+    );
+    expect(html).toMatch(
+      /<a href="https:\/\/example.org\/ref"[^>]*rel="noopener noreferrer nofollow">ok<\/a>/,
+    );
+    expect(html).toMatch(/<a href="https:\/\/example.org\/case"[^>]*>Case<\/a>/);
+    expect(html).toContain("<span>bad</span>");
+    expect(html).not.toContain("javascript:");
+    expect(html).toContain("[none][9]");
   });
 
   it("shows images as their alt text and loads nothing", () => {
@@ -94,8 +112,6 @@ describe("reading mode renderer (SECURITY.md §5 Reading mode)", () => {
 
 describe("table of contents anchors match the rendered headings", () => {
   const ids = (html: string) => [...html.matchAll(/ id="([^"]+)"/g)].map((match) => match[1]);
-  const headingAnchors = (sections: { heading: string | null; anchor: string }[]) =>
-    sections.filter((section) => section.heading).map((section) => section.anchor);
 
   it.each([
     ["HTML", () => extractHtml(htmlDocument(), { filename: "n.html", filenameStem: "n" }).result],
@@ -105,11 +121,22 @@ describe("table of contents anchors match the rendered headings", () => {
         extractHtml(claudeDesignDocument(), { filename: "d.dc.html", filenameStem: "d" }).result,
     ],
     ["Markdown", () => extractMarkdown(markdownDocument(), { filenameStem: "m" })],
+    [
+      "Markdown with an empty heading",
+      () => extractMarkdown("#\n\nlost text\n\n# Visible\n\nbody\n", { filenameStem: "e" }),
+    ],
   ])("%s", (_name, extract) => {
     const result = extract();
     const anchors = headingAnchors(result.sections);
     expect(anchors.length).toBeGreaterThan(0);
     expect(ids(render(result.markdown, anchors))).toEqual(anchors);
+  });
+
+  it("an empty heading keeps its anchor, so the next heading gets its own", () => {
+    const result = extractMarkdown("#\n\nlost text\n\n# Visible\n\nbody\n", { filenameStem: "e" });
+    const visible = result.sections.find((section) => section.heading === "Visible")!;
+    const html = render(result.markdown, headingAnchors(result.sections));
+    expect(html).toMatch(new RegExp(`<h2 id="${visible.anchor}"[^>]*>Visible</h2>`));
   });
 
   it("PDF pages", async () => {

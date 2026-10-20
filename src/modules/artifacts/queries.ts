@@ -205,7 +205,16 @@ export async function getVersionOverview(
           anchor: documentSections.anchor,
         })
         .from(documentSections)
-        .where(eq(documentSections.extractedDocumentId, document.id))
+        .innerJoin(
+          extractedDocuments,
+          eq(extractedDocuments.id, documentSections.extractedDocumentId),
+        )
+        .where(
+          and(
+            eq(documentSections.extractedDocumentId, document.id),
+            eq(extractedDocuments.workspaceId, actor.workspaceId),
+          ),
+        )
         .orderBy(asc(documentSections.ordinal))
     : [];
   return {
@@ -262,7 +271,13 @@ export async function getVersionContent(
       anchor: documentSections.anchor,
     })
     .from(documentSections)
-    .where(eq(documentSections.extractedDocumentId, document.id))
+    .innerJoin(extractedDocuments, eq(extractedDocuments.id, documentSections.extractedDocumentId))
+    .where(
+      and(
+        eq(documentSections.extractedDocumentId, document.id),
+        eq(extractedDocuments.workspaceId, actor.workspaceId),
+      ),
+    )
     .orderBy(asc(documentSections.ordinal));
   const { id: _id, ...extraction } = document;
   return { contentKind: version.contentKind, extraction, sections };

@@ -6,7 +6,7 @@ import { requirePageActor } from "@/app/_lib/session";
 import { label } from "@/components/library/artifact-card";
 import { KindIcon } from "@/components/library/kind-icon";
 import { PreviewFrame } from "@/components/preview/preview-frame";
-import { MarkdownView, PlainTextView } from "@/components/reader/markdown-view";
+import { headingAnchors, MarkdownView, PlainTextView } from "@/components/reader/markdown-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -115,12 +115,7 @@ function ReadingBody({
       {method === "text" ? (
         <PlainTextView text={markdown} />
       ) : (
-        <MarkdownView
-          markdown={markdown}
-          anchors={content.sections
-            .filter((section) => section.heading)
-            .map((section) => section.anchor)}
-        />
+        <MarkdownView markdown={markdown} anchors={headingAnchors(content.sections)} />
       )}
     </div>
   );

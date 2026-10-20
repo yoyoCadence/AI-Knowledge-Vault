@@ -18,6 +18,15 @@ export function parseMarkdown(markdown: string): Root {
   return fromMarkdown(markdown, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
 }
 
+/**
+ * Anchors for `MarkdownView`: the stored sections that are headings (level > 0; a preamble is
+ * level 0), in order. Not filtered by heading text: an empty heading still has a section and
+ * still renders as a heading, so dropping it would shift every later anchor.
+ */
+export function headingAnchors(sections: { level: number; anchor: string }[]): string[] {
+  return sections.filter((section) => section.level > 0).map((section) => section.anchor);
+}
+
 /** Link targets that stay clickable; anything else (javascript:, data:, relative) is text. */
 export function safeHref(url: string): string | null {
   const trimmed = url.trim();
@@ -34,6 +43,18 @@ interface RenderContext {
   /** Anchors for the root-level headings, in order (from the stored document sections). */
   anchors: string[];
   nextAnchor: number;
+  /** Reference-style link targets (`[text][id]` + `[id]: url`), by normalized identifier. */
+  definitions: Map<string, string>;
+}
+
+/** Collects `[id]: url` definitions; identifiers compare case-insensitively (CommonMark). */
+function collectDefinitions(node: Nodes, into: Map<string, string>) {
+  if (node.type === "definition") {
+    const id = node.identifier.toLowerCase();
+    if (!into.has(id)) into.set(id, node.url);
+  }
+  if ("children" in node) for (const child of node.children) collectDefinitions(child, into);
+  return into;
 }
 
 const HEADING_CLASS: Record<number, string> = {
@@ -166,8 +187,23 @@ function render(node: Nodes, ctx: RenderContext, key: number, root: boolean): Re
           {t("reader.image", { alt: node.alt || t("reader.imageNoAlt") })}
         </span>
       );
-    case "linkReference":
-      return <span key={key}>{children(node, ctx)}</span>;
+    case "linkReference": {
+      const url = ctx.definitions.get(node.identifier.toLowerCase());
+      const href = url === undefined ? null : safeHref(url);
+      if (!href) return <span key={key}>{children(node, ctx)}</span>;
+      return (
+        <a
+          key={key}
+          href={href}
+          className="text-primary break-words underline-offset-4 hover:underline"
+          {...(href.startsWith("#")
+            ? {}
+            : { target: "_blank", rel: "noopener noreferrer nofollow" })}
+        >
+          {children(node, ctx)}
+        </a>
+      );
+    }
     case "footnoteReference":
       return (
         <sup key={key} className="text-muted-foreground">
@@ -220,10 +256,15 @@ function render(node: Nodes, ctx: RenderContext, key: number, root: boolean): Re
 
 /** Renders normalized Markdown; root-level headings receive `anchors` as their ids, in order. */
 export function MarkdownView({ markdown, anchors }: { markdown: string; anchors: string[] }) {
-  const ctx: RenderContext = { anchors, nextAnchor: 0 };
+  const tree = parseMarkdown(markdown);
+  const ctx: RenderContext = {
+    anchors,
+    nextAnchor: 0,
+    definitions: collectDefinitions(tree, new Map()),
+  };
   return (
     <div className="text-foreground max-w-[72ch] text-[15px] break-words sm:text-base">
-      {render(parseMarkdown(markdown), ctx, 0, true)}
+      {render(tree, ctx, 0, true)}
     </div>
   );
 }
