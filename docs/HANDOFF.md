@@ -1,96 +1,114 @@
 # Handoff
 
-The living state of the project, for an agent or engineer with no access to prior conversations.
-Update it at the end of every PR.
+The current state of the project, written for an agent or engineer who has no access to earlier
+conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 1 — Phase 0)
+## 1. Snapshot (2026-10-20, after PR 2: P1A-AUTH)
 
-**Works and is tested**
+**Merged and tested**
 
-- Toolchain:
-  - TypeScript 6 strict, ESLint with module-boundary rules, Prettier
-  - Vitest projects `unit` and `integration`
-  - Playwright 1.56.1 pinned to the container's Chromium build 1194
-- Configuration: Zod env validation (`src/infrastructure/config/env.ts`).
-- Database:
-  - Drizzle schema plus the versioned migration `drizzle/0000_foundation.sql`
-  - Integration global setup drops the test schema and re-applies all migrations on every run
-- Storage:
-  - `StorageAdapter` interface (`src/infrastructure/storage/types.ts`)
-  - `LocalStorageAdapter`, with atomic conditional writes and HMAC-signed URLs
-  - `S3StorageAdapter`, tested against `moto_server` (pip `moto[server]`)
-- Jobs:
-  - `src/modules/jobs`: enqueue (idempotent, transactional), claim (SKIP LOCKED), heartbeat
-    lease, complete, fail with backoff, recovery of expired leases, manual retry and cancel
-  - `JobWorker` with bounded concurrency, timeouts and graceful stop
-  - Worker entry `src/worker/main.ts`; registry `src/worker/registry.ts` is empty until P1A
-- Web:
-  - App shell (zh-TW, light/dark, mobile drawer) and Future Feature pages
-  - `/api/health`
-  - `src/proxy.ts` host routing: `/p/*` is only served on `PREVIEW_ORIGIN`, and only `/p/*` is
-    served there
-- CI: `.github/workflows/ci.yml` runs Postgres 16 and moto, then format, lint, typecheck, test
-  and build.
+- **PR 1, Phase 0:** docs, toolchain, Drizzle and migrations, storage adapters (local and
+  S3/R2), the Postgres job queue and worker, the app shell, CI, and the Dockerfile. The Docker
+  image is built in CI only.
+- **PR 2, authentication:**
+  - `src/modules/auth/auth.ts`: Better Auth with the following settings.
+    - Email and password only; sign-up and every unused endpoint are disabled via
+      `disabledPaths`, which makes them return 404.
+    - Sessions are stored in the database.
+    - Rate limiting is database-backed: 5 sign-ins per minute per IP, 30 requests per minute
+      for other endpoints.
+    - Telemetry is off, and IDs are UUIDv7.
+    - An after-hook writes audit rows for login success, login failure (email hash only) and
+      logout.
+  - `src/modules/auth/actor.ts`: `resolveActor` maps a session to
+    `{userId, workspaceId, role, sessionId, email, name}`. In Phase 1 each user has one
+    workspace (the earliest membership).
+  - `src/modules/auth/policy.ts`: the role → action table.
+  - `src/modules/auth/admin.ts` and `scripts/admin-create.ts`: create the user, credential
+    account (scrypt via `better-auth/crypto`), workspace and owner membership, then write an
+    audit row.
+  - `src/modules/auth/sessions.ts`: list, revoke and revoke-others for sessions, never
+    returning tokens.
+  - App wiring:
+    - `src/app/api/auth/[...all]/route.ts` (lazy, so the build needs no secrets)
+    - `src/app/_lib/session.ts` (`getCurrentActor`, `requirePageActor`)
+    - `src/app/api/_lib/route.ts` (`authedRoute`: CSRF check → actor → permission →
+      structured errors)
+    - the login page, the user menu with logout, and the Settings page listing sessions
+  - `src/proxy.ts`: an optimistic redirect to `/login` when there is no session cookie (a UX
+    convenience only; every page and API still checks server-side) plus preview-host
+    isolation.
+  - E2E: `playwright.config.ts` and `tests/e2e/*` run against `next start` on port 3100 with
+    their own database (`vault_e2e`), seeded with one admin. CI job `e2e`.
 
 **Not done or not verified**
 
-- The Dockerfile is written but has never been built: Docker Hub pulls are blocked in the
-  development container. Verify it in CI or locally before relying on it.
-- The S3 adapter has not been verified against real Cloudflare R2, in particular how R2
-  enforces the signed `content-length` on presigned PUTs. Verify on staging.
-- No auth yet, so all pages are currently public. The only data exposed is static placeholder
-  content and the health endpoint.
+- The S3 adapter has not been verified against real Cloudflare R2.
+- There is no passkey, MFA or password reset. Password reset is intentionally disabled; the
+  admin resets passwords with the CLI. That CLI subcommand is not written yet: P1A-AUTH-RESET.
+- Client IP for rate limiting comes from `x-forwarded-for`. Behind a proxy that does not
+  overwrite that header, clients could spoof it. Configure the platform to set it, and set
+  `TRUSTED_PROXIES` when deploying (DEPLOYMENT.md §5.6).
 
 ## 2. How to run
 
-See `AGENTS.md` §5 and `README.md`. In the original development container:
+See `AGENTS.md` §5 and `README.md`. In the original development container, Postgres 16 was
+started with `service postgresql start`, using role `vault`/`vault` and the databases
+`vault_dev`, `vault_test` and `vault_e2e`.
 
-- Postgres 16 was started with `service postgresql start`.
-- Role `vault`/`vault` with databases `vault_dev` and `vault_test`.
+```bash
+pnpm db:migrate
+ADMIN_EMAIL=me@example.com ADMIN_NAME=Me pnpm admin:create   # prompts for a password
+pnpm dev                                                     # then log in at http://localhost:3000/login
+pnpm build && pnpm test:e2e                                  # E2E (uses vault_e2e)
+```
 
 ## 3. Conventions worth knowing
 
-- Every table's ID is an app-generated UUIDv7 (`idColumn()` in `schema/_shared.ts`).
-- CHECK constraints for text enums are built with `oneOf()`, which inlines escaped literals.
-  DDL cannot take bind parameters.
-- `src/app/api/_lib/http.ts` provides the route-handler helpers:
-  - `json`, `errorResponse` (error ids)
-  - `assertSameOrigin` (CSRF)
-  - `parseJsonBody`/`parseQuery` (Zod, never echoes values)
-- The logger (`getLogger`) redacts common secret keys. Still, never log document text.
+- IDs are app-generated UUIDv7 (`idColumn()`). CHECK enums use `oneOf()`.
+- **API routes:**
+  - Use `authedRoute({ permission }, handler)` for every authenticated endpoint.
+  - Parse bodies with `parseJsonBody(request, ZodSchema)`.
+  - Throw `AppError` (`notFound()` for anything outside the workspace).
+- **Pages:** call `requirePageActor()` in each page that reads data. Do not rely only on the
+  layout, because layouts are not re-run on client navigations.
+- **Tests:**
+  - Integration helpers live in `tests/integration/helpers/` (`testDb`,
+    `createTestWorkspace`, `createTestAdmin`, `signIn`, `actorFromCookie`).
+  - Route handlers can be imported and called directly with `Request` objects (see
+    `tests/integration/api/sessions-api.test.ts`).
 
-## 4. Next steps (exact)
+## 4. Next steps (exact): PR 3, import slice 1 (P1A-FILES + P1A-IMPORT-API + worker for single files)
 
-PR 2 — **P1A-AUTH**:
-
-1. Schema is already present: `users`, `sessions`, `auth_accounts`, `auth_verifications`,
-   `auth_rate_limits`.
-2. Create `src/modules/auth/auth.ts` with `betterAuth({...})`:
-   - `database: drizzleAdapter(getDb(), { provider: "pg", schema: {...} })`
-   - `user.modelName = "users"`, `session.modelName = "sessions"`,
-     `account.modelName = "auth_accounts"`, `verification.modelName = "auth_verifications"`,
-     `rateLimit.modelName = "auth_rate_limits"`. Check the adapter's schema key expectations.
-   - `emailAndPassword { enabled: true, disableSignUp: true, minPasswordLength: 12 }`
-   - `advanced.database.generateId = () => newId()`
-   - `rateLimit { enabled: true, storage: "database", customRules: { "/sign-in/email": { window: 60, max: 5 } } }`
-   - `telemetry { enabled: false }`
-   - `baseURL = APP_ORIGIN`, `trustedOrigins = [APP_ORIGIN]`
-3. Mount `src/app/api/auth/[...all]/route.ts` with `toNextJsHandler` (`better-auth/next-js`).
-4. `src/modules/auth/actor.ts`:
-   - `getActor(headers)` → session → membership → `{ userId, workspaceId, role }`
-   - `requireActor()` throws `UNAUTHENTICATED`
-   - `can(actor, action)`
-5. `scripts/admin-create.ts`:
-   - Reads the password from a TTY prompt or the `ADMIN_PASSWORD` env var.
-   - Hashes with Better Auth's `hashPassword` (`better-auth/crypto`).
-   - Inserts the user, credential account, workspace and owner membership in one transaction.
-   - Is idempotent: refuses if the email exists.
-6. Dashboard layout: redirect to `/login` without a session. Add the login page (a form calling
-   the Better Auth client), logout, and Settings → sessions list and revoke.
-7. Tests:
-   - sign-in success
-   - wrong password → 401 and an audit row
-   - sign-up endpoint disabled
-   - rate limit after 5 attempts
-   - session revoke
-   - `requireActor` rejects anonymous requests
+1. **Schema** (new migration `0001_library_import`), per DATA_MODEL §4.2–4.3:
+   - Tables: `research_projects`, `artifacts`, `artifact_versions`, `file_assets`,
+     `artifact_files`, `derived_assets`, `import_batches`, `import_items`,
+     `extracted_documents`, `document_sections`.
+   - Circular FKs: `artifacts.current_version_id` and
+     `artifact_versions.active_extraction_id`.
+   - A custom migration for the `file_assets` immutability trigger.
+2. **`modules/files`:**
+   - `storeOriginal(stagingKey)`: stream + SHA-256 + sniff, then a conditional put to
+     `storageKeys.original`.
+   - `getOriginalDownload(actor, versionId)`: a signed URL plus an audit row.
+3. **`modules/imports`:**
+   - `createBatch`, `declareItem` (idempotent on `clientKey`; signed upload URL),
+     `completeItem` (head check + `enqueueJob` in the same transaction), `getBatchReport`,
+     `retryItem`, `cancelItem`.
+   - A state machine in `state.ts`.
+4. **`src/app/api/storage/local/{upload,download}/route.ts`:** token-verified streaming, local
+   adapter only.
+5. **`modules/extraction`:**
+   - format sniffing
+   - HTML, Markdown and text extractors (sections, title, language)
+   - PDF via `unpdf`
+   - image metadata via `sharp`
+6. **Worker handler `import.process_item`**, registered in `src/worker/registry.ts`. It must be
+   idempotent: check `import_items.status` first, rely on content-addressed storage, and do
+   one DB transaction for the artifact, version, files, extraction and item status.
+7. **Tests:**
+   - integration: upload → process → persist → download, with byte-equal SHA-256
+   - same-hash duplicates
+   - running the job twice
+   - cross-workspace download returns 404
+   - the immutability trigger

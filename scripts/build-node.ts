@@ -12,6 +12,7 @@ const root = process.cwd();
 const entries: Record<string, string> = {
   worker: "src/worker/main.ts",
   "db-migrate": "scripts/db-migrate.ts",
+  "admin-create": "scripts/admin-create.ts",
 };
 
 await build({

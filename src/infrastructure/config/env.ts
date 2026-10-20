@@ -42,6 +42,16 @@ const EnvSchema = z
     DATABASE_POOL_MAX: positiveInt(10),
 
     BETTER_AUTH_SECRET: secret("BETTER_AUTH_SECRET"),
+    /** Comma-separated reverse-proxy IPs/CIDRs whose X-Forwarded-For hops are trusted (rate limiting). */
+    TRUSTED_PROXIES: z
+      .string()
+      .optional()
+      .transform((value) =>
+        (value ?? "")
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean),
+      ),
     PREVIEW_TOKEN_SECRET: secret("PREVIEW_TOKEN_SECRET"),
 
     STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),

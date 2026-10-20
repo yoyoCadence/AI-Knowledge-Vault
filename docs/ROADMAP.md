@@ -23,7 +23,7 @@
 
 | ID                | 任務                                                                                                 | 狀態 |
 | ----------------- | ---------------------------------------------------------------------------------------------------- | ---- |
-| P1A-AUTH          | Better Auth（email+password、無註冊、DB rate limit、session 管理）、`admin:create` CLI、登入/登出 UI | 📝   |
+| P1A-AUTH          | Better Auth（email+password、無註冊、DB rate limit、session 管理）、`admin:create` CLI、登入/登出 UI | ✅   |
 | P1A-FILES         | 不可變原始檔（內容定址、條件寫入、DB trigger）、SHA-256、下載原始檔（signed URL）                    | 📝   |
 | P1A-IMPORT-API    | Import batch/item API、signed upload、complete、retry、cancel、狀態機                                | 📝   |
 | P1A-IMPORT-WORKER | `import.process_item`：sniff、hash、dedupe、store、classify、extract、persist                        | 📝   |

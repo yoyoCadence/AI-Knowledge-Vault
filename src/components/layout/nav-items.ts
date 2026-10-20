@@ -26,5 +26,5 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/ai-research", labelKey: "nav.aiResearch", icon: Sparkles, future: true },
   { href: "/showcase", labelKey: "nav.publicShowcase", icon: Globe, future: true },
   { href: "/import", labelKey: "nav.importBackup", icon: Archive, future: true },
-  { href: "/settings", labelKey: "nav.settings", icon: Settings, future: true },
+  { href: "/settings", labelKey: "nav.settings", icon: Settings },
 ];

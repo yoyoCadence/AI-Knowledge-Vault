@@ -29,13 +29,20 @@ REST-oriented JSON API served by Next.js route handlers under `/api`. Status col
 
 ## 3. Auth (Better Auth, mounted at `/api/auth/[...all]`)
 
-| Method | Path                              | Description                                             | Status |
-| ------ | --------------------------------- | ------------------------------------------------------- | ------ |
-| POST   | `/api/auth/sign-in/email`         | `{email, password}` → session cookie. Rate limited. (A) | 📝     |
-| POST   | `/api/auth/sign-out`              | revoke the current session (A)                          | 📝     |
-| GET    | `/api/auth/get-session`           | current session                                         | 📝     |
-| POST   | `/api/auth/revoke-other-sessions` | (A)                                                     | 📝     |
-| —      | `/api/auth/sign-up/*`             | **disabled** (404/403)                                  | 📝     |
+| Method | Path                                                 | Description                                                                                                                                                                       | Status |
+| ------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| POST   | `/api/auth/sign-in/email`                            | `{email, password, rememberMe?}` → HttpOnly `vault.session_token` cookie. 401 on bad credentials, 429 after 5/min/IP. (A: success and failure; failures store only an email hash) | ✅     |
+| POST   | `/api/auth/sign-out`                                 | revoke the current session (A)                                                                                                                                                    | ✅     |
+| GET    | `/api/auth/get-session`                              | current session (used internally; pages resolve the actor server-side)                                                                                                            | ✅     |
+| —      | `/api/auth/sign-up/email` and other unused endpoints | **disabled** via `disabledPaths` (404). Admins are created only by `pnpm admin:create`                                                                                            | ✅     |
+
+### Sessions (our API; never exposes session tokens)
+
+| Method | Path                          | Description                                                                   | Status |
+| ------ | ----------------------------- | ----------------------------------------------------------------------------- | ------ |
+| GET    | `/api/sessions`               | `{items: [{id, createdAt, expiresAt, ipAddress, userAgent, current}]}`        | ✅     |
+| DELETE | `/api/sessions/:id`           | revoke one of the actor's sessions → `{revoked: true}`; 404 if not theirs (A) | ✅     |
+| POST   | `/api/sessions/revoke-others` | sign out all other devices → `{revoked: n}` (A)                               | ✅     |
 
 ## 4. Imports
 

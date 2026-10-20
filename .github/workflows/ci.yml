@@ -80,6 +80,57 @@ jobs:
       - name: Build worker + CLI bundles
         run: pnpm build:node
 
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: vault
+          POSTGRES_PASSWORD: vault
+          POSTGRES_DB: vault_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vault -d vault_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL_E2E: postgres://vault:vault@127.0.0.1:5432/vault_e2e
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build
+        run: pnpm build && pnpm build:node
+
+      - name: E2E tests
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
+
   docker:
     name: Docker image builds
     runs-on: ubuntu-latest
