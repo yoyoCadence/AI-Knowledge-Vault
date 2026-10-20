@@ -163,7 +163,10 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    final status write only applies while the run is still `running`, so it can never
    overwrite the failure recorded for the timeout.
 4. The uploaded archive is the owner's copy, not ours to keep: it is deleted when the run
-   ends, and `source_storage_key` is cleared only after the deletion succeeded. The hourly
+   ends. `source_storage_key` is cleared only after the deletion succeeded and the signed
+   upload URL has expired (1 hour plus 5 minutes of clock skew), so an archive recreated by a
+   replayed PUT is deleted again by the sweep. The panel retries an ambiguous start on the
+   run it already uploaded to; it never creates a second run for the same file. The hourly
    `maintenance.cleanup_exports` job finishes any deletion that failed, and fails runs whose
    archive was uploaded but never started within 24 hours (`UPLOAD_INCOMPLETE`), deleting the
    archive. Such a run can no longer be started; upload again. Export and restore cleanup run

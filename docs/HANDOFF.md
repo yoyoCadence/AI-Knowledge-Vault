@@ -225,8 +225,10 @@ conversations. Update it at the end of every PR.
     run (`restore-copy:{restoreId}:{oldId}`), so a retried attempt resumes instead of copying
     again. The job's abort signal reaches `restoreArchive`, and the final status write only
     applies while the run is `running`. `source_storage_key` is cleared only after the upload
-    is deleted; the hourly `maintenance.cleanup_exports` job finishes failed deletions and
-    abandons runs never started within 24 hours (`cleanupRestoreUploads`).
+    is deleted and its signed URL has expired (replay window); the hourly
+    `maintenance.cleanup_exports` job finishes failed deletions, re-deletes replayed uploads,
+    and abandons runs never started within 24 hours (`cleanupRestoreUploads`). The panel
+    retries a lost `/start` on the run it already uploaded to.
   - `GET /api/restores` and `GET /api/restores/:id`. Requests and starts are audited.
   - UI: a "從備份還原" panel on `/import`. Choose a file and a mode (each mode is explained),
     see upload progress, then the report: counts, warnings, failures, and "nothing written" on
