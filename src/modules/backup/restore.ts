@@ -625,6 +625,21 @@ export async function restoreArchive(
               }
               await insertVersion(tx, version, at.id, placed.id);
               count += 1;
+              // The archive's current version came back: point the artifact at it, unless the
+              // target already moved on to a newer version.
+              if (version.id === artifact.currentVersionId) {
+                const [current] = await tx
+                  .select({ number: artifactVersions.versionNumber })
+                  .from(artifacts)
+                  .leftJoin(artifactVersions, eq(artifactVersions.id, artifacts.currentVersionId))
+                  .where(eq(artifacts.id, placed.id));
+                if (current?.number == null || current.number < version.versionNumber) {
+                  await tx
+                    .update(artifacts)
+                    .set({ currentVersionId: at.id })
+                    .where(eq(artifacts.id, placed.id));
+                }
+              }
             }
             return count;
           });

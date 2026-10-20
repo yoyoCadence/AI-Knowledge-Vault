@@ -175,6 +175,9 @@ describe("restore edge cases", () => {
         and(eq(artifactVersions.artifactId, artifact!.id), eq(artifactVersions.versionNumber, 2)),
       );
     expect(back?.id).toBe(v2.id);
+    // The archive's current version (v2) is current again.
+    const [after] = await db.select().from(artifacts).where(eq(artifacts.id, artifact!.id));
+    expect(after?.currentVersionId).toBe(v2.id);
   });
 
   it("re-writes originals that are missing from storage even when their rows exist", async () => {
