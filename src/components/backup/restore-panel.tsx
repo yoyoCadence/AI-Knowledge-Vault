@@ -28,7 +28,7 @@ export interface RestoreView {
     warnings?: string[];
     failures?: { artifactId: string; title: string; error: string }[];
     reextractJobs?: number;
-    details?: { files?: string[]; problems?: string[] };
+    details?: { files?: string[]; problems?: string[]; nothingWritten?: boolean };
   } | null;
   errorCode: string | null;
   errorMessage: string | null;
@@ -265,9 +265,8 @@ export function RestorePanel({ initial }: { initial: RestoreView | null }) {
                     {line}
                   </p>
                 ))}
-              {run.errorCode === "CHECKSUM_MISMATCH" ||
-              run.errorCode === "UNSUPPORTED_EXPORT_FORMAT" ? (
-                // Verification runs before any write, so these failures change nothing.
+              {run.report?.details?.nothingWritten ? (
+                // Only failures of the verification that runs before any write (set by restore).
                 <p className="text-muted-foreground mt-1">{t("restore.nothingWritten")}</p>
               ) : null}
             </div>

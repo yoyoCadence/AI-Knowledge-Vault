@@ -24,9 +24,11 @@ export const RESTORE_JOB_TYPE = "restore.run";
 const UPLOAD_TTL_SECONDS = 3600;
 /**
  * The signed upload URL can be replayed until it expires, recreating the archive after we
- * deleted it. Until then (plus clock skew) the key is kept, so the sweep keeps deleting it.
+ * deleted it, and a PUT authorized just before expiry may still be transferring (up to 5 GiB)
+ * long after. The key is kept for a day past the URL's expiry, so the hourly sweep keeps
+ * deleting whatever such a request writes.
  */
-export const UPLOAD_REPLAY_WINDOW_MS = (UPLOAD_TTL_SECONDS + 5 * 60) * 1000;
+export const UPLOAD_REPLAY_WINDOW_MS = UPLOAD_TTL_SECONDS * 1000 + 24 * 60 * 60 * 1000;
 /** An upload not started within this long is abandoned: the run fails, the archive is deleted. */
 export const ABANDONED_RESTORE_AFTER_MS = 24 * 60 * 60 * 1000;
 

@@ -17,7 +17,7 @@ import {
   type RestoreMode,
 } from "@/infrastructure/database/schema";
 import type { StorageAdapter } from "@/infrastructure/storage";
-import { AppError } from "@/lib/errors";
+import { AppError, isAppError } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { SafeZip, ZipRejectedError, type ZipLimits } from "@/modules/extraction";
 import { storeOriginal } from "@/modules/files/originals";
@@ -110,6 +110,20 @@ function checksumMismatch(message: string, files: string[]): AppError {
 
 function invalidArchive(message: string, details?: Record<string, unknown>): AppError {
   return new AppError("UNSUPPORTED_EXPORT_FORMAT", message, { details, retryable: false });
+}
+
+/**
+ * Marks an error raised before anything was written (opening and verifying the archive), so
+ * reports can promise "nothing written" only then: a checksum mismatch found while storing an
+ * original happens after earlier originals were already written.
+ */
+function beforeAnyWrite(error: unknown): unknown {
+  if (!isAppError(error)) return error;
+  return new AppError(error.code, error.message, {
+    details: { ...error.details, nothingWritten: true },
+    retryable: error.retryable,
+    cause: error,
+  });
 }
 
 async function readJson<T>(zip: SafeZip, entryPath: string, schema: z.ZodType<T>): Promise<T> {
@@ -224,8 +238,25 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
   const assets = await readJson(zip, PATHS.fileAssets, z.array(FileAssetV1));
   const links = await readJson(zip, PATHS.artifactFiles, z.array(ArtifactFileV1));
 
-  // Referential integrity: every reference must resolve inside the archive.
+  // Primary ids must be unique: duplicates would silently collapse in the maps below, so a
+  // version could be restored against the wrong original.
   const problems: string[] = [];
+  const tables: [string, { id: string }[]][] = [
+    ["project", projects],
+    ["artifact", artifactList],
+    ["version", versions],
+    ["file asset", assets],
+    ["artifact file", links],
+  ];
+  for (const [kind, rows] of tables) {
+    const seen = new Set<string>();
+    for (const row of rows) {
+      if (seen.has(row.id)) problems.push(`${kind} ${row.id}: duplicate id`);
+      seen.add(row.id);
+    }
+  }
+
+  // Referential integrity: every reference must resolve inside the archive.
   const projectIds = new Set(projects.map((project) => project.id));
   const artifactIds = new Set(artifactList.map((artifact) => artifact.id));
   const assetById = new Map(assets.map((asset) => [asset.id, asset]));
@@ -313,12 +344,15 @@ export async function restoreArchive(
   try {
     zip = await SafeZip.open(input.archivePath, input.limits);
   } catch (error) {
-    if (error instanceof ZipRejectedError) throw invalidArchive(`not a safe ZIP: ${error.message}`);
+    if (error instanceof ZipRejectedError)
+      throw beforeAnyWrite(invalidArchive(`not a safe ZIP: ${error.message}`));
     throw error;
   }
   const tmp = await mkdtemp(path.join(tmpdir(), "vault-restore-"));
   try {
-    const archive = await verifyArchive(zip, signal);
+    const archive = await verifyArchive(zip, signal).catch((error: unknown) => {
+      throw beforeAnyWrite(error);
+    });
     const { workspaceId, mode } = input;
     const report: RestoreReport = {
       source: {

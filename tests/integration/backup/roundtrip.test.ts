@@ -29,6 +29,7 @@ import {
   RESTORE_EXTRACTION_METHOD,
   writeExport,
 } from "@/modules/backup";
+import { formatChecksums } from "@/modules/backup/format";
 import { SafeZip } from "@/modules/extraction";
 import {
   claudeDesignZipEntries,
@@ -132,6 +133,27 @@ async function rewriteArchive(
   zip.close();
   mutate(entries);
   await writeFile(target, buildZip(entries));
+}
+
+/** Recomputes checksums.sha256 and the manifest's pin, as a consistent exporter would. */
+function reseal(entries: ZipEntrySpec[]) {
+  const sha = (data: ZipEntrySpec["data"]) =>
+    createHash("sha256")
+      .update(Buffer.from(data as Buffer))
+      .digest("hex");
+  const listed = entries.filter(
+    (entry) => entry.name !== "checksums.sha256" && entry.name !== "manifest.json",
+  );
+  const checksums = Buffer.from(
+    formatChecksums(listed.map((entry) => ({ path: entry.name, sha256: sha(entry.data) }))),
+  );
+  entries.find((entry) => entry.name === "checksums.sha256")!.data = checksums;
+  const manifestEntry = entries.find((entry) => entry.name === "manifest.json")!;
+  const manifest = JSON.parse(Buffer.from(manifestEntry.data as Buffer).toString("utf8")) as {
+    checksumsSha256: string;
+  };
+  manifest.checksumsSha256 = sha(checksums);
+  manifestEntry.data = Buffer.from(JSON.stringify(manifest));
 }
 
 async function workspaceRowCounts(workspaceId: string) {
@@ -394,6 +416,43 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(retry.counts.artifactVersions).toEqual(first.counts.artifactVersions);
     expect(retry.counts.researchProjects).toEqual(first.counts.researchProjects);
     expect(retry.idMap).toEqual(first.idMap);
+  });
+
+  it("an archive whose metadata repeats a primary id is refused before anything is written", async () => {
+    const duplicated = path.join(dir, "duplicate-ids.zip");
+    await rewriteArchive(archive, duplicated, (entries) => {
+      const assetsEntry = entries.find((entry) => entry.name === "metadata/file_assets.json")!;
+      const assets = JSON.parse(Buffer.from(assetsEntry.data as Buffer).toString("utf8")) as {
+        id: string;
+      }[];
+      // A second, different original under the first one's id; everything else is consistent.
+      assets.push({ ...assets[1]!, id: assets[0]!.id });
+      assetsEntry.data = Buffer.from(JSON.stringify(assets));
+      reseal(entries);
+    });
+    const fresh = await createTestActor();
+    const empty = freshStorage("duplicate-ids");
+    await expect(
+      restoreArchive(db, empty, {
+        archivePath: duplicated,
+        workspaceId: fresh.workspaceId,
+        userId: fresh.userId,
+        mode: "skip_existing",
+        restoreId: crypto.randomUUID(),
+        limits: restoreLimitsFromEnv(getEnv()),
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof AppError &&
+        error.code === "UNSUPPORTED_EXPORT_FORMAT" &&
+        error.details?.nothingWritten === true &&
+        /file asset [0-9a-f-]+: duplicate id/.test(JSON.stringify(error.details.problems)),
+    );
+    expect(await workspaceRowCounts(fresh.workspaceId)).toEqual({
+      artifacts: 0,
+      versions: 0,
+      fileAssets: 0,
+    });
   });
 
   it("a tampered original aborts the restore with CHECKSUM_MISMATCH before anything is written", async () => {

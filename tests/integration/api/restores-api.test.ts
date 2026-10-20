@@ -74,7 +74,7 @@ type RestoreDto = {
   errorCode: string | null;
   report: {
     counts?: { artifacts: Record<string, number> };
-    details?: { files?: string[] };
+    details?: { files?: string[]; nothingWritten?: boolean };
   } | null;
 };
 
@@ -221,10 +221,34 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
     expect(failed).toMatchObject({ status: "failed" });
     expect(failed.errorCode).toBe("CHECKSUM_MISMATCH");
     expect(failed.report?.details?.files?.[0]).toMatch(/^originals\//);
+    expect(failed.report?.details?.nothingWritten).toBe(true);
     expect(
       (await db.select().from(artifacts).where(eq(artifacts.workspaceId, actor.workspaceId)))
         .length,
     ).toBe(0);
+  });
+
+  it("a mismatch found while storing originals does not claim nothing was written", async () => {
+    const { cookie, actor } = await owner();
+    // The archive verifies, but this workspace's content-addressed slot for one of its
+    // originals already holds different bytes: the write phase stops with CHECKSUM_MISMATCH.
+    const source = path.join(dir, "for-slot.zip");
+    await writeFile(source, archive);
+    const zip = await SafeZip.open(source, restoreLimitsFromEnv(getEnv()));
+    const assets = JSON.parse(
+      (await zip.readBuffer("metadata/file_assets.json", 1024 * 1024)).toString("utf8"),
+    ) as { sha256: string }[];
+    zip.close();
+    await getStorage().putObject(
+      storageKeys.original(actor.workspaceId, assets[0]!.sha256),
+      Buffer.from("not the original"),
+    );
+    const restore = await uploadArchive(cookie, archive);
+    await start(cookie, restore.id);
+    await drainJobs();
+    const failed = await read(cookie, restore.id);
+    expect(failed).toMatchObject({ status: "failed", errorCode: "CHECKSUM_MISMATCH" });
+    expect(failed.report?.details?.nothingWritten).toBeUndefined();
   });
 
   it("refuses to start before the upload, oversize declarations, and other workspaces", async () => {
@@ -510,7 +534,19 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
       (await db.select().from(restoreRuns).where(eq(restoreRuns.id, restore.id)))[0],
     ).toMatchObject({ sourceStorageKey: uploadKey });
 
-    // Once the URL has expired, a final sweep forgets the key.
+    // A slow PUT authorized just before the URL expired can still land hours later.
+    await getStorage().putObject(uploadKey, archive);
+    await cleanupRestoreUploads(
+      db,
+      getStorage(),
+      new Date(run!.createdAt.getTime() + 2 * 3600_000),
+    );
+    expect(await getStorage().headObject(uploadKey)).toBeNull();
+    expect(
+      (await db.select().from(restoreRuns).where(eq(restoreRuns.id, restore.id)))[0],
+    ).toMatchObject({ sourceStorageKey: uploadKey });
+
+    // Once that window has passed, a final sweep forgets the key.
     const later = new Date(run!.createdAt.getTime() + UPLOAD_REPLAY_WINDOW_MS + 60_000);
     await getStorage().putObject(uploadKey, archive);
     await cleanupRestoreUploads(db, getStorage(), later);
