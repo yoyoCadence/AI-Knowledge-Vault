@@ -352,15 +352,36 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
     expect((await read(cookie, fresh.id)).status).toBe("completed");
   });
 
-  it("a retried run's report says it covers only the final attempt", async () => {
+  it("a retried run's report says how its counts treat the earlier attempt, per mode", async () => {
+    const { cookie } = await owner();
+    const warningFor = async (mode: "skip_existing" | "copy") => {
+      const restore = await uploadArchive(cookie, archive);
+      await db
+        .update(restoreRuns)
+        .set({ status: "running", mode })
+        .where(eq(restoreRuns.id, restore.id));
+      await runAttempt(restore.id, getStorage(), new AbortController().signal, 2);
+      const [run] = await db.select().from(restoreRuns).where(eq(restoreRuns.id, restore.id));
+      const report = run!.report as { attempt: number; warnings: string[] };
+      expect(report.attempt).toBe(2);
+      return report.warnings[0]!;
+    };
+    const skip = await warningFor("skip_existing");
+    expect(skip).toMatch(/^RETRIED_RUN: this run took 2 attempts; /);
+    expect(skip).toContain("counted as skipped");
+    const copy = await warningFor("copy");
+    expect(copy).toContain("counted as copied");
+    expect(copy).not.toContain("skipped");
+  });
+
+  it("a finished run stays started after its job row is pruned", async () => {
     const { cookie } = await owner();
     const restore = await uploadArchive(cookie, archive);
-    await db.update(restoreRuns).set({ status: "running" }).where(eq(restoreRuns.id, restore.id));
-    await runAttempt(restore.id, getStorage(), new AbortController().signal, 2);
-    const [run] = await db.select().from(restoreRuns).where(eq(restoreRuns.id, restore.id));
-    const report = run!.report as { attempt: number; warnings: string[] };
-    expect(report.attempt).toBe(2);
-    expect(report.warnings[0]).toMatch(/^RETRIED_RUN: this report covers attempt 2/);
+    await start(cookie, restore.id);
+    await drainJobs();
+    // Job pruning (ON DELETE SET NULL) clears job_id 30 days after the job ends.
+    await db.update(restoreRuns).set({ jobId: null }).where(eq(restoreRuns.id, restore.id));
+    expect(await read(cookie, restore.id)).toMatchObject({ status: "completed", started: true });
   });
 
   it("maintenance cleans what it can when some deletions keep failing", async () => {

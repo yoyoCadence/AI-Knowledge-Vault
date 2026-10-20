@@ -169,8 +169,9 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    archive. Such a run can no longer be started; upload again. Export and restore cleanup run
    independently, item by item, so one object that cannot be deleted never blocks the rest.
 5. The report describes the attempt that completed the run. When that was a retry, it says
-   so (`attempt`, and a `RETRIED_RUN` warning): rows an interrupted earlier attempt wrote are
-   in place but counted as skipped or reused.
+   so (`attempt`, and a `RETRIED_RUN` warning): what an interrupted earlier attempt wrote is
+   in place but counted as skipped or reused (`skip_existing`), or as reused originals and
+   copied rows (`copy`).
 
 ### CLI
 

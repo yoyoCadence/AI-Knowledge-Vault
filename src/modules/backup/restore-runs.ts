@@ -43,7 +43,8 @@ export function toRestoreDto(run: RestoreRun) {
     filename: run.sourceFilename,
     byteSize: run.sourceByteSize,
     sha256: run.sourceSha256,
-    started: run.jobId !== null,
+    // From the durable status: the job row (and so jobId) is pruned 30 days after it ends.
+    started: run.jobId !== null || run.status !== "queued",
     report: run.report,
     errorCode: run.errorCode,
     errorMessage: run.errorMessage,
@@ -241,13 +242,15 @@ export async function runRestore(
       limits,
       signal: ctx.signal,
     });
-    // Each attempt reports what it saw. Rows an interrupted earlier attempt of this run wrote
-    // are already in place, so they show up as skipped or reused: say so instead of guessing.
+    // Each attempt reports what it saw. What an interrupted earlier attempt of this run wrote
+    // is already in place and is counted differently per mode: say so instead of guessing.
     const attempt = ctx.job.attemptCount;
     if (attempt > 1) {
-      report.warnings.unshift(
-        `RETRIED_RUN: this report covers attempt ${attempt}; rows that an earlier, interrupted attempt of this run wrote are counted as skipped (projects, artifacts, versions) or reused (originals)`,
-      );
+      const earlier =
+        run.mode === "copy"
+          ? "originals an earlier, interrupted attempt of this run stored are counted as reused; the copies it made are counted as copied"
+          : "rows an earlier, interrupted attempt of this run wrote are counted as skipped (projects, artifacts, versions) or reused (originals)";
+      report.warnings.unshift(`RETRIED_RUN: this run took ${attempt} attempts; ${earlier}`);
     }
     await finish(db, storage, run, { status: "completed", report: { ...report, attempt } });
     return { restoreId: run.id, counts: report.counts };
