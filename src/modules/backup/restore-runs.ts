@@ -313,7 +313,7 @@ export async function cleanupRestoreUploads(
   db: DbExecutor,
   storage: StorageAdapter,
   now = new Date(),
-  options: { pageSize?: number } = {},
+  options: { pageSize?: number; signal?: AbortSignal } = {},
 ): Promise<number> {
   // Conditional on the row still being unstarted: startRestore locks the same row, so a run is
   // either started or abandoned, never both.
@@ -348,6 +348,6 @@ export async function cleanupRestoreUploads(
         .orderBy(restoreRuns.id)
         .limit(limit),
     (run) => releaseUpload(db, storage, run),
-    options.pageSize,
+    options,
   );
 }

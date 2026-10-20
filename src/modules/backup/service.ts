@@ -216,6 +216,7 @@ export async function deleteExpiredExports(
   db: DbExecutor,
   storage: StorageAdapter,
   now = new Date(),
+  options: { signal?: AbortSignal } = {},
 ): Promise<number> {
   return eachRowIndependently(
     (afterId, limit) =>
@@ -236,6 +237,7 @@ export async function deleteExpiredExports(
       await storage.deleteObject(run.storageKey!);
       await db.update(exportRuns).set({ storageKey: null }).where(eq(exportRuns.id, run.id));
     },
+    options,
   );
 }
 
@@ -244,10 +246,11 @@ export function exportCleanupJobDefinition(): JobDefinition {
     type: EXPORT_CLEANUP_JOB_TYPE,
     timeoutMs: 10 * 60 * 1000,
     // The two phases run independently: a stuck export object must not starve restore cleanup.
-    handler: async ({ db, storage }) => {
+    handler: async ({ db, storage, signal }) => {
+      const now = new Date();
       const [exports, restores] = await Promise.allSettled([
-        deleteExpiredExports(db, storage),
-        cleanupRestoreUploads(db, storage),
+        deleteExpiredExports(db, storage, now, { signal }),
+        cleanupRestoreUploads(db, storage, now, { signal }),
       ]);
       if (exports.status === "rejected") throw exports.reason;
       if (restores.status === "rejected") throw restores.reason;

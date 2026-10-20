@@ -472,4 +472,22 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
     const uploadKey = storageKeys.restoreUpload(actor.workspaceId, restore.id);
     expect(await getStorage().headObject(uploadKey)).toBeNull();
   });
+
+  it("an aborted maintenance cleanup stops instead of running on detached", async () => {
+    const { cookie, actor } = await owner();
+    const restore = await uploadArchive(cookie, archive);
+    await db
+      .update(restoreRuns)
+      .set({ status: "failed", completedAt: new Date() })
+      .where(eq(restoreRuns.id, restore.id));
+    const controller = new AbortController();
+    controller.abort(new Error("PROCESSING_TIMEOUT"));
+    const ctx = { db, storage: getStorage(), signal: controller.signal } as unknown as JobContext;
+    await expect(exportCleanupJobDefinition().handler(ctx)).rejects.toThrow("PROCESSING_TIMEOUT");
+    // Nothing was deleted after the abort; the next (un-aborted) run picks it up.
+    const uploadKey = storageKeys.restoreUpload(actor.workspaceId, restore.id);
+    expect(await getStorage().headObject(uploadKey)).not.toBeNull();
+    await cleanupRestoreUploads(db, getStorage());
+    expect(await getStorage().headObject(uploadKey)).toBeNull();
+  });
 });
