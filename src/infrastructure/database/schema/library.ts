@@ -421,6 +421,8 @@ export const importItems = pgTable(
     errorMessage: text("error_message"),
     warnings: jsonb("warnings").$type<string[]>().notNull().default([]),
     uploadExpiresAt: timestamp("upload_expires_at", { withTimezone: true }).notNull(),
+    /** When the staged upload object was deleted (cleanup bookkeeping; NULL = may still exist). */
+    stagingCleanedAt: timestamp("staging_cleaned_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -439,5 +441,8 @@ export const importItems = pgTable(
     check("import_items_declared_size_check", sql`${t.declaredSize} >= 0`),
     index("import_items_batch_status_idx").on(t.batchId, t.status),
     index("import_items_status_expiry_idx").on(t.status, t.uploadExpiresAt),
+    index("import_items_staging_cleanup_idx")
+      .on(t.status, t.completedAt)
+      .where(sql`${t.stagingCleanedAt} is null`),
   ],
 );

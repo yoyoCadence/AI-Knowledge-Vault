@@ -26,10 +26,10 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 | P1A-IMPORT-API    | Batches/items API, signed upload, complete/retry/cancel        | ✅      |
 | P1A-IMPORT-WORKER | `import.process_item` pipeline                                 | ✅      |
 | P1A-EXTRACT       | HTML / Claude Design / MD / TXT / PDF / image extraction       | ✅      |
-| P1A-ZIP           | Safe ZIP reader, classification A/B/C/D, derived preview files | 📝 next |
+| P1A-ZIP           | Safe ZIP reader, classification A/B/C/D, derived preview files | ✅      |
 | P1A-VERSION       | Version matching + suspected duplicates                        | ✅      |
-| P1A-RECOVERY      | Staging cleanup, expiry, reconciliation                        | 📝      |
-| P1A-IMPORT-UI     | Upload UI with progress and report                             | 📝      |
+| P1A-RECOVERY      | Staging cleanup, expiry, reconciliation                        | ✅      |
+| P1A-IMPORT-UI     | Upload UI with progress and report                             | 📝 next |
 | P1A-EXPORT        | Portable export v1                                             | 📝      |
 | P1A-RESTORE       | Restore + CLI + round-trip test                                | 📝      |
 | P1A-INTEGRITY     | Integrity check job                                            | 📝      |

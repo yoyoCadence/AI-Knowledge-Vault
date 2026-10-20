@@ -46,6 +46,20 @@ export function processLimitsFromEnv(env: Env): ProcessLimits {
     maxExtractBytes: env.EXTRACT_MAX_BYTES,
     pdfMaxPages: env.PDF_MAX_PAGES,
     imageMaxInputPixels: env.IMAGE_MAX_INPUT_PIXELS,
+    maxEntries: env.ZIP_MAX_ENTRIES,
+    maxTotalUncompressedBytes: env.ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES,
+    maxEntryBytes: env.ZIP_MAX_ENTRY_BYTES,
+    maxCompressionRatio: env.ZIP_MAX_COMPRESSION_RATIO,
+    maxPathDepth: env.ZIP_MAX_PATH_DEPTH,
+    maxPreviewFiles: env.PREVIEW_MAX_FILES,
+    maxPreviewBytes: env.PREVIEW_MAX_TOTAL_BYTES,
   };
 }
 export { toItemDto, toBatchDto } from "./dto";
+export {
+  cleanupImports,
+  importCleanupJobDefinition,
+  IMPORT_CLEANUP_JOB_TYPE,
+  type CleanupOptions,
+  type CleanupReport,
+} from "./maintenance";

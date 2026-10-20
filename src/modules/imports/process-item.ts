@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
+import { Transform } from "node:stream";
 import { readFile } from "node:fs/promises";
 import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { v5 as uuidv5 } from "uuid";
@@ -19,6 +21,8 @@ import { StorageObjectNotFoundError, storageKeys } from "@/infrastructure/storag
 import { AppError } from "@/lib/errors";
 import { identityKeyFor, isDistinctiveKey } from "@/modules/artifacts";
 import {
+  analyzeArchive,
+  ARCHIVE_ANALYZER_VERSION,
   contentHash,
   extractSingleFile,
   fileExtension,
@@ -26,8 +30,8 @@ import {
   sniffFormat,
   THUMBNAIL_GENERATOR,
   THUMBNAIL_GENERATOR_VERSION,
-  type Classification,
-  type ExtractionLimits,
+  type ArchiveLimits,
+  type ArchiveOutcome,
   type ExtractionResult,
   type SingleFileOutcome,
 } from "@/modules/extraction";
@@ -50,7 +54,7 @@ import { IMPORT_JOB_TYPE, refreshBatchStatus, transitionItem } from "./service";
  * - Same-hash detection runs under a per-(workspace, sha256) advisory lock.
  */
 
-export interface ProcessLimits extends ExtractionLimits {
+export interface ProcessLimits extends ArchiveLimits {
   maxFileBytes: number;
 }
 
@@ -58,6 +62,7 @@ const ID_NAMESPACE = "4f6f1c1e-3b7a-5d2e-9c1a-6b2f0e8d7a10";
 export const deterministicId = (name: string) => uuidv5(name, ID_NAMESPACE);
 
 const SINGLE_HTML_PREVIEW_GENERATOR = "copy-original";
+const ARCHIVE_PREVIEW_GENERATOR = "zip-extract";
 
 type ItemRow = typeof importItems.$inferSelect;
 
@@ -132,35 +137,6 @@ function summarize(extraction: ExtractionResult, description: string | undefined
   const first = lines.find((line) => line.length >= 20 && line !== extraction.title);
   if (!first) return null;
   return first.length > 280 ? `${first.slice(0, 279)}…` : first;
-}
-
-/** Placeholder until the ZIP pipeline (P1A-ZIP) lands: the original is preserved, never parsed. */
-function archiveOutcome(stem: string): SingleFileOutcome {
-  const classification: Classification = {
-    contentKind: "archive_other",
-    previewKind: "unsupported",
-    previewEntryPath: null,
-    analysis: {},
-  };
-  return {
-    classification,
-    extraction: {
-      method: "archive",
-      version: 0,
-      status: "failed",
-      title: stem,
-      language: null,
-      plainText: "",
-      markdown: "",
-      sections: [],
-      metadata: {},
-      references: [],
-      warnings: [],
-      errorCode: "ARCHIVE_ANALYSIS_UNAVAILABLE",
-      errorMessage:
-        "ZIP analysis is not available yet; the original archive is preserved and can be reprocessed",
-    },
-  };
 }
 
 async function markDuplicate(
@@ -253,7 +229,15 @@ export async function processImportItem(
         if (!locked || locked.status !== "processing") return;
         await markDuplicate(tx, locked, existingUsage, { sha256: staged.sha256, detectedType });
       });
-      await storage.deleteObject(item.stagingKey).catch(() => undefined);
+      await storage
+        .deleteObject(item.stagingKey)
+        .then(() =>
+          db
+            .update(importItems)
+            .set({ stagingCleanedAt: new Date() })
+            .where(eq(importItems.id, item.id)),
+        )
+        .catch(() => undefined);
       return { outcome: "duplicate_file", artifactId: existingUsage.artifactId };
     }
 
@@ -266,64 +250,107 @@ export async function processImportItem(
     });
 
     const bytes = staged.size <= limits.maxExtractBytes ? await readFile(staged.path) : null;
-    const outcome =
+    const outcome: SingleFileOutcome &
+      Partial<Pick<ArchiveOutcome, "previewFiles" | "zip" | "rejection">> =
       sniff.format === "zip"
-        ? archiveOutcome(filenameStem(item.originalFilename))
+        ? await analyzeArchive(staged.path, item.originalFilename, limits)
         : await extractSingleFile({
             bytes,
             filename: item.originalFilename,
             format: sniff.format,
             limits,
           });
-    signal.throwIfAborted();
-    const { extraction, classification } = outcome;
-    warnings.push(...extraction.warnings);
-
-    // Derived assets: written before the commit with deterministic keys (safe to overwrite on retry).
     const versionId = deterministicId(`artifact-version:${item.id}`);
     const derived: (typeof derivedAssets.$inferInsert)[] = [];
-    if (outcome.thumbnail) {
-      const id = deterministicId(`derived:${versionId}:thumbnail:`);
-      const key = storageKeys.derived(item.workspaceId, versionId, id);
-      await storage.putObject(key, outcome.thumbnail.bytes, {
-        contentType: outcome.thumbnail.mimeType,
-      });
-      derived.push({
-        id,
-        workspaceId: item.workspaceId,
-        artifactVersionId: versionId,
-        kind: "thumbnail",
-        path: "",
-        storageKey: key,
-        mimeType: outcome.thumbnail.mimeType,
-        byteSize: outcome.thumbnail.bytes.length,
-        sha256: sha256OfBuffer(outcome.thumbnail.bytes),
-        generator: THUMBNAIL_GENERATOR,
-        generatorVersion: THUMBNAIL_GENERATOR_VERSION,
-      });
+    try {
+      signal.throwIfAborted();
+      warnings.push(...outcome.extraction.warnings);
+
+      // Derived assets: written before the commit with deterministic keys (safe to overwrite on retry).
+      if (outcome.thumbnail) {
+        const id = deterministicId(`derived:${versionId}:thumbnail:`);
+        const key = storageKeys.derived(item.workspaceId, versionId, id);
+        await storage.putObject(key, outcome.thumbnail.bytes, {
+          contentType: outcome.thumbnail.mimeType,
+        });
+        derived.push({
+          id,
+          workspaceId: item.workspaceId,
+          artifactVersionId: versionId,
+          kind: "thumbnail",
+          path: "",
+          storageKey: key,
+          mimeType: outcome.thumbnail.mimeType,
+          byteSize: outcome.thumbnail.bytes.length,
+          sha256: sha256OfBuffer(outcome.thumbnail.bytes),
+          generator: THUMBNAIL_GENERATOR,
+          generatorVersion: THUMBNAIL_GENERATOR_VERSION,
+        });
+      }
+      if (
+        sniff.format === "html" &&
+        outcome.classification.previewKind === "static_html" &&
+        outcome.classification.previewEntryPath
+      ) {
+        const path = outcome.classification.previewEntryPath;
+        const id = deterministicId(`derived:${versionId}:preview_file:${path}`);
+        const key = storageKeys.derived(item.workspaceId, versionId, id);
+        await storage.putObject(key, createReadStream(staged.path), {
+          contentType: "text/html",
+          contentLength: staged.size,
+        });
+        derived.push({
+          id,
+          workspaceId: item.workspaceId,
+          artifactVersionId: versionId,
+          kind: "preview_file",
+          path,
+          storageKey: key,
+          mimeType: "text/html",
+          byteSize: staged.size,
+          sha256: staged.sha256,
+          generator: SINGLE_HTML_PREVIEW_GENERATOR,
+          generatorVersion: 1,
+        });
+      }
+      if (outcome.zip && outcome.previewFiles) {
+        for (const file of outcome.previewFiles) {
+          signal.throwIfAborted();
+          const id = deterministicId(`derived:${versionId}:preview_file:${file.sitePath}`);
+          const key = storageKeys.derived(item.workspaceId, versionId, id);
+          const hash = createHash("sha256");
+          const hashing = new Transform({
+            transform(chunk: Buffer, _encoding, callback) {
+              hash.update(chunk);
+              callback(null, chunk);
+            },
+          });
+          const source = await outcome.zip.openStream(file.archivePath);
+          source.on("error", (error) => hashing.destroy(error));
+          await storage.putObject(key, source.pipe(hashing), {
+            contentType: file.mimeType,
+            contentLength: file.size,
+          });
+          derived.push({
+            id,
+            workspaceId: item.workspaceId,
+            artifactVersionId: versionId,
+            kind: "preview_file",
+            path: file.sitePath,
+            storageKey: key,
+            mimeType: file.mimeType,
+            byteSize: file.size,
+            sha256: hash.digest("hex"),
+            generator: ARCHIVE_PREVIEW_GENERATOR,
+            generatorVersion: ARCHIVE_ANALYZER_VERSION,
+          });
+        }
+      }
+    } finally {
+      outcome.zip?.close();
     }
-    if (classification.previewKind === "static_html" && classification.previewEntryPath) {
-      const path = classification.previewEntryPath;
-      const id = deterministicId(`derived:${versionId}:preview_file:${path}`);
-      const key = storageKeys.derived(item.workspaceId, versionId, id);
-      await storage.putObject(key, createReadStream(staged.path), {
-        contentType: "text/html",
-        contentLength: staged.size,
-      });
-      derived.push({
-        id,
-        workspaceId: item.workspaceId,
-        artifactVersionId: versionId,
-        kind: "preview_file",
-        path,
-        storageKey: key,
-        mimeType: "text/html",
-        byteSize: staged.size,
-        sha256: staged.sha256,
-        generator: SINGLE_HTML_PREVIEW_GENERATOR,
-        generatorVersion: 1,
-      });
-    }
+    const { extraction, classification } = outcome;
+    const rejection = outcome.rejection;
 
     const identityKey = identityKeyFor(item.originalFilename);
     const textHash = extraction.plainText ? contentHash(extraction.plainText) : null;
@@ -507,7 +534,8 @@ export async function processImportItem(
         }
       }
 
-      await transitionItem(tx, item, "succeeded", {
+      await transitionItem(tx, item, rejection ? "failed" : "succeeded", {
+        ...(rejection ? { errorCode: rejection.code, errorMessage: rejection.message } : {}),
         outcome: target.artifactId ? "new_version" : "new_artifact",
         matchReason: target.reason,
         fileAssetId: asset.id,
@@ -528,9 +556,17 @@ export async function processImportItem(
       } as const;
     });
 
-    await storage.deleteObject(item.stagingKey).catch((error: unknown) => {
-      logger.warn({ err: error }, "staging cleanup failed; maintenance job will retry");
-    });
+    await storage
+      .deleteObject(item.stagingKey)
+      .then(() =>
+        db
+          .update(importItems)
+          .set({ stagingCleanedAt: new Date() })
+          .where(eq(importItems.id, item.id)),
+      )
+      .catch((error: unknown) => {
+        logger.warn({ err: error }, "staging cleanup failed; maintenance job will retry");
+      });
     return { ...committed };
   } finally {
     await staged.cleanup();

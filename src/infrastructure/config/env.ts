@@ -77,6 +77,8 @@ const EnvSchema = z
     ZIP_MAX_COMPRESSION_RATIO: positiveInt(200),
     ZIP_MAX_PATH_DEPTH: positiveInt(24),
     PDF_MAX_PAGES: positiveInt(2_000),
+    PREVIEW_MAX_FILES: positiveInt(2_000),
+    PREVIEW_MAX_TOTAL_BYTES: positiveInt(256 * MiB),
     IMAGE_MAX_INPUT_PIXELS: positiveInt(100_000_000),
 
     WORKER_CONCURRENCY: positiveInt(2),
