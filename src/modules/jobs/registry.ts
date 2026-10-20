@@ -17,11 +17,22 @@ export interface JobContext {
 /** Returns an optional small JSON result stored on the job row. */
 export type JobHandler = (ctx: JobContext) => Promise<Record<string, unknown> | void>;
 
+export interface JobFailureInfo {
+  code: string;
+  message: string;
+}
+
 export interface JobDefinition {
   type: string;
   handler: JobHandler;
   /** Per-attempt timeout. Defaults to the worker's default. */
   timeoutMs?: number;
+  /**
+   * Called once when the job fails permanently (no retries left, permanent error, or timeout),
+   * so domain records (e.g. an import item) can be marked failed with a user-visible reason.
+   * Must be idempotent; failures here are logged and swallowed.
+   */
+  onFailed?: (args: { job: JobRow; db: Database; failure: JobFailureInfo }) => Promise<void>;
 }
 
 /** Explicit registry: the worker only runs job types registered here. */

@@ -209,6 +209,11 @@ export class JobWorker {
       const failure = toFailure(error, controller.signal.reason);
       const errorId = newErrorId();
       const outcome = await failJob(db, job, this.workerId, failure);
+      if (outcome === "failed" && definition.onFailed) {
+        await definition
+          .onFailed({ job, db, failure: { code: failure.code, message: failure.message } })
+          .catch((hookError: unknown) => logger.error({ err: hookError }, "onFailed hook threw"));
+      }
       logger[outcome === "failed" ? "error" : "warn"](
         { err: error, errorId, code: failure.code, outcome, durationMs: Date.now() - startedAt },
         "job attempt failed",

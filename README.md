@@ -9,8 +9,9 @@
 - 可完整匯出，並能在乾淨環境還原。
 - 未來加入跨文章 AI 問答、知識圖譜與知識缺口分析。
 
-> **目前狀態：Phase 0 完成，Phase 1A 進行中。** 已有架構文件、資料庫遷移、儲存抽象層、背景工作佇列、App Shell，以及管理者登入。
-> 匯入、閱讀、搜尋、分享、備份**尚未實作**，介面上以「規劃中」明確標示。
+> **目前狀態：Phase 0 完成，Phase 1A 進行中。** 已完成：管理者登入，以及單檔匯入流程（API + 背景工作）。
+> 單檔匯入涵蓋 HTML、Claude Design 文件、Markdown、TXT、PDF 與圖片，包括不可變原始檔、SHA-256、抽取內容、版本比對與原始檔下載。
+> ZIP 目前僅保存原始檔，尚未分析。匯入介面、閱讀、搜尋、分享、備份**尚未實作**，介面上以「規劃中」明確標示。
 > 實際進度以 [`task.md`](task.md) 與 [`docs/HANDOFF.md`](docs/HANDOFF.md) 為準。
 
 ## 產品能力（規劃）
@@ -117,6 +118,13 @@ pnpm build && pnpm test:e2e  # Playwright E2E（使用獨立的 vault_e2e 資料
 
 可以運作且有測試的部分：
 
+- 匯入 API 與背景處理：
+  - 直傳 staging、伺服器端驗證大小與格式（magic bytes）、SHA-256
+  - 內容定址且不可覆寫的原始檔保存、相同檔案去重、檔名版本比對、疑似重複標示
+  - 部分失敗隔離、重試不重複建檔
+- 內容抽取：HTML（含 Claude Design 樣板）、Markdown（front matter）、TXT（UTF-8／UTF-16／Big5）、PDF（逐頁）、圖片縮圖
+- 原始檔下載：5 分鐘簽章 URL，有稽核紀錄，SHA-256 可驗證
+- 資料庫層強制：`file_assets` 不可變 trigger；仍被引用的原始檔無法刪除
 - 管理者登入與登出：Email + 密碼、不開放註冊、資料庫式登入頻率限制
 - 登入裝置（Session）列表與撤銷
 - 稽核紀錄（audit log）
@@ -131,7 +139,8 @@ pnpm build && pnpm test:e2e  # Playwright E2E（使用獨立的 vault_e2e 資料
 
 尚未實作：
 
-- 匯入
+- ZIP 內容分析與預覽（原始檔已保存）
+- 匯入介面
 - 閱讀與預覽
 - 搜尋
 - 分享

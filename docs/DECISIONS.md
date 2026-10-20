@@ -164,6 +164,10 @@ peer dependencies). Anything not verified that way is marked _assumption_.
 - **Reasoning:** Time-ordered for index locality, globally unique (so restore usually keeps
   IDs), and independent of the Postgres version (`uuidv7()` arrives only in PG 18).
 - **Decision:** `uuid` package `v7()`. Better Auth uses the same generator.
+- **Amendment (P1A import):** rows created by the import worker are deterministic UUIDv5 values
+  derived from the import item ID: the artifact version, the new artifact, and the derived
+  assets. This makes retries idempotent, because a re-run targets the same IDs and storage keys.
+  These IDs are not time-ordered, which is acceptable for these tables.
 
 ## ADR-009 Search: application-level CJK bigram tokenization into `tsvector`, chunk-level index
 
@@ -278,5 +282,5 @@ peer dependencies). Anything not verified that way is marked _assumption_.
     excluded from search and shares.
   - Purge (a later task) hard-deletes versions; the cascade removes `artifact_files` rows.
   - `file_assets` are deleted only by a GC job when no `artifact_files` row references them
-    and a grace period has elapsed. `artifact_files.file_asset_id` is `ON DELETE RESTRICT`,
+    and a grace period has elapsed. `artifact_files.file_asset_id` is `ON DELETE NO ACTION`,
     so the database refuses to delete a file asset that is still in use.

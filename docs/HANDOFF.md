@@ -3,52 +3,56 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 2: P1A-AUTH)
+## 1. Snapshot (2026-10-20, after PR 3: import pipeline slice 1)
 
 **Merged and tested**
 
-- **PR 1, Phase 0:** docs, toolchain, Drizzle and migrations, storage adapters (local and
-  S3/R2), the Postgres job queue and worker, the app shell, CI, and the Dockerfile. The Docker
-  image is built in CI only.
-- **PR 2, authentication:**
-  - `src/modules/auth/auth.ts`: Better Auth with the following settings.
-    - Email and password only; sign-up and every unused endpoint are disabled via
-      `disabledPaths`, which makes them return 404.
-    - Sessions are stored in the database.
-    - Rate limiting is database-backed: 5 sign-ins per minute per IP, 30 requests per minute
-      for other endpoints.
-    - Telemetry is off, and IDs are UUIDv7.
-    - An after-hook writes audit rows for login success, login failure (email hash only) and
-      logout.
-  - `src/modules/auth/actor.ts`: `resolveActor` maps a session to
-    `{userId, workspaceId, role, sessionId, email, name}`. In Phase 1 each user has one
-    workspace (the earliest membership).
-  - `src/modules/auth/policy.ts`: the role → action table.
-  - `src/modules/auth/admin.ts` and `scripts/admin-create.ts`: create the user, credential
-    account (scrypt via `better-auth/crypto`), workspace and owner membership, then write an
-    audit row.
-  - `src/modules/auth/sessions.ts`: list, revoke and revoke-others for sessions, never
-    returning tokens.
-  - App wiring:
-    - `src/app/api/auth/[...all]/route.ts` (lazy, so the build needs no secrets)
-    - `src/app/_lib/session.ts` (`getCurrentActor`, `requirePageActor`)
-    - `src/app/api/_lib/route.ts` (`authedRoute`: CSRF check → actor → permission →
-      structured errors)
-    - the login page, the user menu with logout, and the Settings page listing sessions
-  - `src/proxy.ts`: an optimistic redirect to `/login` when there is no session cookie (a UX
-    convenience only; every page and API still checks server-side) plus preview-host
-    isolation.
-  - E2E: `playwright.config.ts` and `tests/e2e/*` run against `next start` on port 3100 with
-    their own database (`vault_e2e`), seeded with one admin. CI job `e2e`.
+- **PR 1, Phase 0:** foundation (docs, toolchain, DB, storage, jobs, shell, CI, Docker).
+- **PR 2, P1A-AUTH:**
+  - Better Auth with sign-up disabled and database rate limiting
+  - `admin:create`
+  - sessions API
+  - `authedRoute`
+  - login and settings UI
+  - Playwright E2E with a CI job
+- **PR 3, import slice 1** (P1A-FILES, IMPORT-API, IMPORT-WORKER, EXTRACT, VERSION):
+  - **Schema:** migration `0001_library_import` for projects, artifacts, versions, file_assets,
+    artifact_files, derived_assets, extracted_documents, document_sections, import_batches and
+    import_items. Migration `0002_file_assets_immutable` adds the trigger.
+  - **`modules/extraction`:** magic-byte sniffing, strict UTF-8 → Big5 decoding, zh-Hant/zh-Hans
+    language detection, and extractors for HTML (with Claude Design `{{ }}` stripping), Markdown
+    (front matter), text, PDF (unpdf, one section per page) and images (sharp thumbnail).
+    Sections carry exact character offsets into the plain text.
+  - **`modules/files`:** streamed staging download with SHA-256 and a byte cap, and
+    content-addressed conditional storage of originals.
+  - **`modules/imports`:** batch, declare (idempotent `clientKey`), complete (enqueues in the same
+    transaction), retry, cancel and report, plus a state machine.
+  - **Worker handler `import.process_item`:**
+    - same-hash duplicate detection under an advisory lock
+    - version matching (explicit target, or a distinctive filename stem)
+    - suspected duplicates flagged by text hash
+    - deterministic UUIDv5 IDs, so retries are idempotent
+    - the `onFailed` hook marks the item failed with a user-visible reason
+  - **`modules/artifacts`:** list, detail, and audited original download via a 5-minute signed
+    URL.
+  - **Routes:** `/api/imports/**`, `/api/artifacts/**`, and `/api/storage/local/{upload,download}`
+    (token-authorized, byte-capped).
+  - **Verified with production builds:** sign-in → upload of the owner's real Claude Design HTML
+    and ZIP over HTTP → the bundled worker processes them → the downloaded original's SHA-256
+    equals the uploaded file's.
 
 **Not done or not verified**
 
-- The S3 adapter has not been verified against real Cloudflare R2.
-- There is no passkey, MFA or password reset. Password reset is intentionally disabled; the
-  admin resets passwords with the CLI. That CLI subcommand is not written yet: P1A-AUTH-RESET.
-- Client IP for rate limiting comes from `x-forwarded-for`. Behind a proxy that does not
-  overwrite that header, clients could spoof it. Configure the platform to set it, and set
-  `TRUSTED_PROXIES` when deploying (DEPLOYMENT.md §5.6).
+- ZIP files are preserved, but not analysed yet (`archive_other`, error code
+  `ARCHIVE_ANALYSIS_UNAVAILABLE`). P1A-ZIP is next.
+- There is no reconciliation for jobs whose lease expired with no attempts left. Their import
+  item stays `processing`. The `onFailed` hook covers every other failure path. Fix this in
+  P1A-RECOVERY with a maintenance job.
+- No staging cleanup job yet: abandoned uploads stay in `ws/*/staging/`.
+- There is no upload UI yet (P1A-IMPORT-UI); the API is complete.
+- HTML extraction joins adjacent inline elements without a space when the source has no
+  whitespace between them (e.g. flex-row `<span>` labels). This is cosmetic.
+- The S3 adapter has not been verified against real R2.
 
 ## 2. How to run
 
@@ -78,37 +82,32 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
   - Route handlers can be imported and called directly with `Request` objects (see
     `tests/integration/api/sessions-api.test.ts`).
 
-## 4. Next steps (exact): PR 3, import slice 1 (P1A-FILES + P1A-IMPORT-API + worker for single files)
+## 4. Next steps (exact): PR 4, P1A-ZIP + P1A-RECOVERY + batch/security tests
 
-1. **Schema** (new migration `0001_library_import`), per DATA_MODEL §4.2–4.3:
-   - Tables: `research_projects`, `artifacts`, `artifact_versions`, `file_assets`,
-     `artifact_files`, `derived_assets`, `import_batches`, `import_items`,
-     `extracted_documents`, `document_sections`.
-   - Circular FKs: `artifacts.current_version_id` and
-     `artifact_versions.active_extraction_id`.
-   - A custom migration for the `file_assets` immutability trigger.
-2. **`modules/files`:**
-   - `storeOriginal(stagingKey)`: stream + SHA-256 + sniff, then a conditional put to
-     `storageKeys.original`.
-   - `getOriginalDownload(actor, versionId)`: a signed URL plus an audit row.
-3. **`modules/imports`:**
-   - `createBatch`, `declareItem` (idempotent on `clientKey`; signed upload URL),
-     `completeItem` (head check + `enqueueJob` in the same transaction), `getBatchReport`,
-     `retryItem`, `cancelItem`.
-   - A state machine in `state.ts`.
-4. **`src/app/api/storage/local/{upload,download}/route.ts`:** token-verified streaming, local
-   adapter only.
-5. **`modules/extraction`:**
-   - format sniffing
-   - HTML, Markdown and text extractors (sections, title, language)
-   - PDF via `unpdf`
-   - image metadata via `sharp`
-6. **Worker handler `import.process_item`**, registered in `src/worker/registry.ts`. It must be
-   idempotent: check `import_items.status` first, rely on content-addressed storage, and do
-   one DB transaction for the artifact, version, files, extraction and item status.
-7. **Tests:**
-   - integration: upload → process → persist → download, with byte-equal SHA-256
-   - same-hash duplicates
-   - running the job twice
-   - cross-workspace download returns 404
-   - the immutability trigger
+1. `src/modules/extraction/zip/reader.ts`: a safe inventory using `yauzl.open(tempPath,
+{ lazyEntries: true, strictFileNames: true, validateEntrySizes: true })`.
+   - Normalize and validate every path (IMPORT_PIPELINE §4): traversal, absolute paths, drive
+     letters, NUL, depth, symlink mode bits and encrypted entries.
+   - Count actual bytes while streaming. Enforce the total, per-entry and compression-ratio
+     limits, as well as the entry count.
+2. `zip/classify.ts`: Claude Design (`*.dc.html` + `support.js`/`_ds`/`.thumbnail`), static
+   site, framework source, document bundle, unsupported.
+3. In `process-item.ts`, replace `archiveOutcome()`:
+   - Extract the allowed preview files into derived assets (`kind = preview_file`, `path` = the
+     normalized entry path).
+   - Run the HTML/MD/PDF extractor on the entry document.
+   - Use the `.thumbnail` or the first image as the thumbnail.
+   - Record the inventory summary and external dependencies in `analysis`.
+4. Add a `maintenance.reprocess_version` job to upgrade versions created as `archive_other`, and
+   a `maintenance.cleanup` job (hourly), which:
+   - expires stale `awaiting_upload` items
+   - deletes staging objects of terminal items
+   - fails items whose job ended `failed`
+5. Tests:
+   - zip-slip, absolute path, symlink, bomb (ratio and total), entry count, nested archive,
+     encrypted entry
+   - classification fixtures built in code with `yazl`
+   - a 50-item mixed batch (exit criterion 4)
+   - cleanup and reconciliation
+
+Then: PR 5 = P1A-IMPORT-UI, PR 6 = export/restore + integrity.
