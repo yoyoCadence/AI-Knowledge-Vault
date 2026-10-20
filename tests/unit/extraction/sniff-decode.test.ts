@@ -64,21 +64,19 @@ describe("detectLanguage", () => {
   it("distinguishes Traditional and Simplified Chinese", () => {
     expect(
       detectLanguage(
-        "這個問題的研究結果顯示，我們對於形態發生的理解還不夠完整，需要更多實驗與資料。",
+        "這個問題的研究結果顯示，我們對於城市熱島的理解還不夠完整，需要更多實驗與資料。",
       ),
     ).toBe("zh-Hant");
     expect(
       detectLanguage(
-        "这个问题的研究结果显示，我们对于形态发生的理解还不够完整，需要更多实验与资料。",
+        "这个问题的研究结果显示，我们对于城市热岛的理解还不够完整，需要更多实验与资料。",
       ),
     ).toBe("zh-Hans");
   });
 
   it("detects English, Japanese and undetermined text", () => {
     expect(
-      detectLanguage(
-        "Morphogenesis builds structure without a central controller in most embryos.",
-      ),
+      detectLanguage("Urban heat builds up where pavement replaces trees in most dense cities."),
     ).toBe("en");
     expect(detectLanguage("これはテストの文章です。ひらがなとカタカナがあります。")).toBe("ja");
     expect(detectLanguage("1234 5678")).toBe("und");
@@ -97,7 +95,7 @@ describe("detectLanguage", () => {
 
 describe("filenameStem", () => {
   it.each([
-    ["Morphogenesis Report.dc.html", "Morphogenesis Report"],
+    ["Urban Heat Report.dc.html", "Urban Heat Report"],
     ["archive.tar.gz", "archive"],
     ["notes.md", "notes"],
     ["dir/sub/報告.pdf", "報告"],

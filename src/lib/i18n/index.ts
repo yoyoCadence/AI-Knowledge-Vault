@@ -21,4 +21,10 @@ export function t(
   );
 }
 
+/** Translates a dynamic key (e.g. `kind.${value}`), or returns null when no message exists. */
+export function tOptional(key: string, locale: Locale = DEFAULT_LOCALE): string | null {
+  const dictionary = dictionaries[locale] as Record<string, string>;
+  return Object.hasOwn(dictionary, key) ? dictionary[key]! : null;
+}
+
 export type { MessageKey };

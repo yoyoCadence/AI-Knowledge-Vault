@@ -215,21 +215,21 @@ describe("analyzeArchive", () => {
   it("extracts a Claude Design export: text, cover, script-free preview file list", async () => {
     const outcome = await analyzeArchive(
       await zipFile(await claudeDesignZipEntries()),
-      "Morphogenesis_Report_Design.zip",
+      "Urban_Heat_Report_Design.zip",
       limits,
     );
     try {
       expect(outcome.rejection).toBeUndefined();
-      expect(outcome.extraction.title).toBe("胚胎沒有藍圖，只有規則");
+      expect(outcome.extraction.title).toBe("城市沒有恆溫器，只有材料");
       expect(outcome.extraction.metadata.sourcePlatform).toBe("claude_design");
       expect(outcome.classification).toMatchObject({
         contentKind: "claude_design_document",
         previewKind: "static_site",
-        previewEntryPath: "Morphogenesis Report.dc.html",
+        previewEntryPath: "Urban Heat Report.dc.html",
       });
       expect(outcome.thumbnail?.mimeType).toBe("image/webp");
       expect(outcome.previewFiles.map((file) => file.sitePath).sort()).toEqual([
-        "Morphogenesis Report.dc.html",
+        "Urban Heat Report.dc.html",
         "_ds/modernist/_adherence.oxlintrc.json",
         "_ds/modernist/_ds_bundle.js",
         "_ds/modernist/readme.md",

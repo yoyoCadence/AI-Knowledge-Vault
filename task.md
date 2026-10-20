@@ -29,12 +29,16 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 | P1A-ZIP           | Safe ZIP reader, classification A/B/C/D, derived preview files | ✅      |
 | P1A-VERSION       | Version matching + suspected duplicates                        | ✅      |
 | P1A-RECOVERY      | Staging cleanup, expiry, reconciliation                        | ✅      |
-| P1A-IMPORT-UI     | Upload UI with progress and report                             | 📝 next |
-| P1A-EXPORT        | Portable export v1                                             | 📝      |
+| P1A-IMPORT-UI     | Upload UI with progress and report                             | ✅      |
+| P1A-EXPORT        | Portable export v1                                             | 📝 next |
 | P1A-RESTORE       | Restore + CLI + round-trip test                                | 📝      |
 | P1A-INTEGRITY     | Integrity check job                                            | 📝      |
 | P1A-ENC           | Built-in age encryption for exports                            | 📝      |
 
 ## Phase 1B — Usable Library
 
-See `docs/ROADMAP.md` (all 📝).
+| ID          | Task                                                               | Status                                                                         |
+| ----------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| P1B-LIBRARY | Library grid with thumbnails, kinds, source, pagination            | 🚧 grid + cursor paging done (PR 5); recent/favorites/categories/stats pending |
+| P1B-DETAIL  | Artifact detail: metadata, outline, references, versions, download | 🚧 read-only detail done (PR 5); metadata editing pending                      |
+| others      | see `docs/ROADMAP.md`                                              | 📝                                                                             |

@@ -6,7 +6,7 @@ Decision record: ADR-009.
 ## 1. Problem
 
 PostgreSQL's built-in parsers split on whitespace and punctuation. Traditional Chinese has
-neither between words, so `to_tsvector('simple', '胚胎沒有藍圖')` yields **one** token, and a
+neither between words, so `to_tsvector('simple', '細胞沒有藍圖')` yields **one** token, and a
 search for `藍圖` finds nothing. Neon offers no Chinese segmentation extension. `pg_trgm`
 can't use its index for 1–2 character patterns, which covers most Chinese words, and its
 behaviour depends on the database `LC_CTYPE`.
@@ -36,10 +36,10 @@ behaviour depends on the database `LC_CTYPE`.
 The query tokenizer uses the same normalization:
 
 - A **CJK query run** of length ≥ 2 becomes a phrase of its bigrams joined by `<->`, which
-  requires adjacency, so `形態發生` matches only text containing that exact sequence.
+  requires adjacency, so `城市熱島` matches only text containing that exact sequence.
   Length 1 becomes the unigram.
-- A **Latin term** becomes a prefix match `term:*` (partial keywords, e.g. `morpho` →
-  `morphogenesis`).
+- A **Latin term** becomes a prefix match `term:*` (partial keywords, e.g. `therm` →
+  `thermal`).
 - Multiple terms are joined with `&` (AND). A quoted phrase "…" keeps adjacency for Latin too.
 - Up to 16 terms. Each lexeme is escaped by construction, since tokens contain only
   `\p{L}\p{N}`, so user input can never inject tsquery operators.
@@ -111,8 +111,8 @@ future public showcase search would use a separate query restricted to
 `tests/integration/search.test.ts` checks the following against real Postgres with
 Traditional Chinese fixtures:
 
-- 2-character word (`胚胎`)
-- 4-character phrase (`形態發生`)
+- 2-character word (`熱島`)
+- 4-character phrase (`城市熱島`)
 - no false positive for a non-adjacent sequence
 - mixed Chinese and English
 - English prefix

@@ -16,6 +16,7 @@ import {
   declareItem,
   getBatchReport,
   importLimitsFromEnv,
+  listBatches,
   retryItem,
 } from "@/modules/imports";
 import { claimJobs, enqueueJob } from "@/modules/jobs";
@@ -51,7 +52,7 @@ describe("ZIP imports (P1A-ZIP)", () => {
     const actor = await createTestActor();
     const zip = buildZip(await claudeDesignZipEntries());
     const queued = await uploadFile(actor, (await newBatch(actor)).id, {
-      filename: "Morphogenesis_Report_Design.zip",
+      filename: "Urban_Heat_Report_Design.zip",
       bytes: zip,
     });
     await drainJobs();
@@ -63,7 +64,7 @@ describe("ZIP imports (P1A-ZIP)", () => {
       detectedType: "zip",
     });
     const { artifact, versions } = await getArtifactDetail(db, actor, item.resultArtifactId!);
-    expect(artifact.title).toBe("胚胎沒有藍圖，只有規則");
+    expect(artifact.title).toBe("城市沒有恆溫器，只有材料");
     expect(versions[0]).toMatchObject({
       contentKind: "claude_design_document",
       previewKind: "static_site",
@@ -75,7 +76,7 @@ describe("ZIP imports (P1A-ZIP)", () => {
       .select()
       .from(artifactVersions)
       .where(eq(artifactVersions.id, item.resultVersionId!));
-    expect(version?.previewEntryPath).toBe("Morphogenesis Report.dc.html");
+    expect(version?.previewEntryPath).toBe("Urban Heat Report.dc.html");
     expect(version?.analysis).toMatchObject({
       archive: { kind: "claude_design", entryCount: 7 },
       externalDependencies: ["fonts.googleapis.com"],
@@ -90,7 +91,7 @@ describe("ZIP imports (P1A-ZIP)", () => {
       .filter((asset) => asset.kind === "preview_file")
       .map((asset) => asset.path)
       .sort();
-    expect(previewPaths).toContain("Morphogenesis Report.dc.html");
+    expect(previewPaths).toContain("Urban Heat Report.dc.html");
     expect(previewPaths).toContain("_ds/modernist/styles.css");
     // Every preview file's stored bytes match its recorded hash.
     for (const asset of derived) {
@@ -261,6 +262,15 @@ describe("batch of 50 (Phase 1A exit criterion 4) with partial failures (criteri
       ]),
     );
     expect(elapsed).toBeLessThan(60_000);
+
+    // The recent-imports listing aggregates the same counts (regression: correlated subquery bug).
+    const [listed] = await listBatches(db, actor, 5);
+    expect(listed).toMatchObject({
+      id: batch.id,
+      total: 52,
+      failed: 2,
+      status: "completed_with_errors",
+    });
   }, 120_000);
 });
 

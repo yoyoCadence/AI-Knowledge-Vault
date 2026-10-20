@@ -85,6 +85,8 @@ const EnvSchema = z
     WORKER_POLL_INTERVAL_MS: positiveInt(1_000),
     WORKER_SHUTDOWN_GRACE_MS: positiveInt(30_000),
     JOB_LEASE_SECONDS: positiveInt(120),
+    /** Optional localhost-only liveness port for the worker (GET /healthz). */
+    WORKER_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).optional(),
   })
   .superRefine((env, ctx) => {
     const isProd = env.APP_ENV === "production" || env.APP_ENV === "staging";

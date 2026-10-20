@@ -25,6 +25,6 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/knowledge-map", labelKey: "nav.knowledgeMap", icon: Network, future: true },
   { href: "/ai-research", labelKey: "nav.aiResearch", icon: Sparkles, future: true },
   { href: "/showcase", labelKey: "nav.publicShowcase", icon: Globe, future: true },
-  { href: "/import", labelKey: "nav.importBackup", icon: Archive, future: true },
+  { href: "/import", labelKey: "nav.importBackup", icon: Archive },
   { href: "/settings", labelKey: "nav.settings", icon: Settings },
 ];

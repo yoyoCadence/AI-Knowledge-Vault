@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { e2eEnv, E2E_PORT } from "./tests/e2e/e2e-env";
+import { e2eEnv, E2E_PORT, E2E_WORKER_HEALTH_PORT } from "./tests/e2e/e2e-env";
 
 /**
  * E2E against a production build (`pnpm build` first) on port 3100 with its own database.
@@ -32,6 +32,14 @@ export default defineConfig({
       env: e2eEnv,
       reuseExistingServer: false,
       timeout: 60_000,
+    },
+    {
+      // Background worker (bundled by `pnpm build:node`); readiness via its localhost health port.
+      command: "node dist/worker.mjs",
+      url: `http://127.0.0.1:${E2E_WORKER_HEALTH_PORT}/healthz`,
+      env: { ...e2eEnv, WORKER_HEALTH_PORT: String(E2E_WORKER_HEALTH_PORT) },
+      reuseExistingServer: false,
+      timeout: 30_000,
     },
   ],
 });

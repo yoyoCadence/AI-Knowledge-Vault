@@ -1,0 +1,69 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { expect, test } from "@playwright/test";
+import { claudeDesignZipEntries, htmlDocument } from "../fixtures/builders";
+import { buildZip } from "../fixtures/zip";
+import { login } from "./helpers";
+
+test.describe("import → library → artifact (Scenario A)", () => {
+  test("batch upload shows progress and a per-file report; works appear in the library", async ({
+    page,
+  }) => {
+    // In-memory payloads: Chromium in some containers drops file *paths* with non-ASCII names,
+    // and we specifically want a Traditional Chinese filename in this scenario.
+    const zipBytes = buildZip(await claudeDesignZipEntries("端對端 Claude Design 報告"));
+    const files = [
+      {
+        name: "E2E 研究筆記.html",
+        mimeType: "text/html",
+        buffer: Buffer.from(htmlDocument({ title: "端對端測試筆記" })),
+      },
+      { name: "E2E_Claude_Design_Export.zip", mimeType: "application/zip", buffer: zipBytes },
+      {
+        name: "broken-file.pdf",
+        mimeType: "application/pdf",
+        buffer: Buffer.from("this is not a pdf"),
+      },
+    ];
+
+    await login(page);
+    await page.goto("/import");
+    await page.getByTestId("import-file-input").setInputFiles(files);
+    await expect(page.getByTestId("import-row")).toHaveCount(3);
+    await page.getByRole("button", { name: "開始上傳" }).click();
+
+    // Report converges: 2 succeeded, 1 failed with a precise reason.
+    await expect(page.getByTestId("import-summary")).toHaveText(
+      /2 完成 · 0 重複 · 1 失敗 · 0 處理中/,
+      { timeout: 30_000 },
+    );
+    await expect(page.getByText("UNSUPPORTED_FILE_TYPE")).toBeVisible();
+
+    // Library shows both works.
+    await page.getByRole("link", { name: "知識庫" }).first().click();
+    await expect(page.getByRole("heading", { name: "端對端 Claude Design 報告" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "端對端測試筆記" })).toBeVisible();
+
+    // Artifact detail: metadata, outline, and a byte-identical original download.
+    await page.getByRole("heading", { name: "端對端 Claude Design 報告" }).click();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "端對端 Claude Design 報告" }),
+    ).toBeVisible();
+    await expect(page.getByText("Claude Design").first()).toBeVisible();
+    await expect(page.getByText("30 秒答案")).toBeVisible();
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByRole("link", { name: "下載原始檔", exact: true }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("E2E_Claude_Design_Export.zip");
+    const downloaded = await readFile((await download.path())!);
+    expect(createHash("sha256").update(downloaded).digest("hex")).toBe(
+      createHash("sha256").update(zipBytes).digest("hex"),
+    );
+  });
+
+  test("anonymous visitors cannot reach import or artifact APIs", async ({ request }) => {
+    expect((await request.get("/api/artifacts")).status()).toBe(401);
+    expect((await request.get("/api/imports")).status()).toBe(401);
+  });
+});

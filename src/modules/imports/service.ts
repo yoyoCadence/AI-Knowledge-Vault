@@ -415,11 +415,13 @@ export async function listBatches(db: DbExecutor, actor: Actor, limit = 20) {
       status: importBatches.status,
       createdAt: importBatches.createdAt,
       completedAt: importBatches.completedAt,
-      total: sql<number>`(select count(*)::int from ${importItems} i where i.batch_id = ${importBatches.id})`,
-      failed: sql<number>`(select count(*)::int from ${importItems} i where i.batch_id = ${importBatches.id} and i.status = 'failed')`,
+      total: sql<number>`count(${importItems.id})::int`,
+      failed: sql<number>`(count(${importItems.id}) filter (where ${importItems.status} = 'failed'))::int`,
     })
     .from(importBatches)
+    .leftJoin(importItems, eq(importItems.batchId, importBatches.id))
     .where(eq(importBatches.workspaceId, actor.workspaceId))
+    .groupBy(importBatches.id)
     .orderBy(desc(importBatches.createdAt))
     .limit(limit);
 }

@@ -20,10 +20,10 @@ describe("extractHtml", () => {
   });
 
   it("extracts title, language, sections and references", () => {
-    expect(result.title).toBe("形態發生研究筆記");
+    expect(result.title).toBe("城市熱島研究筆記");
     expect(result.language).toBe("zh-Hant");
     expect(result.sections.map((section) => section.heading)).toEqual([
-      "形態發生研究筆記",
+      "城市熱島研究筆記",
       "位置資訊",
       "自組織",
       "來源",
@@ -32,7 +32,7 @@ describe("extractHtml", () => {
       { title: "Turing 1952", url: "https://doi.org/10.1098/rstb.1952.0012" },
       { title: "Example paper", url: "https://example.org/paper" },
     ]);
-    expect(result.metadata.description).toBe("胚胎發育中的圖案形成機制摘要。");
+    expect(result.metadata.description).toBe("都市熱島效應的成因與對策摘要。");
     expect(analysis.hasScripts).toBe(true);
   });
 
@@ -67,7 +67,7 @@ describe("extractHtml", () => {
     });
     expect(dc.analysis.isClaudeDesign).toBe(true);
     expect(dc.result.metadata.sourcePlatform).toBe("claude_design");
-    expect(dc.result.title).toBe("胚胎沒有藍圖，只有規則");
+    expect(dc.result.title).toBe("城市沒有恆溫器，只有材料");
     expect(dc.result.plainText).not.toMatch(/\{\{|\}\}/);
     expect(dc.result.plainText).toContain("劑量實驗");
     expect(dc.result.plainText).not.toContain("DCLogic");
@@ -132,7 +132,7 @@ describe("extractPdf", () => {
     expect(result.title).toBe("Vault Test PDF");
     expect(result.sections.map((section) => section.heading)).toEqual(["第 1 頁", "第 2 頁"]);
     expect(result.plainText).toContain("Hello Vault PDF page one");
-    expect(result.plainText).toContain("Second page about morphogenesis");
+    expect(result.plainText).toContain("Second page about urban heat");
   });
 
   it("honours the page limit", async () => {

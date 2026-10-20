@@ -72,6 +72,18 @@ Rules:
 
 ## 5. E2E scenarios (Phase 1B exit)
 
+Implemented so far (`tests/e2e/`):
+
+- `auth.spec.ts`: anonymous redirect, wrong password, login → sessions → logout, open-redirect refusal.
+- `import.spec.ts`: an HTML file with a Traditional Chinese name, a Claude Design ZIP and a broken
+  file are uploaded through the UI. The report shows 2 succeeded and 1 failed with a precise
+  error code. The library shows both works. The detail page shows the outline, and the original
+  download is byte-identical (SHA-256). Anonymous API access returns 401.
+
+Note: Chromium in some containers drops file _paths_ with non-ASCII names in `setInputFiles`, so the
+specs pass in-memory payloads (`{ name, mimeType, buffer }`). Real browsers are unaffected, and the
+integration tests also cover CJK filenames.
+
 1. Admin login (and failed login message).
 2. Batch upload (drag and drop via file chooser) of 5 fixtures.
 3. View import progress until complete; one deliberately broken file shows a reason.
