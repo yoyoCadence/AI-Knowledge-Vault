@@ -527,6 +527,24 @@ describe("failure isolation, retry and idempotency (criteria 7 & 8)", () => {
     expect(finished?.status).toBe("completed_with_errors");
   });
 
+  it("reopens a finished batch that receives another file and recomputes its status", async () => {
+    const actor = await createTestActor();
+    const batch = await newBatch(actor);
+    const batchStatus = async () =>
+      (await db.select().from(importBatches).where(eq(importBatches.id, batch.id)))[0]!;
+    await uploadFile(actor, batch.id, {
+      filename: "first.html",
+      bytes: htmlDocument({ title: `重開批次 ${batch.id}` }),
+    });
+    await drainJobs();
+    expect((await batchStatus()).status).toBe("completed");
+
+    await uploadFile(actor, batch.id, { filename: "late.pdf", bytes: "%PDX not really a pdf" });
+    expect(await batchStatus()).toMatchObject({ status: "processing", completedAt: null });
+    await drainJobs();
+    expect((await batchStatus()).status).toBe("completed_with_errors");
+  });
+
   it("finishes the batch when its last two items complete concurrently", async () => {
     const actor = await createTestActor();
     const batch = await newBatch(actor);

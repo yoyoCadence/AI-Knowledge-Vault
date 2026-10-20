@@ -1,5 +1,6 @@
-import { and, asc, count, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
+import { beforeCursor, cursorTimestamp } from "@/infrastructure/database/keyset";
 import {
   artifacts,
   importBatches,
@@ -9,6 +10,7 @@ import {
 } from "@/infrastructure/database/schema";
 import type { SignedRequest, StorageAdapter } from "@/infrastructure/storage";
 import { storageKeys } from "@/infrastructure/storage";
+import type { KeysetCursor } from "@/lib/cursor";
 import { AppError, notFound } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { recordAudit, type RequestMeta } from "@/modules/audit";
@@ -257,10 +259,12 @@ export async function completeItem(
       errorCode: null,
       errorMessage: null,
     });
+    // Also reopens a finished batch that receives a new file, so its status and
+    // completedAt are recomputed when the new item finishes.
     await tx
       .update(importBatches)
-      .set({ status: "processing" })
-      .where(and(eq(importBatches.id, item.batchId), eq(importBatches.status, "open")));
+      .set({ status: "processing", completedAt: null })
+      .where(and(eq(importBatches.id, item.batchId), ne(importBatches.status, "cancelled")));
     return updated;
   });
 }
@@ -447,13 +451,14 @@ export async function getBatchReport(
 export async function listBatches(
   db: DbExecutor,
   actor: Actor,
-  options: { limit: number; cursor?: { createdAt: Date; id: string } },
+  options: { limit: number; cursor?: KeysetCursor },
 ) {
   const rows = await db
     .select({
       id: importBatches.id,
       status: importBatches.status,
       createdAt: importBatches.createdAt,
+      cursorCreatedAt: cursorTimestamp(importBatches.createdAt),
       completedAt: importBatches.completedAt,
       total: sql<number>`count(${importItems.id})::int`,
       failed: sql<number>`(count(${importItems.id}) filter (where ${importItems.status} = 'failed'))::int`,
@@ -463,26 +468,18 @@ export async function listBatches(
     .where(
       and(
         eq(importBatches.workspaceId, actor.workspaceId),
-        options.cursor
-          ? or(
-              lt(importBatches.createdAt, options.cursor.createdAt),
-              and(
-                eq(importBatches.createdAt, options.cursor.createdAt),
-                lt(importBatches.id, options.cursor.id),
-              ),
-            )
-          : undefined,
+        beforeCursor(importBatches.createdAt, importBatches.id, options.cursor),
       ),
     )
     .groupBy(importBatches.id)
     .orderBy(desc(importBatches.createdAt), desc(importBatches.id))
     .limit(options.limit + 1);
-  const items = rows.slice(0, options.limit);
-  const last = items.at(-1);
+  const items = rows.slice(0, options.limit).map(({ cursorCreatedAt: _, ...row }) => row);
+  const last = rows[options.limit - 1];
   return {
     items,
     nextCursor:
-      rows.length > options.limit && last ? { createdAt: last.createdAt, id: last.id } : null,
+      rows.length > options.limit && last ? { createdAt: last.cursorCreatedAt, id: last.id } : null,
   };
 }
 

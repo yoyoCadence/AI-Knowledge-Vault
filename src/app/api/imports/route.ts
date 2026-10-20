@@ -6,7 +6,7 @@ import {
   listBatches,
   toBatchDto,
 } from "@/modules/imports";
-import { decodeCursor, encodeCursor } from "../_lib/cursor";
+import { decodeCursor, encodeCursor } from "@/lib/cursor";
 import { json, parseJsonBody, parseQuery } from "../_lib/http";
 import { authedRoute } from "../_lib/route";
 import { services } from "../_lib/services";

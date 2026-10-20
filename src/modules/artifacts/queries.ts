@@ -1,5 +1,6 @@
-import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import type { DbExecutor } from "@/infrastructure/database/client";
+import { beforeCursor, cursorTimestamp } from "@/infrastructure/database/keyset";
 import {
   artifacts,
   artifactVersions,
@@ -8,6 +9,7 @@ import {
   extractedDocuments,
   fileAssets,
 } from "@/infrastructure/database/schema";
+import type { KeysetCursor } from "@/lib/cursor";
 import { notFound } from "@/lib/errors";
 import type { Actor } from "@/modules/auth";
 
@@ -39,8 +41,8 @@ export interface ArtifactCard {
 export async function listArtifacts(
   db: DbExecutor,
   actor: Actor,
-  options: { limit: number; cursor?: { createdAt: Date; id: string } },
-): Promise<{ items: ArtifactCard[]; nextCursor: { createdAt: Date; id: string } | null }> {
+  options: { limit: number; cursor?: KeysetCursor },
+): Promise<{ items: ArtifactCard[]; nextCursor: KeysetCursor | null }> {
   const rows = await db
     .select({
       id: artifacts.id,
@@ -49,6 +51,7 @@ export async function listArtifacts(
       visibility: artifacts.visibility,
       sensitivity: artifacts.sensitivity,
       createdAt: artifacts.createdAt,
+      cursorCreatedAt: cursorTimestamp(artifacts.createdAt),
       updatedAt: artifacts.updatedAt,
       versionId: artifactVersions.id,
       versionNumber: artifactVersions.versionNumber,
@@ -68,15 +71,7 @@ export async function listArtifacts(
       and(
         eq(artifacts.workspaceId, actor.workspaceId),
         isNull(artifacts.deletedAt),
-        options.cursor
-          ? or(
-              lt(artifacts.createdAt, options.cursor.createdAt),
-              and(
-                eq(artifacts.createdAt, options.cursor.createdAt),
-                lt(artifacts.id, options.cursor.id),
-              ),
-            )
-          : undefined,
+        beforeCursor(artifacts.createdAt, artifacts.id, options.cursor),
       ),
     )
     .orderBy(desc(artifacts.createdAt), desc(artifacts.id))
@@ -109,7 +104,7 @@ export async function listArtifacts(
   return {
     items,
     nextCursor:
-      rows.length > options.limit && last ? { createdAt: last.createdAt, id: last.id } : null,
+      rows.length > options.limit && last ? { createdAt: last.cursorCreatedAt, id: last.id } : null,
   };
 }
 

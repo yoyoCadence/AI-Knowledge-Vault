@@ -5,23 +5,11 @@ import { ArtifactCard } from "@/components/library/artifact-card";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/states";
 import { getDb } from "@/infrastructure/database/client";
+import { decodeCursorOrFirstPage, encodeCursor } from "@/lib/cursor";
 import { t } from "@/lib/i18n";
 import { listArtifacts } from "@/modules/artifacts";
 
 const PAGE_SIZE = 48;
-
-function decodeCursor(value: string | undefined) {
-  if (!value) return undefined;
-  try {
-    const [createdAt, id] = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as [
-      string,
-      string,
-    ];
-    return { createdAt: new Date(createdAt), id };
-  } catch {
-    return undefined;
-  }
-}
 
 export default async function LibraryPage({
   searchParams,
@@ -32,7 +20,7 @@ export default async function LibraryPage({
   const { cursor } = await searchParams;
   const { items, nextCursor } = await listArtifacts(getDb(), actor, {
     limit: PAGE_SIZE,
-    cursor: decodeCursor(cursor),
+    cursor: decodeCursorOrFirstPage(cursor),
   });
 
   return (
@@ -89,11 +77,7 @@ export default async function LibraryPage({
       {nextCursor ? (
         <div className="flex justify-center">
           <Button asChild variant="outline">
-            <Link
-              href={`/?cursor=${Buffer.from(JSON.stringify([nextCursor.createdAt.toISOString(), nextCursor.id])).toString("base64url")}`}
-            >
-              {t("library.loadMore")}
-            </Link>
+            <Link href={`/?cursor=${encodeCursor(nextCursor)}`}>{t("library.loadMore")}</Link>
           </Button>
         </div>
       ) : null}

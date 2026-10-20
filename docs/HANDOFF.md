@@ -104,7 +104,21 @@ conversations. Update it at the end of every PR.
     - Cover and `package.json` reads propagate integrity errors instead of swallowing them.
     - An oversized bundled PDF respects `PREVIEW_MAX_TOTAL_BYTES`.
     - A `package.json` `build`/`dev` script marks a source project.
-  - Tests: 172 passing (157 before), plus E2E.
+  - **Independent review of PR 5** (Codex was over its usage limit). Fixed:
+    - Import UI:
+      - Polling no longer stops before a new item in a re-used batch is seen.
+      - Client upload errors and progress win over the server's `awaiting_upload`.
+      - The idempotency `clientKey` is a short UUID, so file names over about 176 characters
+        import.
+      - Stale polls are ignored after a retry.
+    - A finished batch that gets a new file is reopened (`completeItem`).
+    - Keyset cursors carry microsecond timestamps (`src/lib/cursor.ts` and
+      `infrastructure/database/keyset.ts`). Before this, rows created in the same millisecond
+      as a page's last row were skipped. The library page ignores malformed cursors.
+    - Thumbnails are sent `private, no-cache` (revalidated by ETag) instead of `max-age=300`.
+    - The worker health server awaits its bind, and EADDRINUSE fails startup cleanly before any
+      job is claimed.
+  - Tests: 180 passing (157 before), plus E2E 6/6.
 
 **Not done or not verified**
 
