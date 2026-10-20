@@ -217,6 +217,18 @@ export async function getVersionOverview(
         )
         .orderBy(asc(documentSections.ordinal))
     : [];
+  // A restored image's thumbnail only exists once re-extraction has regenerated it.
+  const [thumbnail] = await db
+    .select({ id: derivedAssets.id })
+    .from(derivedAssets)
+    .where(
+      and(
+        eq(derivedAssets.artifactVersionId, version.id),
+        eq(derivedAssets.workspaceId, actor.workspaceId),
+        eq(derivedAssets.kind, "thumbnail"),
+      ),
+    )
+    .limit(1);
   return {
     version,
     file: {
@@ -230,6 +242,7 @@ export async function getVersionOverview(
     },
     extraction: document ?? null,
     outline: outline.filter((section) => section.heading),
+    hasThumbnail: Boolean(thumbnail),
   };
 }
 

@@ -6,7 +6,7 @@ import { requirePageActor } from "@/app/_lib/session";
 import { label } from "@/components/library/artifact-card";
 import { KindIcon } from "@/components/library/kind-icon";
 import { PreviewFrame } from "@/components/preview/preview-frame";
-import { headingAnchors, MarkdownView, PlainTextView } from "@/components/reader/markdown-view";
+import { ReadingBody } from "@/components/reader/reading-body";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,12 +16,7 @@ import { isAppError } from "@/lib/errors";
 import { formatBytes, formatDate, formatDateTime } from "@/lib/format";
 import { isUuid } from "@/lib/ids";
 import { t, tOptional } from "@/lib/i18n";
-import {
-  getArtifactDetail,
-  getVersionContent,
-  getVersionOverview,
-  type VersionContent,
-} from "@/modules/artifacts";
+import { getArtifactDetail, getVersionContent, getVersionOverview } from "@/modules/artifacts";
 import { issuePreviewUrl } from "@/modules/preview";
 
 type View = "read" | "preview";
@@ -66,59 +61,6 @@ function previewNotice(version: { previewKind: string; previewStatus: string }):
   // PDF, image and text versions are shown by reading mode, not this frame.
   if (["pdf", "image", "text_only"].includes(version.previewKind)) return t("preview.notYet");
   return t("preview.unavailable");
-}
-
-/** Reading mode for the current version: rendered from its extraction, never its raw HTML. */
-function ReadingBody({
-  artifactId,
-  title,
-  version,
-  content,
-}: {
-  artifactId: string;
-  title: string;
-  version: { contentKind: string; processingStatus: string };
-  content: VersionContent | null;
-}) {
-  const note = (text: string) => <p className="text-muted-foreground mb-4 text-xs">{text}</p>;
-  if (version.contentKind === "image") {
-    return (
-      <figure className="flex flex-col gap-3">
-        {/* eslint-disable-next-line @next/next/no-img-element -- authorized same-origin image route, not optimizable */}
-        <img
-          src={`/api/artifacts/${artifactId}/thumbnail`}
-          alt={title}
-          className="border-border max-h-[70vh] w-fit max-w-full rounded-md border object-contain"
-        />
-        <figcaption>{note(t("reader.imageNote"))}</figcaption>
-      </figure>
-    );
-  }
-  if (!content || !content.extraction.markdown.trim()) {
-    const busy = ["pending", "processing"].includes(version.processingStatus);
-    return (
-      <p className="text-muted-foreground text-sm" data-testid="reader-empty">
-        {busy ? t("reader.pending") : t("reader.empty")}
-      </p>
-    );
-  }
-  const { method, markdown } = content.extraction;
-  return (
-    <div data-testid="reader">
-      {note(
-        method === "pdf"
-          ? t("reader.pdfNote")
-          : method === "restore_archive"
-            ? t("reader.restored")
-            : t("reader.source"),
-      )}
-      {method === "text" ? (
-        <PlainTextView text={markdown} />
-      ) : (
-        <MarkdownView markdown={markdown} anchors={headingAnchors(content.sections)} />
-      )}
-    </div>
-  );
 }
 
 function ViewSwitch({ view }: { view: View }) {
@@ -229,6 +171,7 @@ export default async function ArtifactPage({
                     artifactId={artifact.id}
                     title={artifact.title}
                     version={version}
+                    hasThumbnail={overview?.hasThumbnail ?? false}
                     content={content}
                   />
                 ) : preview ? (

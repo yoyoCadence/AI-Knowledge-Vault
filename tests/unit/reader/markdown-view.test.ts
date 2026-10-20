@@ -57,6 +57,12 @@ describe("reading mode renderer (SECURITY.md §5 Reading mode)", () => {
     expect(html).toContain("[none][9]");
   });
 
+  it("keeps footnotes: the reference and its text", () => {
+    const html = render("城市綠廊[^1]\n\n[^1]: 依據 2024 年觀測。");
+    expect(html).toContain('<sup class="text-muted-foreground">[1]</sup>');
+    expect(html).toContain("依據 2024 年觀測。");
+  });
+
   it("shows images as their alt text and loads nothing", () => {
     const html = render("![城市地圖](https://tracker.example/pixel.png) ![](x.png)");
     expect(html).not.toContain("<img");

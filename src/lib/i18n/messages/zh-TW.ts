@@ -125,6 +125,7 @@ export const zhTW = {
   "reader.source": "內容由原始檔擷取並重新排版，原始樣式與互動不會顯示。",
   "reader.pdfNote": "PDF 依頁擷取文字；原始版面與圖片請下載原始檔。",
   "reader.imageNote": "圖片作品以縮圖顯示；完整解析度請下載原始檔。",
+  "reader.imageMissing": "這張圖片還沒有縮圖。可以下載原始檔查看。",
   "reader.restored": "目前顯示的是備份中的文字，背景正在重新擷取完整內容。",
 
   "preview.title": "安全預覽",
