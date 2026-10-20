@@ -221,14 +221,22 @@ conversations. Update it at the end of every PR.
   - The `restore.run` job downloads the archive, records its SHA-256, runs `restoreArchive`,
     stores the report, and deletes the uploaded archive. An invalid archive
     (`CHECKSUM_MISMATCH`, wrong format) fails the run with its details and writes nothing.
+  - Retry and timeout safety (Codex review of PR 9): copy mode derives every new id from the
+    run (`restore-copy:{restoreId}:{oldId}`), so a retried attempt resumes instead of copying
+    again. The job's abort signal reaches `restoreArchive`, and the final status write only
+    applies while the run is `running`. `source_storage_key` is cleared only after the upload
+    is deleted; the hourly `maintenance.cleanup_exports` job finishes failed deletions and
+    abandons runs never started within 24 hours (`cleanupRestoreUploads`).
   - `GET /api/restores` and `GET /api/restores/:id`. Requests and starts are audited.
   - UI: a "從備份還原" panel on `/import`. Choose a file and a mode (each mode is explained),
     see upload progress, then the report: counts, warnings, failures, and "nothing written" on
     verification failures.
   - Tests: `tests/integration/api/restores-api.test.ts` (end to end, idempotent start, tampered
     archive → `CHECKSUM_MISMATCH` with nothing written, start before upload, oversize, workspace
-    isolation). The E2E test now restores the archive it just exported through the UI
-    (`略過 2`).
+    isolation, an aborted attempt stops writing, a late attempt cannot overwrite its timeout
+    failure, failed deletions are retried, abandoned uploads are cleaned up) and
+    `roundtrip.test.ts` (a retried copy-mode run duplicates nothing). The E2E test now restores
+    the archive it just exported through the UI (`略過 2`).
 
 **Not done or not verified**
 

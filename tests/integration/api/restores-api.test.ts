@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
+import pino from "pino";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GET as getRestoreRoute } from "@/app/api/restores/[id]/route";
 import { POST as startRoute } from "@/app/api/restores/[id]/start/route";
@@ -11,9 +12,16 @@ import { PUT as localUpload } from "@/app/api/storage/local/upload/route";
 import { getEnv } from "@/infrastructure/config/env";
 import { closeDb } from "@/infrastructure/database/client";
 import { artifacts, auditLogs, restoreRuns } from "@/infrastructure/database/schema";
-import { getStorage } from "@/infrastructure/storage";
+import { getStorage, storageKeys, type StorageAdapter } from "@/infrastructure/storage";
 import { newId } from "@/lib/ids";
-import { restoreLimitsFromEnv, writeExport } from "@/modules/backup";
+import {
+  ABANDONED_RESTORE_AFTER_MS,
+  cleanupRestoreUploads,
+  restoreLimitsFromEnv,
+  runRestore,
+  writeExport,
+} from "@/modules/backup";
+import type { JobContext } from "@/modules/jobs";
 import { SafeZip } from "@/modules/extraction";
 import { htmlDocument } from "@tests/fixtures/builders";
 import { buildZip, type ZipEntrySpec } from "@tests/fixtures/zip";
@@ -101,6 +109,37 @@ const read = async (cookie: string, id: string) =>
     ).json()) as { restore: RestoreDto }
   ).restore;
 
+/** The real storage with some methods replaced (fault injection). */
+function hookedStorage(hooks: Partial<StorageAdapter>): StorageAdapter {
+  const base = getStorage();
+  return new Proxy(base, {
+    get(target, property, receiver) {
+      if (property in hooks) return hooks[property as keyof StorageAdapter];
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+/** Runs the restore job handler directly, as one attempt of the worker would. */
+async function runAttempt(restoreId: string, storage: StorageAdapter, signal: AbortSignal) {
+  const ctx = {
+    db,
+    storage,
+    signal,
+    logger: pino({ level: "silent" }),
+    job: { payload: { restoreId } },
+    reportProgress: async () => undefined,
+  } as unknown as JobContext;
+  return runRestore(ctx, {
+    ...restoreLimitsFromEnv(getEnv()),
+    maxArchiveBytes: getEnv().RESTORE_MAX_ARCHIVE_BYTES,
+  });
+}
+
+const artifactCount = async (workspaceId: string) =>
+  (await db.select().from(artifacts).where(eq(artifacts.workspaceId, workspaceId))).length;
+
 describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
   let archive: Buffer;
 
@@ -136,7 +175,9 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
     ).toBe(1);
     const [run] = await db.select().from(restoreRuns).where(eq(restoreRuns.id, restore.id));
     expect(run?.sourceSha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(await getStorage().headObject(run!.sourceStorageKey!)).toBeNull();
+    expect(run?.sourceStorageKey).toBeNull();
+    const uploadKey = storageKeys.restoreUpload(actor.workspaceId, restore.id);
+    expect(await getStorage().headObject(uploadKey)).toBeNull();
     const audits = await db
       .select({ action: auditLogs.action })
       .from(auditLogs)
@@ -207,5 +248,101 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
       params({ id: restore.id }),
     );
     expect(response.status).toBe(404);
+  });
+
+  it("an attempt aborted by its timeout stops writing", async () => {
+    const { cookie, actor } = await owner();
+    const restore = await uploadArchive(cookie, archive);
+    await db.update(restoreRuns).set({ status: "running" }).where(eq(restoreRuns.id, restore.id));
+    const controller = new AbortController();
+    // The worker aborts while the attempt is writing originals (after the download).
+    const storage = hookedStorage({
+      putObject: (...args) => {
+        controller.abort(new Error("PROCESSING_TIMEOUT"));
+        return getStorage().putObject(...args);
+      },
+    });
+    await expect(runAttempt(restore.id, storage, controller.signal)).rejects.toThrow(
+      "PROCESSING_TIMEOUT",
+    );
+    expect(await artifactCount(actor.workspaceId)).toBe(0);
+  });
+
+  it("a late attempt never overwrites the failure recorded for its timeout", async () => {
+    const { cookie, actor } = await owner();
+    const restore = await uploadArchive(cookie, archive);
+    await db.update(restoreRuns).set({ status: "running" }).where(eq(restoreRuns.id, restore.id));
+    // onFailed marks the run failed while this (zombie) attempt is still downloading.
+    const storage = hookedStorage({
+      getObject: async (key) => {
+        await db
+          .update(restoreRuns)
+          .set({ status: "failed", errorCode: "PROCESSING_TIMEOUT" })
+          .where(eq(restoreRuns.id, restore.id));
+        return getStorage().getObject(key);
+      },
+    });
+    await runAttempt(restore.id, storage, new AbortController().signal);
+    const ended = await read(cookie, restore.id);
+    expect(ended).toMatchObject({ status: "failed", errorCode: "PROCESSING_TIMEOUT" });
+    expect(
+      await getStorage().headObject(storageKeys.restoreUpload(actor.workspaceId, restore.id)),
+    ).toBeNull();
+  });
+
+  it("an archive whose deletion failed is deleted by the job retry or the maintenance sweep", async () => {
+    const { cookie, actor } = await owner();
+    const uploadKey = (id: string) => storageKeys.restoreUpload(actor.workspaceId, id);
+    const failingDelete = hookedStorage({
+      deleteObject: async () => {
+        throw new Error("storage briefly unavailable");
+      },
+    });
+
+    // 1. The job's own retry: the run is completed, so the retry only finishes the deletion.
+    const first = await uploadArchive(cookie, archive);
+    await db.update(restoreRuns).set({ status: "running" }).where(eq(restoreRuns.id, first.id));
+    const signal = new AbortController().signal;
+    await expect(runAttempt(first.id, failingDelete, signal)).rejects.toThrow("briefly");
+    expect((await read(cookie, first.id)).status).toBe("completed");
+    expect(await getStorage().headObject(uploadKey(first.id))).not.toBeNull();
+    expect(await runAttempt(first.id, getStorage(), signal)).toEqual({ skipped: "completed" });
+    expect(await getStorage().headObject(uploadKey(first.id))).toBeNull();
+
+    // 2. The hourly sweep, when every attempt failed to delete.
+    const second = await uploadArchive(cookie, archive);
+    await db.update(restoreRuns).set({ status: "running" }).where(eq(restoreRuns.id, second.id));
+    await expect(runAttempt(second.id, failingDelete, signal)).rejects.toThrow("briefly");
+    expect(await cleanupRestoreUploads(db, getStorage())).toBeGreaterThanOrEqual(1);
+    expect(await getStorage().headObject(uploadKey(second.id))).toBeNull();
+    const [run] = await db.select().from(restoreRuns).where(eq(restoreRuns.id, second.id));
+    expect(run).toMatchObject({ status: "completed", sourceStorageKey: null });
+  });
+
+  it("an upload never started is abandoned after a day and cannot start later", async () => {
+    const { cookie, actor } = await owner();
+    const stale = await uploadArchive(cookie, archive);
+    const fresh = await uploadArchive(cookie, archive);
+    await db
+      .update(restoreRuns)
+      .set({ createdAt: new Date(Date.now() - ABANDONED_RESTORE_AFTER_MS - 60_000) })
+      .where(eq(restoreRuns.id, stale.id));
+
+    expect(await cleanupRestoreUploads(db, getStorage())).toBeGreaterThanOrEqual(1);
+    const abandoned = await read(cookie, stale.id);
+    expect(abandoned).toMatchObject({ status: "failed", errorCode: "UPLOAD_INCOMPLETE" });
+    const staleKey = storageKeys.restoreUpload(actor.workspaceId, stale.id);
+    expect(await getStorage().headObject(staleKey)).toBeNull();
+    const refused = await start(cookie, stale.id);
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe(
+      "NOT_RETRYABLE",
+    );
+
+    // A recent upload is left alone and still starts normally.
+    expect((await read(cookie, fresh.id)).status).toBe("queued");
+    expect((await start(cookie, fresh.id)).status).toBe(202);
+    await drainJobs();
+    expect((await read(cookie, fresh.id)).status).toBe("completed");
   });
 });

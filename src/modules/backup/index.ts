@@ -19,6 +19,8 @@ export {
   CreateRestoreInput,
   StartRestoreInput,
   RESTORE_JOB_TYPE,
+  ABANDONED_RESTORE_AFTER_MS,
+  cleanupRestoreUploads,
   type RestoreRun,
 } from "./restore-runs";
 export {

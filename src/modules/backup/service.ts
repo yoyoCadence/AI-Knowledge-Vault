@@ -14,6 +14,7 @@ import { sha256OfFile } from "@/modules/files/hash";
 import { enqueueJob, type JobContext, type JobDefinition } from "@/modules/jobs";
 import { EXPORT_FORMAT_VERSION } from "./format";
 import { writeExport } from "./export";
+import { cleanupRestoreUploads } from "./restore-runs";
 
 /**
  * Export runs (BACKUP_RECOVERY §3): request → `export.create` job → archive in storage under
@@ -234,6 +235,9 @@ export function exportCleanupJobDefinition(): JobDefinition {
   return {
     type: EXPORT_CLEANUP_JOB_TYPE,
     timeoutMs: 10 * 60 * 1000,
-    handler: async ({ db, storage }) => ({ deleted: await deleteExpiredExports(db, storage) }),
+    handler: async ({ db, storage }) => ({
+      deleted: await deleteExpiredExports(db, storage),
+      restoreUploadsDeleted: await cleanupRestoreUploads(db, storage),
+    }),
   };
 }

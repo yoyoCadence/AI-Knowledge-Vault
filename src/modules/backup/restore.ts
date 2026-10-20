@@ -51,12 +51,18 @@ import {
  * 4. Originals are written content-addressed (idempotent), then rows are inserted one artifact
  *    per transaction, so a failure affects only that artifact and is reported.
  *
- * IDs are kept when free (restore into a clean environment reproduces the source exactly).
- * An artifact that already exists in the target workspace is skipped (`skip_existing`) or
- * duplicated under new IDs (`copy`). Rows whose IDs are taken by *another* workspace are always
- * restored under new IDs. Derived data (sections, previews, thumbnails) is rebuilt by
- * `restore.reextract_version` jobs; the archived Markdown is available immediately as a
- * fallback extraction.
+ * `skip_existing`: IDs are kept when free (restore into a clean environment reproduces the source
+ * exactly); an artifact that already exists in the target workspace is skipped, and rows whose
+ * IDs are taken by *another* workspace are restored under IDs derived from the target workspace.
+ * `copy`: every row is restored under an ID derived from the restore run, so the archive is
+ * duplicated even when it is already present. Both are deterministic, so a retried attempt of
+ * the same run finds what an earlier attempt inserted instead of inserting it again.
+ *
+ * Derived data (sections, previews, thumbnails) is rebuilt by `restore.reextract_version` jobs;
+ * the archived Markdown is available immediately as a fallback extraction.
+ *
+ * `signal` (the job's timeout) is checked before every entry, original, project and artifact:
+ * once it fires, the artifact transaction in flight may still commit, but nothing new starts.
  */
 
 export const REEXTRACT_JOB_TYPE = "restore.reextract_version";
@@ -150,7 +156,7 @@ function markdownBody(text: string): { title: string | null; body: string } {
 }
 
 /** Verifies the archive completely; returns its validated contents. Writes nothing. */
-async function verifyArchive(zip: SafeZip) {
+async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
   const manifest = await readJson(zip, PATHS.manifest, ManifestV1.loose());
   if (manifest.format !== EXPORT_FORMAT || manifest.formatVersion !== EXPORT_FORMAT_VERSION) {
     throw invalidArchive(`unsupported export format ${manifest.format} v${manifest.formatVersion}`);
@@ -190,6 +196,7 @@ async function verifyArchive(zip: SafeZip) {
   }
   const mismatched: string[] = [];
   for (const [entryPath, expected] of listed) {
+    signal?.throwIfAborted();
     const actual = await hashEntry(zip, entryPath);
     const addressed = hashFromOriginalPath(entryPath);
     if (actual !== expected || (addressed !== null && addressed !== actual)) {
@@ -289,8 +296,10 @@ export async function restoreArchive(
     mode: RestoreMode;
     restoreId: string;
     limits: RestoreLimits;
+    signal?: AbortSignal;
   },
 ): Promise<RestoreReport> {
+  const { signal } = input;
   const startedAt = Date.now();
   let zip: SafeZip;
   try {
@@ -301,7 +310,7 @@ export async function restoreArchive(
   }
   const tmp = await mkdtemp(path.join(tmpdir(), "vault-restore-"));
   try {
-    const archive = await verifyArchive(zip);
+    const archive = await verifyArchive(zip, signal);
     const { workspaceId, mode } = input;
     const report: RestoreReport = {
       source: {
@@ -331,23 +340,38 @@ export async function restoreArchive(
 
     /** Deterministic per-target-workspace id for an archived id that belongs to someone else. */
     const derivedId = (oldId: string) => deterministicId(`restore:${workspaceId}:${oldId}`);
+    /** Copy-mode id: derived from this run, so a retried attempt finds what it already copied. */
+    const copyId = (oldId: string) => deterministicId(`restore-copy:${input.restoreId}:${oldId}`);
     /**
      * Where an archived row goes. skip_existing: its own id when free or already ours, else a
-     * deterministic id (so re-running the same restore finds it instead of duplicating it).
-     * copy: its own id when free, else a fresh id (copy duplicates on purpose).
+     * derived id (so re-running the same restore finds it instead of duplicating it).
+     * copy: always its copy id; `resumed` when an earlier attempt of this run inserted it.
      */
     const place = (oldId: string, owners: Map<string, string | null>) => {
+      if (mode === "copy") {
+        const id = copyId(oldId);
+        const owner = owners.get(id);
+        if (owner === undefined) return { id, existing: false, remapped: true, resumed: false };
+        if (owner === workspaceId) return { id, existing: true, remapped: true, resumed: true };
+        return { id: newId(), existing: false, remapped: true, resumed: false };
+      }
       const owner = owners.get(oldId);
-      if (owner === undefined) return { id: oldId, existing: false, remapped: false };
-      if (mode === "copy") return { id: newId(), existing: false, remapped: true };
-      if (owner === workspaceId) return { id: oldId, existing: true, remapped: false };
+      if (owner === undefined)
+        return { id: oldId, existing: false, remapped: false, resumed: false };
+      if (owner === workspaceId)
+        return { id: oldId, existing: true, remapped: false, resumed: false };
       const derived = derivedId(oldId);
       const derivedOwner = owners.get(derived);
-      if (derivedOwner === undefined) return { id: derived, existing: false, remapped: true };
-      if (derivedOwner === workspaceId) return { id: derived, existing: true, remapped: true };
-      return { id: newId(), existing: false, remapped: true };
+      if (derivedOwner === undefined)
+        return { id: derived, existing: false, remapped: true, resumed: false };
+      if (derivedOwner === workspaceId)
+        return { id: derived, existing: true, remapped: true, resumed: false };
+      return { id: newId(), existing: false, remapped: true, resumed: false };
     };
-    const withDerived = (ids: string[]) => [...ids, ...ids.map(derivedId)];
+    const withDerived = (ids: string[]) => [
+      ...ids,
+      ...ids.map(mode === "copy" ? copyId : derivedId),
+    ];
 
     // ---- 1. Originals (content-addressed; the target workspace dedups by hash) ----
     // Every original is re-verified and written idempotently, also when its row already exists:
@@ -363,6 +387,7 @@ export async function restoreArchive(
       ).map((row) => row.id),
     );
     for (const asset of archive.assets) {
+      signal?.throwIfAborted();
       const file = path.join(tmp, asset.sha256);
       const hash = createHash("sha256");
       await pipeline(
@@ -374,6 +399,7 @@ export async function restoreArchive(
           },
         }),
         createWriteStream(file, { flags: "w", mode: 0o600 }),
+        { signal },
       );
       if (hash.digest("hex") !== asset.sha256)
         throw checksumMismatch("an original changed while restoring", [asset.archivePath]);
@@ -439,10 +465,12 @@ export async function restoreArchive(
       withDerived(archive.projects.map((project) => project.id)),
     );
     for (const project of archive.projects) {
+      signal?.throwIfAborted();
       const placed = place(project.id, projectOwners);
       projectIdMap.set(project.id, placed.id);
       if (placed.existing) {
-        report.counts.researchProjects.skipped += 1;
+        report.counts.researchProjects[placed.resumed ? "copied" : "skipped"] += 1;
+        if (placed.resumed) remember(project.id, placed.id);
         continue;
       }
       const ownedHere = projectOwners.get(project.id) === workspaceId;
@@ -532,7 +560,7 @@ export async function restoreArchive(
       });
       for (const link of linksByVersion.get(version.id) ?? []) {
         await tx.insert(artifactFiles).values({
-          id: mode === "copy" ? newId() : linkId(link.id),
+          id: mode === "copy" ? copyId(link.id) : linkId(link.id),
           artifactVersionId: versionId,
           fileAssetId: assetIdMap.get(link.fileAssetId)!,
           role: link.role,
@@ -582,9 +610,11 @@ export async function restoreArchive(
     };
 
     for (const artifact of archive.artifactList) {
+      signal?.throwIfAborted();
       const versions = versionsByArtifact.get(artifact.id) ?? [];
       const placed = place(artifact.id, artifactOwners);
-      if (placed.remapped && artifactOwners.get(artifact.id) !== workspaceId) {
+      const ownedHere = artifactOwners.get(artifact.id) === workspaceId;
+      if (placed.remapped && !ownedHere && artifactOwners.has(artifact.id)) {
         report.warnings.push(
           `artifact ${artifact.id} exists in another workspace; restored as ${placed.id}`,
         );
@@ -592,12 +622,18 @@ export async function restoreArchive(
 
       if (placed.existing) {
         // skip_existing keeps the artifact as it is, but versions it lacks (e.g. newer ones in
-        // the archive than in a database restored to an earlier point) are added to it.
-        report.counts.artifacts.skipped += 1;
+        // the archive than in a database restored to an earlier point) are added to it. A copy
+        // resumed from an earlier attempt of this run counts as copied, as it was then.
+        const bucket = placed.resumed ? "copied" : "skipped";
+        report.counts.artifacts[bucket] += 1;
+        if (placed.resumed) {
+          remember(artifact.id, placed.id);
+          for (const version of versions) remember(version.id, place(version.id, versionOwners).id);
+        }
         const missing = versions
           .map((version) => ({ version, at: place(version.id, versionOwners) }))
           .filter(({ at }) => !at.existing);
-        report.counts.artifactVersions.skipped += versions.length - missing.length;
+        report.counts.artifactVersions[bucket] += versions.length - missing.length;
         if (missing.length === 0) continue;
         try {
           const added = await db.transaction(async (tx) => {
@@ -652,7 +688,6 @@ export async function restoreArchive(
         continue;
       }
 
-      const ownedHere = artifactOwners.get(artifact.id) === workspaceId;
       try {
         await db.transaction(async (tx) => {
           await tx.insert(artifacts).values({
@@ -677,8 +712,7 @@ export async function restoreArchive(
           });
           const versionIdMap = new Map<string, string>();
           for (const version of versions) {
-            const versionId =
-              placed.remapped && mode === "copy" ? newId() : place(version.id, versionOwners).id;
+            const versionId = place(version.id, versionOwners).id;
             versionIdMap.set(version.id, versionId);
             await insertVersion(tx, version, versionId, placed.id);
           }
@@ -700,6 +734,7 @@ export async function restoreArchive(
       }
     }
 
+    signal?.throwIfAborted();
     report.durationMs = Date.now() - startedAt;
     return report;
   } finally {

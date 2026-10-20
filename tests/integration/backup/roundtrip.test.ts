@@ -374,6 +374,28 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(links.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("a retried copy-mode attempt resumes the same run instead of copying again", async () => {
+    const restoreId = crypto.randomUUID();
+    const copy = () =>
+      restoreArchive(db, restored, {
+        archivePath: archive,
+        workspaceId: target.workspaceId,
+        userId: target.userId,
+        mode: "copy",
+        restoreId,
+        limits: restoreLimitsFromEnv(getEnv()),
+      });
+    const first = await copy();
+    const counts = await workspaceRowCounts(target.workspaceId);
+    // e.g. the job failed after the last insert and the queue retried it.
+    const retry = await copy();
+    expect(await workspaceRowCounts(target.workspaceId)).toEqual(counts);
+    expect(retry.counts.artifacts).toEqual(first.counts.artifacts);
+    expect(retry.counts.artifactVersions).toEqual(first.counts.artifactVersions);
+    expect(retry.counts.researchProjects).toEqual(first.counts.researchProjects);
+    expect(retry.idMap).toEqual(first.idMap);
+  });
+
   it("a tampered original aborts the restore with CHECKSUM_MISMATCH before anything is written", async () => {
     const tampered = path.join(dir, "tampered.zip");
     await rewriteArchive(archive, tampered, (entries) => {
