@@ -34,6 +34,7 @@ import {
   type ArchiveOutcome,
   type ExtractionResult,
   type SingleFileOutcome,
+  ZipRejectedError,
 } from "@/modules/extraction";
 import { downloadToTempFile } from "@/modules/files/staging";
 import { sha256OfBuffer } from "@/modules/files/hash";
@@ -262,6 +263,8 @@ export async function processImportItem(
           });
     const versionId = deterministicId(`artifact-version:${item.id}`);
     const derived: (typeof derivedAssets.$inferInsert)[] = [];
+    let { classification } = outcome;
+    let rejection = outcome.rejection;
     try {
       signal.throwIfAborted();
       warnings.push(...outcome.extraction.warnings);
@@ -314,43 +317,75 @@ export async function processImportItem(
         });
       }
       if (outcome.zip && outcome.previewFiles) {
-        for (const file of outcome.previewFiles) {
-          signal.throwIfAborted();
-          const id = deterministicId(`derived:${versionId}:preview_file:${file.sitePath}`);
-          const key = storageKeys.derived(item.workspaceId, versionId, id);
-          const hash = createHash("sha256");
-          const hashing = new Transform({
-            transform(chunk: Buffer, _encoding, callback) {
-              hash.update(chunk);
-              callback(null, chunk);
-            },
-          });
-          const source = await outcome.zip.openStream(file.archivePath);
-          source.on("error", (error) => hashing.destroy(error));
-          await storage.putObject(key, source.pipe(hashing), {
-            contentType: file.mimeType,
-            contentLength: file.size,
-          });
-          derived.push({
-            id,
-            workspaceId: item.workspaceId,
-            artifactVersionId: versionId,
-            kind: "preview_file",
-            path: file.sitePath,
-            storageKey: key,
-            mimeType: file.mimeType,
-            byteSize: file.size,
-            sha256: hash.digest("hex"),
-            generator: ARCHIVE_PREVIEW_GENERATOR,
-            generatorVersion: ARCHIVE_ANALYZER_VERSION,
-          });
+        // Lying size headers in a non-entry file only surface while it streams. That rejects
+        // the archive like any other integrity failure: the original is kept, no preview.
+        let archiveError: ZipRejectedError | undefined;
+        try {
+          for (const file of outcome.previewFiles) {
+            signal.throwIfAborted();
+            const id = deterministicId(`derived:${versionId}:preview_file:${file.sitePath}`);
+            const key = storageKeys.derived(item.workspaceId, versionId, id);
+            const hash = createHash("sha256");
+            const hashing = new Transform({
+              transform(chunk: Buffer, _encoding, callback) {
+                hash.update(chunk);
+                callback(null, chunk);
+              },
+            });
+            const source = await outcome.zip.openStream(file.archivePath);
+            source.on("error", (error) => {
+              if (error instanceof ZipRejectedError) archiveError = error;
+              hashing.destroy(error);
+            });
+            // The adapter may await (mkdir, network) before it attaches its own listeners; an
+            // early stream error must surface as putObject's rejection, never as an uncaught
+            // 'error' event that would crash the worker.
+            hashing.on("error", () => {});
+            await storage.putObject(key, source.pipe(hashing), {
+              contentType: file.mimeType,
+              contentLength: file.size,
+            });
+            derived.push({
+              id,
+              workspaceId: item.workspaceId,
+              artifactVersionId: versionId,
+              kind: "preview_file",
+              path: file.sitePath,
+              storageKey: key,
+              mimeType: file.mimeType,
+              byteSize: file.size,
+              sha256: hash.digest("hex"),
+              generator: ARCHIVE_PREVIEW_GENERATOR,
+              generatorVersion: ARCHIVE_ANALYZER_VERSION,
+            });
+          }
+        } catch (error) {
+          const cause = error instanceof ZipRejectedError ? error : archiveError;
+          if (!cause) throw error;
+          const previews = derived.filter((asset) => asset.kind === "preview_file");
+          await Promise.all(
+            previews.map((asset) => storage.deleteObject(asset.storageKey).catch(() => undefined)),
+          );
+          derived.splice(
+            0,
+            derived.length,
+            ...derived.filter((asset) => !previews.includes(asset)),
+          );
+          classification = {
+            ...classification,
+            previewKind: "unsupported",
+            previewEntryPath: null,
+          };
+          rejection = {
+            code: "ARCHIVE_REJECTED",
+            message: `${cause.message}. The original file was preserved for inspection.`,
+          };
         }
       }
     } finally {
       outcome.zip?.close();
     }
-    const { extraction, classification } = outcome;
-    const rejection = outcome.rejection;
+    const { extraction } = outcome;
 
     const identityKey = identityKeyFor(item.originalFilename);
     const textHash = extraction.plainText ? contentHash(extraction.plainText) : null;

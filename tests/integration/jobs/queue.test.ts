@@ -154,7 +154,8 @@ describe("job queue", () => {
     await claimJobs(db, { workerId: "crashed", limit: 2, leaseSeconds: 60 });
     await db.update(processingJobs).set({ lockedUntil: sql`now() - interval '1 second'` });
 
-    expect(await recoverExpiredLeases(db)).toBe(2);
+    const recovered = await recoverExpiredLeases(db);
+    expect(recovered.map((job) => job.status).sort()).toEqual(["failed", "queued"]);
     expect(await getJob(a.job.id)).toMatchObject({
       status: "queued",
       lockedBy: null,
@@ -277,6 +278,55 @@ describe("JobWorker", () => {
     const unknown = await enqueueJob(db, { type: "test.unknown", idempotencyKey: "unknown" });
     await makeWorker(registry).drain();
     expect((await getJob(unknown.job.id)).status).toBe("queued");
+  });
+
+  it("runs the onFailed hook for jobs whose lease expired with no attempts left", async () => {
+    const failures: string[] = [];
+    const registry = new JobRegistry().register({
+      type: "test.crashy",
+      handler: async () => {},
+      onFailed: async ({ job, failure }) => {
+        failures.push(`${job.id}:${failure.code}`);
+      },
+    });
+    const { job } = await enqueueJob(db, {
+      type: "test.crashy",
+      idempotencyKey: "crashy",
+      maxAttempts: 1,
+    });
+    await claimJobs(db, { workerId: "crashed", limit: 1, leaseSeconds: 60 });
+    await db.update(processingJobs).set({ lockedUntil: sql`now() - interval '1 second'` });
+
+    await makeWorker(registry).drain();
+    expect(failures).toEqual([`${job.id}:LEASE_EXPIRED`]);
+    expect((await getJob(job.id)).status).toBe("failed");
+  });
+
+  it("contains failures in job bookkeeping instead of raising unhandled rejections", async () => {
+    const errors: string[] = [];
+    const base = getLogger({ test: true });
+    const throwing = Object.assign(Object.create(base) as typeof base, {
+      error: () => {
+        throw new Error("log sink unavailable");
+      },
+    });
+    const logger = Object.assign(Object.create(base) as typeof base, {
+      child: () => throwing,
+      error: (_obj: unknown, message?: string) => {
+        errors.push(message ?? "");
+      },
+    });
+    const registry = new JobRegistry().register({
+      type: "test.permanent",
+      handler: async () => {
+        throw new AppError("UNSUPPORTED_FILE_TYPE", "nope");
+      },
+    });
+    const { job } = await enqueueJob(db, { type: "test.permanent", idempotencyKey: "bk" });
+
+    await expect(makeWorker(registry, { logger }).drain()).resolves.toBe(1);
+    expect(errors).toContain("job execution bookkeeping failed; lease recovery will retry it");
+    expect((await getJob(job.id)).status).toBe("failed");
   });
 
   it("start/stop runs the polling loop and shuts down gracefully", async () => {

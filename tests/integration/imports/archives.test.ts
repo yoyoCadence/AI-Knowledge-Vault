@@ -10,14 +10,17 @@ import {
   processingJobs,
 } from "@/infrastructure/database/schema";
 import { getStorage } from "@/infrastructure/storage";
+import { AppError } from "@/lib/errors";
 import { createOriginalDownload, getArtifactDetail } from "@/modules/artifacts";
 import {
   cleanupImports,
   declareItem,
   getBatchReport,
   importLimitsFromEnv,
+  isRetryable,
   listBatches,
   retryItem,
+  toItemDto,
 } from "@/modules/imports";
 import { claimJobs, enqueueJob } from "@/modules/jobs";
 import { enqueueDueMaintenance } from "@/worker/scheduler";
@@ -29,7 +32,7 @@ import {
   pdfDocument,
   pngImage,
 } from "@tests/fixtures/builders";
-import { buildZip } from "@tests/fixtures/zip";
+import { buildZip, corruptLocalHeader } from "@tests/fixtures/zip";
 import { closeTestDb, testDb } from "../helpers/db";
 import { createTestActor, drainJobs, newBatch, uploadFile } from "../helpers/imports";
 
@@ -139,6 +142,82 @@ describe("ZIP imports (P1A-ZIP)", () => {
       meta,
     );
     expect(download.sha256).toBe(sha256(evil));
+
+    // Final: re-running would only rediscover its own preserved original.
+    expect(isRetryable(item)).toBe(false);
+    expect(toItemDto(item).retryable).toBe(false);
+    await expect(retryItem(db, getStorage(), actor, item.batchId, item.id)).rejects.toSatisfy(
+      (error: unknown) => error instanceof AppError && error.code === "NOT_RETRYABLE",
+    );
+  });
+
+  it("a corrupt local header in a preview asset is a preserved rejection, not a job crash", async () => {
+    const actor = await createTestActor();
+    const broken = corruptLocalHeader(
+      buildZip(await claudeDesignZipEntries(`壞掉的標頭 ${actor.workspaceId}`)),
+      "_ds/modernist/styles.css",
+    );
+    const queued = await uploadFile(actor, (await newBatch(actor)).id, {
+      filename: "corrupt-header.zip",
+      bytes: broken,
+    });
+    await drainJobs();
+    const item = await itemById(queued.id);
+    expect(item).toMatchObject({ status: "failed", errorCode: "ARCHIVE_REJECTED" });
+    expect(item.errorMessage).toMatch(/ZIP_INVALID.*preserved/);
+    expect(item.resultVersionId).not.toBeNull();
+    const download = await createOriginalDownload(
+      db,
+      getStorage(),
+      actor,
+      { artifactId: item.resultArtifactId!, versionId: item.resultVersionId! },
+      meta,
+    );
+    expect(download.sha256).toBe(sha256(broken));
+  });
+
+  it("a size lie in a preview asset (found only while streaming) still preserves the original", async () => {
+    const actor = await createTestActor();
+    const entries = (await claudeDesignZipEntries()).map((entry) =>
+      entry.name === "_ds/modernist/styles.css"
+        ? { ...entry, data: "body{margin:0}".repeat(400), declaredSize: 20 }
+        : entry,
+    );
+    const liar = buildZip(entries);
+    const queued = await uploadFile(actor, (await newBatch(actor)).id, {
+      filename: "late-liar.zip",
+      bytes: liar,
+    });
+    await drainJobs();
+    const item = await itemById(queued.id);
+    expect(item).toMatchObject({ status: "failed", errorCode: "ARCHIVE_REJECTED" });
+    expect(item.errorMessage).toMatch(/ZIP_SIZE_MISMATCH.*preserved/);
+    expect(item.fileAssetId).not.toBeNull();
+    expect(item.resultVersionId).not.toBeNull();
+
+    const [version] = await db
+      .select()
+      .from(artifactVersions)
+      .where(eq(artifactVersions.id, item.resultVersionId!));
+    expect(version).toMatchObject({ previewKind: "unsupported", previewEntryPath: null });
+    const previews = await db
+      .select()
+      .from(derivedAssets)
+      .where(
+        and(
+          eq(derivedAssets.artifactVersionId, item.resultVersionId!),
+          eq(derivedAssets.kind, "preview_file"),
+        ),
+      );
+    expect(previews).toHaveLength(0);
+    const download = await createOriginalDownload(
+      db,
+      getStorage(),
+      actor,
+      { artifactId: item.resultArtifactId!, versionId: item.resultVersionId! },
+      meta,
+    );
+    expect(download.sha256).toBe(sha256(liar));
   });
 
   it("a zip bomb is rejected without decompressing it", async () => {
@@ -264,7 +343,9 @@ describe("batch of 50 (Phase 1A exit criterion 4) with partial failures (criteri
     expect(elapsed).toBeLessThan(60_000);
 
     // The recent-imports listing aggregates the same counts (regression: correlated subquery bug).
-    const [listed] = await listBatches(db, actor, 5);
+    const {
+      items: [listed],
+    } = await listBatches(db, actor, { limit: 5 });
     expect(listed).toMatchObject({
       id: batch.id,
       total: 52,

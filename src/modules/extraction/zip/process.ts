@@ -4,7 +4,13 @@ import { mimeForPath } from "../mime";
 import { filenameStem } from "../normalize";
 import { sniffFormat } from "../sniff";
 import type { Classification, ExtractionResult } from "../types";
-import { classifyArchive, extensionOf, previewFiles, type ArchiveClassification } from "./classify";
+import {
+  classifyArchive,
+  extensionOf,
+  packageJsonPath,
+  previewFiles,
+  type ArchiveClassification,
+} from "./classify";
 import { SafeZip, ZipRejectedError, type ZipLimits } from "./reader";
 
 /**
@@ -14,6 +20,9 @@ import { SafeZip, ZipRejectedError, type ZipLimits } from "./reader";
  * into storage; the caller must `close()` it.
  */
 export const ARCHIVE_ANALYZER_VERSION = 1;
+
+const COVER_MAX_BYTES = 20 * 1024 * 1024;
+const PACKAGE_JSON_MAX_BYTES = 256 * 1024;
 
 export interface ArchiveLimits extends ZipLimits, ExtractionLimits {
   maxPreviewFiles: number;
@@ -61,12 +70,12 @@ async function readPackageJson(
   zip: SafeZip,
   path: string,
 ): Promise<Record<string, unknown> | null> {
-  if (!zip.has(path)) return null;
+  const size = zip.inventory.entries.find((entry) => entry.path === path)?.size;
+  if (size === undefined || size > PACKAGE_JSON_MAX_BYTES) return null;
+  // Integrity errors (ZipRejectedError) propagate and reject the archive; only bad JSON is ignored.
+  const raw = (await zip.readBuffer(path, PACKAGE_JSON_MAX_BYTES)).toString("utf8");
   try {
-    const parsed = JSON.parse((await zip.readBuffer(path, 256 * 1024)).toString("utf8")) as Record<
-      string,
-      unknown
-    >;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
     const scripts =
       parsed.scripts && typeof parsed.scripts === "object"
         ? Object.keys(parsed.scripts as object)
@@ -129,7 +138,11 @@ export async function analyzeArchive(
 
   try {
     const { inventory } = zip;
-    const classification = classifyArchive(inventory.entries);
+    const pkgPath = packageJsonPath(inventory.entries);
+    const pkg = pkgPath ? await readPackageJson(zip, pkgPath) : null;
+    const classification = classifyArchive(inventory.entries, {
+      packageScripts: Array.isArray(pkg?.scripts) ? (pkg.scripts as string[]) : undefined,
+    });
     const warnings = [...inventory.warnings];
     const analysis: Record<string, unknown> = {
       archive: {
@@ -150,7 +163,7 @@ export async function analyzeArchive(
       },
     };
     if (classification.kind === "framework_source" || classification.kind === "prebuilt_site") {
-      analysis.framework = await readPackageJson(zip, `${classification.rootPrefix}package.json`);
+      analysis.framework = pkg;
       if (classification.kind === "framework_source") {
         warnings.push(
           "BUILD_REQUIRED: source project; preview needs a build, which is never run on import",
@@ -216,17 +229,25 @@ export async function analyzeArchive(
     // Cover image (Claude Design `.thumbnail`, or a conventionally named image).
     let thumbnail: ArchiveOutcome["thumbnail"];
     if (classification.coverPath) {
-      try {
-        const bytes = await zip.readBuffer(classification.coverPath, 20 * 1024 * 1024);
-        const format = sniffFormat(bytes.subarray(0, 64), classification.coverPath).format;
-        if (["png", "jpeg", "webp", "gif"].includes(format)) {
-          const { thumbnail: rendered } = await analyzeImage(bytes, {
-            maxInputPixels: limits.imageMaxInputPixels,
-          });
-          thumbnail = { bytes: rendered, mimeType: "image/webp" };
+      const coverSize =
+        inventory.entries.find((entry) => entry.path === classification.coverPath)?.size ?? 0;
+      if (coverSize > COVER_MAX_BYTES) {
+        extraction.warnings.push("COVER_TOO_LARGE: the cover image is over 20 MiB; skipped");
+      } else {
+        // Not caught: a ZipRejectedError here means the archive lied about the entry (size,
+        // CRC) and the whole archive is rejected below, exactly as for any other entry.
+        const bytes = await zip.readBuffer(classification.coverPath, COVER_MAX_BYTES);
+        try {
+          const format = sniffFormat(bytes.subarray(0, 64), classification.coverPath).format;
+          if (["png", "jpeg", "webp", "gif"].includes(format)) {
+            const { thumbnail: rendered } = await analyzeImage(bytes, {
+              maxInputPixels: limits.imageMaxInputPixels,
+            });
+            thumbnail = { bytes: rendered, mimeType: "image/webp" };
+          }
+        } catch {
+          extraction.warnings.push("COVER_UNREADABLE: the cover image could not be decoded");
         }
-      } catch {
-        extraction.warnings.push("COVER_UNREADABLE: the cover image could not be decoded");
       }
     }
 
@@ -249,18 +270,23 @@ export async function analyzeArchive(
       classification.kind === "document_bundle" &&
       extensionOf(classification.entryPath ?? "") === "pdf"
     ) {
-      // Serve the PDF itself as the preview.
-      files = [
-        {
-          archivePath: classification.entryPath!,
-          sitePath: "document.pdf",
-          size: 0,
-          mimeType: "application/pdf",
-        },
-      ];
-      files[0]!.size = inventory.entries.find(
-        (entry) => entry.path === classification.entryPath,
-      )!.size;
+      // Serve the PDF itself as the preview, within the same preview byte budget.
+      const size = inventory.entries.find((entry) => entry.path === classification.entryPath)!.size;
+      if (size > limits.maxPreviewBytes) {
+        extraction.warnings.push(
+          `PREVIEW_TOO_LARGE: ${size} bytes exceed the preview limit of ${limits.maxPreviewBytes}`,
+        );
+        previewKind = "unsupported";
+      } else {
+        files = [
+          {
+            archivePath: classification.entryPath!,
+            sitePath: "document.pdf",
+            size,
+            mimeType: "application/pdf",
+          },
+        ];
+      }
     }
 
     return {

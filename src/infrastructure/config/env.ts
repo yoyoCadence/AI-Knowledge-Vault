@@ -30,7 +30,8 @@ const positiveInt = (fallback: number) => z.coerce.number().int().positive().def
 const EnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-    APP_ENV: z.enum(["development", "test", "staging", "production"]).default("development"),
+    /** Required when NODE_ENV=production so a real deployment never validates as "development". */
+    APP_ENV: z.enum(["development", "test", "staging", "production"]).optional(),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),
@@ -89,6 +90,15 @@ const EnvSchema = z
     WORKER_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.NODE_ENV === "production" && !env.APP_ENV) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["APP_ENV"],
+        message:
+          "APP_ENV is required when NODE_ENV=production (production or staging for a deployment; " +
+          "test or development only for local production builds)",
+      });
+    }
     const isProd = env.APP_ENV === "production" || env.APP_ENV === "staging";
 
     if (env.APP_ORIGIN === env.PREVIEW_ORIGIN) {
@@ -164,7 +174,8 @@ const EnvSchema = z
         }
       }
     }
-  });
+  })
+  .transform((env) => ({ ...env, APP_ENV: env.APP_ENV ?? "development" }));
 
 export type Env = z.infer<typeof EnvSchema>;
 

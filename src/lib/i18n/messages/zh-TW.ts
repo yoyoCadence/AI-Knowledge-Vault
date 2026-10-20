@@ -147,6 +147,7 @@ export const zhTW = {
   "import.outcome.new_version": "新版本",
   "import.outcome.duplicate_file": "已存在相同檔案",
   "import.retry": "重試",
+  "import.inspectOriginal": "檢視保存的原始檔",
   "import.open": "開啟",
   "import.tooLarge": "檔案超過上限",
   "import.unsupported": "不支援的檔案類型",

@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: t("nav.importBackup") };
 
 export default async function ImportPage() {
   const actor = await requirePageActor();
-  const batches = await listBatches(getDb(), actor, 10);
+  const { items: batches } = await listBatches(getDb(), actor, { limit: 10 });
 
   return (
     <div className="flex max-w-4xl flex-col gap-8">

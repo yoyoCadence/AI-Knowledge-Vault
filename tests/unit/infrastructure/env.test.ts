@@ -60,6 +60,13 @@ describe("parseEnv", () => {
     expect(issuesOf({ ...prod, ALLOW_LOCAL_STORAGE_IN_PRODUCTION: "true" })).toEqual([]);
   });
 
+  it("requires an explicit APP_ENV when NODE_ENV=production", () => {
+    // Otherwise a deployment that forgot APP_ENV would skip every production check.
+    expect(issuesOf({ ...base, NODE_ENV: "production" }).join()).toMatch(/APP_ENV is required/);
+    expect(parseEnv({ ...base, NODE_ENV: "production", APP_ENV: "test" }).APP_ENV).toBe("test");
+    expect(parseEnv(base).APP_ENV).toBe("development");
+  });
+
   it("requires https origins in production", () => {
     const issues = issuesOf({
       ...base,

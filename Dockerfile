@@ -22,7 +22,10 @@ RUN pnpm install --frozen-lockfile --prod
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
 WORKDIR /app
-RUN groupadd --system vault && useradd --system --gid vault --home /app vault
+RUN groupadd --system vault && useradd --system --gid vault --home /app vault \
+  # Default LOCAL_STORAGE_DIR (./.data/storage). Mount a persistent volume here when
+  # STORAGE_DRIVER=local is allowed in production (ADR-006); /app itself stays read-only to vault.
+  && mkdir -p /app/.data/storage && chown -R vault:vault /app/.data
 # Web (Next.js standalone output)
 COPY --from=build --chown=vault:vault /app/.next/standalone ./
 COPY --from=build --chown=vault:vault /app/.next/static ./.next/static

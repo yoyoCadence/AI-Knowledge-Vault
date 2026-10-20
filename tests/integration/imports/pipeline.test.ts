@@ -11,6 +11,7 @@ import {
   documentSections,
   extractedDocuments,
   fileAssets,
+  importBatches,
   importItems,
   processingJobs,
 } from "@/infrastructure/database/schema";
@@ -28,7 +29,9 @@ import {
   declareItem,
   getBatchReport,
   importLimitsFromEnv,
+  refreshBatchStatus,
   retryItem,
+  transitionItem,
 } from "@/modules/imports";
 import { getEnv } from "@/infrastructure/config/env";
 import {
@@ -519,6 +522,67 @@ describe("failure isolation, retry and idempotency (criteria 7 & 8)", () => {
       (error: unknown) => error instanceof AppError && error.code === "SIZE_MISMATCH",
     );
     expect(await itemById(item.id)).toMatchObject({ status: "failed", errorCode: "SIZE_MISMATCH" });
+    // The failure is terminal, so its (single-item) batch must finish too.
+    const [finished] = await db.select().from(importBatches).where(eq(importBatches.id, batch.id));
+    expect(finished?.status).toBe("completed_with_errors");
+  });
+
+  it("reopens a finished batch that receives another file and recomputes its status", async () => {
+    const actor = await createTestActor();
+    const batch = await newBatch(actor);
+    const batchStatus = async () =>
+      (await db.select().from(importBatches).where(eq(importBatches.id, batch.id)))[0]!;
+    await uploadFile(actor, batch.id, {
+      filename: "first.html",
+      bytes: htmlDocument({ title: `重開批次 ${batch.id}` }),
+    });
+    await drainJobs();
+    expect((await batchStatus()).status).toBe("completed");
+
+    await uploadFile(actor, batch.id, { filename: "late.pdf", bytes: "%PDX not really a pdf" });
+    expect(await batchStatus()).toMatchObject({ status: "processing", completedAt: null });
+    await drainJobs();
+    expect((await batchStatus()).status).toBe("completed_with_errors");
+  });
+
+  it("finishes the batch when its last two items complete concurrently", async () => {
+    const actor = await createTestActor();
+    const batch = await newBatch(actor);
+    const limits = importLimitsFromEnv(getEnv());
+    const declared = await Promise.all(
+      ["a.txt", "b.txt"].map((filename) =>
+        declareItem(db, getStorage(), actor, batch.id, { filename, size: 1 }, limits),
+      ),
+    );
+    for (const { item } of declared) {
+      await transitionItem(db, item, "queued");
+      await transitionItem(db, { id: item.id, status: "queued" }, "processing");
+    }
+    await db
+      .update(importBatches)
+      .set({ status: "processing" })
+      .where(eq(importBatches.id, batch.id));
+
+    // Both workers make their item terminal before either recomputes the batch: without the
+    // batch row lock each would still see the other's item as "processing" and return early.
+    let arrived = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => (release = resolve));
+    await Promise.all(
+      declared.map(({ item }) =>
+        db.transaction(async (tx) => {
+          await transitionItem(tx, { id: item.id, status: "processing" }, "succeeded", {
+            completedAt: new Date(),
+          });
+          arrived += 1;
+          if (arrived === 2) release();
+          await barrier;
+          await refreshBatchStatus(tx, batch.id);
+        }),
+      ),
+    );
+    const [finished] = await db.select().from(importBatches).where(eq(importBatches.id, batch.id));
+    expect(finished?.status).toBe("completed");
   });
 
   it("clientKey makes declaration idempotent; cancel removes staged bytes", async () => {

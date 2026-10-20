@@ -21,11 +21,15 @@ interface ServerItem {
   resultArtifactTitle: string | null;
   errorCode: string | null;
   errorMessage: string | null;
+  retryable: boolean;
   warnings: string[];
 }
 
 interface Entry {
+  /** Client-side de-duplication key (name, size, mtime). */
   key: string;
+  /** Short idempotency key sent to the server (long file names must not overflow it). */
+  clientKey: string;
   file: File;
   progress: number;
   /** Client-side phase; once the server knows the item, its status takes over. */
@@ -69,6 +73,9 @@ function putWithProgress(
 }
 
 const entryKey = (file: File) => `${file.name}:${file.size}:${file.lastModified}`;
+const newClientKey = () =>
+  globalThis.crypto?.randomUUID?.() ??
+  `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 
 function extensionOf(name: string) {
   const dot = name.lastIndexOf(".");
@@ -93,6 +100,9 @@ export function ImportWorkspace({
   const [autoVersion, setAutoVersion] = useState(true);
   const [platform, setPlatform] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** Poll numbering: a retry discards reports requested before it (they predate the retry). */
+  const pollSeq = useRef(0);
+  const acceptAfterSeq = useRef(0);
 
   const update = useCallback((key: string, patch: Partial<Entry>) => {
     setEntries((current) =>
@@ -108,7 +118,13 @@ export function ImportWorkspace({
         refused.push(`${file.name}：${t("import.unsupported")}`);
       else if (file.size > maxFileBytes) refused.push(`${file.name}：${t("import.tooLarge")}`);
       else if (file.size > 0)
-        accepted.push({ key: entryKey(file), file, progress: 0, phase: "pending" });
+        accepted.push({
+          key: entryKey(file),
+          clientKey: newClientKey(),
+          file,
+          progress: 0,
+          phase: "pending",
+        });
     }
     setRejected(refused);
     setEntries((current) => [
@@ -126,7 +142,7 @@ export function ImportWorkspace({
       }>(`/api/imports/${batch}/items`, {
         filename: entry.file.name,
         size: entry.file.size,
-        clientKey: entry.key,
+        clientKey: entry.clientKey,
         mimeType: entry.file.type || undefined,
       });
       update(entry.key, { itemId: declared.item.id });
@@ -184,6 +200,7 @@ export function ImportWorkspace({
     if (!batchId) return;
     try {
       await api(`/api/imports/${batchId}/items/${itemId}/retry`, {});
+      acceptAfterSeq.current = pollSeq.current;
       setItems((current) =>
         new Map(current).set(itemId, {
           ...current.get(itemId)!,
@@ -197,22 +214,46 @@ export function ImportWorkspace({
     }
   }
 
-  // Poll the server report while anything is still in flight.
-  const pending =
-    entries.some((entry) => entry.phase === "uploading") ||
-    [...items.values()].some((item) => ACTIVE_SERVER_STATUSES.has(item.status));
-  const hasUploaded = entries.some((entry) => entry.phase === "uploaded");
+  const rows = entries.map((entry) => ({
+    entry,
+    item: entry.itemId ? items.get(entry.itemId) : undefined,
+  }));
+  // While uploading, and after a client-side upload failure, the client phase wins as long as
+  // the server still says awaiting_upload; once the server has moved on (e.g. /complete
+  // committed but its response was lost) the server's status is the truth.
+  const statusOf = ({ entry, item }: (typeof rows)[number]) =>
+    (entry.phase === "uploadError" || entry.phase === "uploading") &&
+    (!item || item.status === "awaiting_upload")
+      ? entry.phase
+      : (item?.status ?? entry.phase);
+
+  // Poll while any started upload has no terminal server state yet, including items the
+  // server has not reported at all (a fresh item in a re-used batch) and retried items.
+  const pending = rows.some((row) => {
+    const status = statusOf(row);
+    return (
+      status === "uploading" ||
+      status === "uploaded" ||
+      (row.item !== undefined && ACTIVE_SERVER_STATUSES.has(status))
+    );
+  });
   useEffect(() => {
-    if (!batchId || (!pending && !(hasUploaded && items.size === 0))) return;
+    if (!batchId || !pending) return;
     let cancelled = false;
+    let inFlight = false;
     const poll = async () => {
+      if (inFlight) return; // a slow report is never superseded by its own successors
+      inFlight = true;
+      const seq = ++pollSeq.current;
       try {
         const report = await api<{ items: ServerItem[] }>(`/api/imports/${batchId}`);
-        if (cancelled) return;
+        if (cancelled || seq <= acceptAfterSeq.current) return;
         setItems(new Map(report.items.map((item) => [item.id, item])));
         if (!report.items.some((item) => ACTIVE_SERVER_STATUSES.has(item.status))) router.refresh();
       } catch {
         /* transient polling failure: the next tick retries */
+      } finally {
+        inFlight = false;
       }
     };
     void poll();
@@ -221,15 +262,11 @@ export function ImportWorkspace({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [batchId, pending, hasUploaded, items.size, router]);
+  }, [batchId, pending, router]);
 
-  const rows = entries.map((entry) => ({
-    entry,
-    item: entry.itemId ? items.get(entry.itemId) : undefined,
-  }));
   const counts = { succeeded: 0, duplicate: 0, failed: 0, pending: 0 };
-  for (const { entry, item } of rows) {
-    const status = item?.status ?? entry.phase;
+  for (const row of rows) {
+    const status = statusOf(row);
     if (status === "succeeded") counts.succeeded += 1;
     else if (status === "duplicate") counts.duplicate += 1;
     else if (
@@ -365,8 +402,9 @@ export function ImportWorkspace({
                 </tr>
               </thead>
               <tbody className="divide-border divide-y">
-                {rows.map(({ entry, item }) => {
-                  const status = item?.status ?? entry.phase;
+                {rows.map((row) => {
+                  const { entry, item } = row;
+                  const status = statusOf(row);
                   const variant =
                     status === "succeeded"
                       ? "success"
@@ -401,23 +439,32 @@ export function ImportWorkspace({
                             {item.resultArtifactTitle ?? t("import.open")}
                           </Link>
                         ) : null}
-                        {item?.status === "failed" ? (
+                        {status === "failed" && item ? (
                           <span className="text-danger flex items-center gap-2">
                             <span>
                               {item.errorCode}
                               {item.errorMessage ? `：${item.errorMessage}` : ""}
                             </span>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => retryServerItem(item.id)}
-                            >
-                              <RotateCcw />
-                              {t("import.retry")}
-                            </Button>
+                            {item.retryable ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => retryServerItem(item.id)}
+                              >
+                                <RotateCcw />
+                                {t("import.retry")}
+                              </Button>
+                            ) : item.resultArtifactId ? (
+                              <Link
+                                href={`/artifacts/${item.resultArtifactId}`}
+                                className="text-primary shrink-0 hover:underline"
+                              >
+                                {t("import.inspectOriginal")}
+                              </Link>
+                            ) : null}
                           </span>
                         ) : null}
-                        {entry.phase === "uploadError" && !item ? (
+                        {status === "uploadError" ? (
                           <span className="text-danger">{entry.error}</span>
                         ) : null}
                         {item && item.warnings.length > 0 && item.status === "succeeded" ? (

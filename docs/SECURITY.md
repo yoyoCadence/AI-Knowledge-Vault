@@ -116,6 +116,13 @@ derived assets via the app proxy. `dangerouslySetInnerHTML` is banned by lint ru
 - Rate limits (database storage): sign-in 5 per 60 s per IP; other auth routes 30 per 60 s.
 - Login failures are recorded in `audit_logs` (no password, email hashed). Successes are
   recorded with IP and UA.
+- Audit IPs use the same resolver as the rate limiter (`resolveClientIp`): with
+  `TRUSTED_PROXIES` it walks `X-Forwarded-For` from the right past trusted hops. Without them,
+  only a single-hop header is believed. Otherwise the IP is recorded as unknown (null), never as
+  a client-chosen value.
+- Better Auth endpoints we do not use are 404 (`disabledPaths`). This includes `/get-session`
+  and the built-in session list/revoke routes, which serialize session tokens. Sessions are
+  managed only through the audited `/api/sessions` facade.
 - Future: passkeys and TOTP through Better Auth plugins; OAuth only as an _additional_ method.
 
 ## 7. Authorization

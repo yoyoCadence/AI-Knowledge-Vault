@@ -143,6 +143,39 @@ describe("email + password sign-in", () => {
     expect(response.status).toBe(200);
   });
 
+  it("does not serve Better Auth's token-bearing session endpoints", async () => {
+    const admin = await createTestAdmin();
+    const { cookie } = await signIn(admin.email, admin.password);
+    for (const [path, method] of [
+      ["/get-session", "GET"],
+      ["/list-sessions", "GET"],
+      ["/revoke-session", "POST"],
+      ["/revoke-sessions", "POST"],
+      ["/revoke-other-sessions", "POST"],
+    ] as const) {
+      const response = await testAuth().handler(
+        authRequest(path, { method, cookie, body: method === "POST" ? {} : undefined }),
+      );
+      expect(response.status, path).toBe(404);
+    }
+    // The session itself is unaffected.
+    expect(await actorFromCookie(cookie)).not.toBeNull();
+  });
+
+  it("audits the resolved client address, never a forged leftmost X-Forwarded-For entry", async () => {
+    const admin = await createTestAdmin();
+    const { response } = await signIn(admin.email, admin.password, "198.51.100.66, 203.0.113.7");
+    expect(response.status).toBe(200);
+    const [audit] = await db
+      .select()
+      .from(auditLogs)
+      .where(
+        and(eq(auditLogs.action, "auth.login.succeeded"), eq(auditLogs.actorUserId, admin.userId)),
+      );
+    expect(audit).toBeDefined();
+    expect(audit!.ipAddress).toBeNull();
+  });
+
   it("anonymous requests resolve to no actor", async () => {
     expect(await actorFromCookie("")).toBeNull();
     expect(await actorFromCookie("vault.session_token=forged.value")).toBeNull();

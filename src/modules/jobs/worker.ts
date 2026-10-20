@@ -95,6 +95,7 @@ export class JobWorker {
   async drain(): Promise<number> {
     let processed = 0;
     for (;;) {
+      await this.maybeRecover();
       const claimed = await this.claim();
       if (claimed.length === 0 && this.running.size === 0) return processed;
       processed += claimed.length;
@@ -128,8 +129,25 @@ export class JobWorker {
     if (Date.now() - this.lastRecoveryAt < interval) return;
     this.lastRecoveryAt = Date.now();
     const recovered = await recoverExpiredLeases(this.options.db);
-    if (recovered > 0)
-      this.options.logger.warn({ recovered }, "recovered jobs with expired leases");
+    if (recovered.length === 0) return;
+    const exhausted = recovered.filter((job) => job.status === "failed");
+    this.options.logger.warn(
+      { recovered: recovered.length, failed: exhausted.length },
+      "recovered jobs with expired leases",
+    );
+    // Jobs that ran out of attempts never reach execute()'s failure path, so their domain
+    // finalizers run here (the import maintenance job reconciles anything this misses).
+    for (const job of exhausted) {
+      const onFailed = this.options.registry.get(job.type)?.onFailed;
+      if (!onFailed) continue;
+      await onFailed({
+        job,
+        db: this.options.db,
+        failure: { code: "LEASE_EXPIRED", message: "worker lease expired with no attempts left" },
+      }).catch((error: unknown) =>
+        this.options.logger.error({ err: error, jobId: job.id }, "onFailed hook threw"),
+      );
+    }
   }
 
   private async claim(): Promise<JobRow[]> {
@@ -144,10 +162,19 @@ export class JobWorker {
     });
     for (const job of jobs) {
       const controller = new AbortController();
-      const done = this.execute(job, controller).finally(() => {
-        this.running.delete(job.id);
-        this.wakeUp?.();
-      });
+      const done = this.execute(job, controller)
+        .catch((error: unknown) => {
+          // Bookkeeping (e.g. failJob during a database outage) failed: the lease expires and
+          // recovery re-queues the job. Never let this become an unhandled rejection.
+          this.options.logger.error(
+            { err: error, jobId: job.id, jobType: job.type },
+            "job execution bookkeeping failed; lease recovery will retry it",
+          );
+        })
+        .finally(() => {
+          this.running.delete(job.id);
+          this.wakeUp?.();
+        });
       this.running.set(job.id, { controller, done });
     }
     return jobs;

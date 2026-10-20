@@ -13,13 +13,18 @@ export const GET = authedRoute<{ id: string }>(
     const thumbnail = await getThumbnailForActor(services.db(), actor, params.id);
     const etag = `"${thumbnail.sha256}"`;
     if (request.headers.get("if-none-match") === etag)
-      return new Response(null, { status: 304, headers: { etag } });
+      return new Response(null, {
+        status: 304,
+        headers: { etag, "cache-control": "private, no-cache" },
+      });
     const { body, info } = await services.storage().getObject(thumbnail.storageKey);
     return new Response(Readable.toWeb(body) as ReadableStream<Uint8Array>, {
       headers: {
         "content-type": thumbnail.mimeType,
         "content-length": String(info.size),
-        "cache-control": "private, max-age=300",
+        // Revalidate every time (cheap 304 via the ETag): the URL is keyed by artifact, so a
+        // new version, a deletion or a logout must never keep serving a cached image.
+        "cache-control": "private, no-cache",
         "x-content-type-options": "nosniff",
         etag,
       },

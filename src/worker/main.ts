@@ -28,10 +28,10 @@ async function main(): Promise<void> {
     shutdownGraceMs: env.WORKER_SHUTDOWN_GRACE_MS,
   });
 
-  const stopScheduler = startScheduler(getDb(), logger);
   const healthServer = env.WORKER_HEALTH_PORT
-    ? startHealthServer(env.WORKER_HEALTH_PORT, worker)
+    ? await startHealthServer(env.WORKER_HEALTH_PORT, worker, logger)
     : null;
+  const stopScheduler = startScheduler(getDb(), logger);
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {

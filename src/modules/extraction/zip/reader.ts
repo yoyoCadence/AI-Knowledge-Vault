@@ -213,7 +213,15 @@ export class SafeZip {
     if (!entry) throw new Error(`no such entry: ${path}`);
     const stream = await new Promise<Readable>((resolve, reject) =>
       this.zip.openReadStream(entry, (error, readable) =>
-        error || !readable ? reject(error ?? new Error("no stream")) : resolve(readable),
+        // A bad local header or an unsupported compression method is an archive problem, not
+        // an internal error: callers turn ZipRejectedError into a preserved rejection.
+        error || !readable
+          ? reject(
+              error instanceof ZipRejectedError
+                ? error
+                : mapYauzlError(error ?? new Error("no stream for entry")),
+            )
+          : resolve(readable),
       ),
     );
     let seen = 0;

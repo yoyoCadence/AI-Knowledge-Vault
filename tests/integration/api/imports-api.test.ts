@@ -1,20 +1,22 @@
 import { createHash } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { GET as getArtifact } from "@/app/api/artifacts/[id]/route";
+import { GET as thumbnailRoute } from "@/app/api/artifacts/[id]/thumbnail/route";
 import { GET as getOriginal } from "@/app/api/artifacts/[id]/versions/[versionId]/original/route";
 import { GET as listArtifactsRoute } from "@/app/api/artifacts/route";
 import { POST as completeRoute } from "@/app/api/imports/[batchId]/items/[itemId]/complete/route";
 import { POST as declareRoute } from "@/app/api/imports/[batchId]/items/route";
 import { GET as batchReportRoute } from "@/app/api/imports/[batchId]/route";
-import { POST as createBatchRoute } from "@/app/api/imports/route";
+import { POST as createBatchRoute, GET as listBatchesRoute } from "@/app/api/imports/route";
 import { GET as localDownload } from "@/app/api/storage/local/download/route";
 import { PUT as localUpload } from "@/app/api/storage/local/upload/route";
 import { getEnv } from "@/infrastructure/config/env";
 import { closeDb } from "@/infrastructure/database/client";
-import { htmlDocument } from "@tests/fixtures/builders";
+import { newId } from "@/lib/ids";
+import { htmlDocument, pngImage } from "@tests/fixtures/builders";
 import { createTestAdmin, signIn } from "../helpers/auth";
 import { closeTestDb } from "../helpers/db";
-import { drainJobs } from "../helpers/imports";
+import { drainJobs, newBatch, uploadFile } from "../helpers/imports";
 
 afterAll(async () => {
   await closeDb();
@@ -41,6 +43,79 @@ async function loggedIn() {
 }
 
 describe("import API over HTTP handlers", () => {
+  it("serves thumbnails only to the owner workspace and always revalidates", async () => {
+    const owner = await loggedIn();
+    const actor = {
+      userId: owner.userId,
+      workspaceId: owner.workspaceId,
+      role: "owner" as const,
+      sessionId: newId(),
+      email: owner.email,
+      name: "Owner",
+    };
+    const queued = await uploadFile(actor, (await newBatch(actor)).id, {
+      filename: "thumb-source.png",
+      bytes: await pngImage(240, 160, { r: 12, g: 200, b: 99 }),
+    });
+    await drainJobs();
+    const report = (await (
+      await batchReportRoute(
+        apiRequest(`/api/imports/${queued.batchId}`, { cookie: owner.cookie }),
+        params({ batchId: queued.batchId }),
+      )
+    ).json()) as { items: { resultArtifactId: string }[] };
+    const artifactId = report.items[0]!.resultArtifactId;
+
+    const fetchThumb = (cookie: string, etag?: string) => {
+      const request = apiRequest(`/api/artifacts/${artifactId}/thumbnail`, { cookie });
+      if (etag) request.headers.set("if-none-match", etag);
+      return thumbnailRoute(request, params({ id: artifactId }));
+    };
+    const response = await fetchThumb(owner.cookie);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/webp");
+    // Keyed by artifact: a cached copy must not outlive a new version, a deletion or a logout.
+    expect(response.headers.get("cache-control")).toBe("private, no-cache");
+    const etag = response.headers.get("etag")!;
+    expect((await fetchThumb(owner.cookie, etag)).status).toBe(304);
+
+    const stranger = await loggedIn();
+    expect((await fetchThumb(stranger.cookie)).status).toBe(404);
+  });
+
+  it("paginates GET /api/imports with limit and an opaque cursor", async () => {
+    const { cookie } = await loggedIn();
+    const created: string[] = [];
+    for (let n = 0; n < 3; n += 1) {
+      const response = await createBatchRoute(
+        apiRequest("/api/imports", { method: "POST", cookie, body: {} }),
+        params({}),
+      );
+      created.push(((await response.json()) as { batch: { id: string } }).batch.id);
+    }
+    type Page = { items: { id: string }[]; nextCursor: string | null };
+    const first = (await (
+      await listBatchesRoute(apiRequest("/api/imports?limit=2", { cookie }), params({}))
+    ).json()) as Page;
+    expect(first.items.map((batch) => batch.id)).toEqual([created[2], created[1]]);
+    expect(first.nextCursor).toBeTruthy();
+
+    const second = (await (
+      await listBatchesRoute(
+        apiRequest(`/api/imports?limit=2&cursor=${first.nextCursor}`, { cookie }),
+        params({}),
+      )
+    ).json()) as Page;
+    expect(second.items.map((batch) => batch.id)).toEqual([created[0]]);
+    expect(second.nextCursor).toBeNull();
+
+    const invalid = await listBatchesRoute(
+      apiRequest("/api/imports?cursor=bm90LWEtY3Vyc29y", { cookie }),
+      params({}),
+    );
+    expect(invalid.status).toBe(400);
+  });
+
   it("runs the full browser flow: batch → declare → PUT upload → complete → report → download", async () => {
     const { cookie } = await loggedIn();
     const html = Buffer.from(htmlDocument({ title: "HTTP 流程測試" }));
