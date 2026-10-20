@@ -83,3 +83,13 @@ export function buildZip(entries: ZipEntrySpec[]): Buffer {
   end.writeUInt16LE(0, 20);
   return Buffer.concat([...locals, centralDirectory, end]);
 }
+
+/** Breaks the local file header signature of one entry (yauzl only notices when it is read). */
+export function corruptLocalHeader(zip: Buffer, entryName: string): Buffer {
+  const copy = Buffer.from(zip);
+  const at = copy.indexOf(Buffer.from(entryName, "utf8")) - 30;
+  if (at < 0 || copy.readUInt32LE(at) !== 0x04034b50)
+    throw new Error(`no local header for ${entryName}`);
+  copy.writeUInt32LE(0xdeadbeef, at);
+  return copy;
+}

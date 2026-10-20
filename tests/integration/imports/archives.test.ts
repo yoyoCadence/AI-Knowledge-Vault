@@ -32,7 +32,7 @@ import {
   pdfDocument,
   pngImage,
 } from "@tests/fixtures/builders";
-import { buildZip } from "@tests/fixtures/zip";
+import { buildZip, corruptLocalHeader } from "@tests/fixtures/zip";
 import { closeTestDb, testDb } from "../helpers/db";
 import { createTestActor, drainJobs, newBatch, uploadFile } from "../helpers/imports";
 
@@ -149,6 +149,31 @@ describe("ZIP imports (P1A-ZIP)", () => {
     await expect(retryItem(db, getStorage(), actor, item.batchId, item.id)).rejects.toSatisfy(
       (error: unknown) => error instanceof AppError && error.code === "NOT_RETRYABLE",
     );
+  });
+
+  it("a corrupt local header in a preview asset is a preserved rejection, not a job crash", async () => {
+    const actor = await createTestActor();
+    const broken = corruptLocalHeader(
+      buildZip(await claudeDesignZipEntries(`壞掉的標頭 ${actor.workspaceId}`)),
+      "_ds/modernist/styles.css",
+    );
+    const queued = await uploadFile(actor, (await newBatch(actor)).id, {
+      filename: "corrupt-header.zip",
+      bytes: broken,
+    });
+    await drainJobs();
+    const item = await itemById(queued.id);
+    expect(item).toMatchObject({ status: "failed", errorCode: "ARCHIVE_REJECTED" });
+    expect(item.errorMessage).toMatch(/ZIP_INVALID.*preserved/);
+    expect(item.resultVersionId).not.toBeNull();
+    const download = await createOriginalDownload(
+      db,
+      getStorage(),
+      actor,
+      { artifactId: item.resultArtifactId!, versionId: item.resultVersionId! },
+      meta,
+    );
+    expect(download.sha256).toBe(sha256(broken));
   });
 
   it("a size lie in a preview asset (found only while streaming) still preserves the original", async () => {

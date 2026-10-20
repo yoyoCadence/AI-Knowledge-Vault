@@ -100,8 +100,9 @@ export function ImportWorkspace({
   const [autoVersion, setAutoVersion] = useState(true);
   const [platform, setPlatform] = useState("");
   const [error, setError] = useState<string | null>(null);
-  /** Bumped by every poll and by retries, so a stale in-flight report never overwrites newer state. */
+  /** Poll numbering: a retry discards reports requested before it (they predate the retry). */
   const pollSeq = useRef(0);
+  const acceptAfterSeq = useRef(0);
 
   const update = useCallback((key: string, patch: Partial<Entry>) => {
     setEntries((current) =>
@@ -199,7 +200,7 @@ export function ImportWorkspace({
     if (!batchId) return;
     try {
       await api(`/api/imports/${batchId}/items/${itemId}/retry`, {});
-      pollSeq.current += 1;
+      acceptAfterSeq.current = pollSeq.current;
       setItems((current) =>
         new Map(current).set(itemId, {
           ...current.get(itemId)!,
@@ -217,10 +218,12 @@ export function ImportWorkspace({
     entry,
     item: entry.itemId ? items.get(entry.itemId) : undefined,
   }));
-  // While uploading, and after a client-side upload failure, the client phase wins: the server
-  // still reports such items as awaiting_upload.
+  // While uploading, and after a client-side upload failure, the client phase wins as long as
+  // the server still says awaiting_upload; once the server has moved on (e.g. /complete
+  // committed but its response was lost) the server's status is the truth.
   const statusOf = ({ entry, item }: (typeof rows)[number]) =>
-    entry.phase === "uploadError" || entry.phase === "uploading"
+    (entry.phase === "uploadError" || entry.phase === "uploading") &&
+    (!item || item.status === "awaiting_upload")
       ? entry.phase
       : (item?.status ?? entry.phase);
 
@@ -237,15 +240,20 @@ export function ImportWorkspace({
   useEffect(() => {
     if (!batchId || !pending) return;
     let cancelled = false;
+    let inFlight = false;
     const poll = async () => {
+      if (inFlight) return; // a slow report is never superseded by its own successors
+      inFlight = true;
       const seq = ++pollSeq.current;
       try {
         const report = await api<{ items: ServerItem[] }>(`/api/imports/${batchId}`);
-        if (cancelled || seq !== pollSeq.current) return;
+        if (cancelled || seq <= acceptAfterSeq.current) return;
         setItems(new Map(report.items.map((item) => [item.id, item])));
         if (!report.items.some((item) => ACTIVE_SERVER_STATUSES.has(item.status))) router.refresh();
       } catch {
         /* transient polling failure: the next tick retries */
+      } finally {
+        inFlight = false;
       }
     };
     void poll();

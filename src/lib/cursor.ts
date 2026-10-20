@@ -15,6 +15,16 @@ export interface KeysetCursor {
 
 const EXACT_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/;
 
+/** Rejects dates `Date.parse` rolls over (e.g. Feb 30) and year 0, which Postgres refuses. */
+function isRealTimestamp(value: string): boolean {
+  const date = new Date(value);
+  return (
+    !Number.isNaN(date.getTime()) &&
+    date.getUTCFullYear() >= 1 &&
+    date.toISOString().slice(0, 19) === value.slice(0, 19)
+  );
+}
+
 export function encodeCursor(cursor: KeysetCursor | null): string | null {
   if (!cursor) return null;
   return Buffer.from(JSON.stringify([cursor.createdAt, cursor.id])).toString("base64url");
@@ -30,7 +40,7 @@ export function decodeCursor(value: string | undefined): KeysetCursor | undefine
       if (
         typeof createdAt === "string" &&
         EXACT_TIMESTAMP.test(createdAt) &&
-        !Number.isNaN(Date.parse(createdAt)) &&
+        isRealTimestamp(createdAt) &&
         typeof id === "string" &&
         isUuid(id)
       ) {

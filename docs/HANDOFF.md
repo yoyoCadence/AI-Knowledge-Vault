@@ -118,7 +118,16 @@ conversations. Update it at the end of every PR.
     - Thumbnails are sent `private, no-cache` (revalidated by ETag) instead of `max-age=300`.
     - The worker health server awaits its bind, and EADDRINUSE fails startup cleanly before any
       job is claimed.
-  - Tests: 180 passing (157 before), plus E2E 6/6.
+  - **Independent review of this PR's own diff.** Fixed:
+    - `SafeZip.openStream` now maps yauzl's plain errors (corrupt local header, unsupported
+      compression) to `ZipRejectedError`. Before this, reading such an entry for the cover,
+      `package.json` or the preview failed the job and lost the original instead of preserving
+      it.
+    - Import polling no longer drops slow responses. Polls don't overlap, and only a retry
+      invalidates older reports.
+    - Client upload status wins only while the server still says `awaiting_upload`.
+    - Impossible cursor dates (Feb 30, year 0) are rejected instead of reaching Postgres.
+  - Tests: 182 passing (157 before), plus E2E 6/6.
 
 **Not done or not verified**
 

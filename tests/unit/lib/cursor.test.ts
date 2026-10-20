@@ -21,6 +21,8 @@ describe("keyset cursor codec", () => {
       raw(["2026-13-45T99:00:00Z", id]),
       raw({ createdAt: "2026-10-20T12:00:00Z", id }),
       raw(["2026-10-20 12:00:00", id]),
+      raw(["2026-02-30T00:00:00Z", id]), // Date.parse rolls this over to March 2
+      raw(["0000-01-01T00:00:00Z", id]), // no year 0 in Postgres
     ]) {
       expect(() => decodeCursor(bad), bad).toThrow(AppError);
     }

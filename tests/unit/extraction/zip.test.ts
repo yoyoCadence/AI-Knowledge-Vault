@@ -15,7 +15,7 @@ import {
   markdownDocument,
   pdfDocument,
 } from "@tests/fixtures/builders";
-import { buildZip, type ZipEntrySpec } from "@tests/fixtures/zip";
+import { buildZip, corruptLocalHeader, type ZipEntrySpec } from "@tests/fixtures/zip";
 
 const MiB = 1024 * 1024;
 const limits: ArchiveLimits = {
@@ -331,6 +331,25 @@ describe("analyzeArchive", () => {
     );
     served.zip?.close();
     expect(served.classification.contentKind).toBe("static_site");
+  });
+
+  it("rejects (never throws) when a side file's local header is corrupt", async () => {
+    // yauzl reports these as plain Errors on read; they must become a preserved rejection,
+    // not an internal error that loses the original.
+    const zip = corruptLocalHeader(
+      buildZip([
+        { name: "proj/package.json", data: JSON.stringify({ scripts: { dev: "vite" } }) },
+        { name: "proj/vite.config.ts", data: "export default {}" },
+        { name: "proj/src/main.ts", data: "render()" },
+      ]),
+      "proj/package.json",
+    );
+    counter += 1;
+    const file = path.join(dir, `corrupt-${counter}.zip`);
+    await writeFile(file, zip);
+    const outcome = await analyzeArchive(file, "corrupt.zip", limits);
+    expect(outcome.rejection?.code).toBe("ARCHIVE_REJECTED");
+    expect(outcome.extraction.errorMessage).toMatch(/ZIP_INVALID/);
   });
 
   it("rejects the archive when the cover image lies about its size", async () => {
