@@ -2,6 +2,8 @@ import type { Env } from "@/infrastructure/config/env";
 import {
   exportCleanupJobDefinition,
   exportJobDefinition,
+  integrityJobDefinition,
+  integrityScheduleJobDefinition,
   reextractJobDefinition,
 } from "@/modules/backup";
 import {
@@ -21,5 +23,7 @@ export function buildJobRegistry(env: Env): JobRegistry {
     .register(importCleanupJobDefinition())
     .register(exportJobDefinition(env.EXPORT_JOB_TIMEOUT_MS))
     .register(exportCleanupJobDefinition())
-    .register(reextractJobDefinition(limits, env.IMPORT_ITEM_TIMEOUT_MS));
+    .register(reextractJobDefinition(limits, env.IMPORT_ITEM_TIMEOUT_MS))
+    .register(integrityJobDefinition(env.EXPORT_JOB_TIMEOUT_MS))
+    .register(integrityScheduleJobDefinition());
 }

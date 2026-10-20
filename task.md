@@ -19,22 +19,22 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 
 ## Phase 1A — Preservation Core
 
-| ID                | Task                                                           | Status  |
-| ----------------- | -------------------------------------------------------------- | ------- |
-| P1A-AUTH          | Better Auth, admin CLI, login/logout, sessions, rate limit     | ✅      |
-| P1A-FILES         | Immutable originals, integrity, download                       | ✅      |
-| P1A-IMPORT-API    | Batches/items API, signed upload, complete/retry/cancel        | ✅      |
-| P1A-IMPORT-WORKER | `import.process_item` pipeline                                 | ✅      |
-| P1A-EXTRACT       | HTML / Claude Design / MD / TXT / PDF / image extraction       | ✅      |
-| P1A-ZIP           | Safe ZIP reader, classification A/B/C/D, derived preview files | ✅      |
-| P1A-VERSION       | Version matching + suspected duplicates                        | ✅      |
-| P1A-RECOVERY      | Staging cleanup, expiry, reconciliation                        | ✅      |
-| P1A-IMPORT-UI     | Upload UI with progress and report                             | ✅      |
-| P1A-HARDEN        | 14 review findings on PRs 1–4 (auth, jobs, imports, ZIP)       | ✅      |
-| P1A-EXPORT        | Portable export v1 (job, API, UI, CLI)                         | ✅      |
-| P1A-RESTORE       | Restore core + CLI + re-extraction + round-trip ✅; API/UI 📝  | 🚧      |
-| P1A-INTEGRITY     | Integrity check job                                            | 📝 next |
-| P1A-ENC           | Built-in age encryption for exports                            | 📝      |
+| ID                | Task                                                           | Status |
+| ----------------- | -------------------------------------------------------------- | ------ |
+| P1A-AUTH          | Better Auth, admin CLI, login/logout, sessions, rate limit     | ✅     |
+| P1A-FILES         | Immutable originals, integrity, download                       | ✅     |
+| P1A-IMPORT-API    | Batches/items API, signed upload, complete/retry/cancel        | ✅     |
+| P1A-IMPORT-WORKER | `import.process_item` pipeline                                 | ✅     |
+| P1A-EXTRACT       | HTML / Claude Design / MD / TXT / PDF / image extraction       | ✅     |
+| P1A-ZIP           | Safe ZIP reader, classification A/B/C/D, derived preview files | ✅     |
+| P1A-VERSION       | Version matching + suspected duplicates                        | ✅     |
+| P1A-RECOVERY      | Staging cleanup, expiry, reconciliation                        | ✅     |
+| P1A-IMPORT-UI     | Upload UI with progress and report                             | ✅     |
+| P1A-HARDEN        | 14 review findings on PRs 1–4 (auth, jobs, imports, ZIP)       | ✅     |
+| P1A-EXPORT        | Portable export v1 (job, API, UI, CLI)                         | ✅     |
+| P1A-RESTORE       | Restore core + CLI + re-extraction + round-trip ✅; API/UI 📝  | 🚧     |
+| P1A-INTEGRITY     | Integrity check job, API, panel, weekly schedule               | ✅     |
+| P1A-ENC           | Built-in age encryption for exports                            | 📝     |
 
 ## Phase 1B — Usable Library
 

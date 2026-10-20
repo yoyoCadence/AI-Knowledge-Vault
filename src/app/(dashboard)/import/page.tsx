@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { requirePageActor } from "@/app/_lib/session";
 import { ExportPanel, type ExportView } from "@/components/backup/export-panel";
+import { IntegrityPanel, type IntegrityView } from "@/components/backup/integrity-panel";
 import { ImportWorkspace } from "@/components/import/import-workspace";
 import { Badge } from "@/components/ui/badge";
 import { getEnv } from "@/infrastructure/config/env";
@@ -8,7 +9,7 @@ import { getDb } from "@/infrastructure/database/client";
 import { formatDateTime } from "@/lib/format";
 import { t, tOptional } from "@/lib/i18n";
 import { roleAllows } from "@/modules/auth/policy";
-import { listExports, toExportDto } from "@/modules/backup";
+import { latestIntegrityCheck, listExports, toExportDto, toIntegrityDto } from "@/modules/backup";
 import { ALLOWED_EXTENSIONS, listBatches } from "@/modules/imports";
 
 export const metadata: Metadata = { title: t("nav.importBackup") };
@@ -21,6 +22,10 @@ export default async function ImportPage() {
   const exports: ExportView[] = canExport
     ? JSON.parse(JSON.stringify((await listExports(getDb(), actor)).map(toExportDto)))
     : [];
+  const latestCheck = await latestIntegrityCheck(getDb(), actor);
+  const integrity: IntegrityView | null = latestCheck
+    ? JSON.parse(JSON.stringify(toIntegrityDto(latestCheck)))
+    : null;
 
   return (
     <div className="flex max-w-4xl flex-col gap-8">
@@ -69,6 +74,7 @@ export default async function ImportPage() {
       </section>
 
       {canExport ? <ExportPanel initial={exports} /> : null}
+      <IntegrityPanel initial={integrity} canRun={canExport} />
     </div>
   );
 }

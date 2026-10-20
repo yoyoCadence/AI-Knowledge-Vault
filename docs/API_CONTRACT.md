@@ -112,15 +112,15 @@ from imports. A metadata-only artifact type can be added later if needed.
 
 ## 9. Backup
 
-| Method | Path                                                         | Description                                     | Status |
-| ------ | ------------------------------------------------------------ | ----------------------------------------------- | ------ |
-| POST   | `/api/exports`                                               | `{}` → `202 {export}` (A)                       | ✅     |
-| GET    | `/api/exports`                                               | `{items: export[]}` status and manifest summary | ✅     |
-| GET    | `/api/exports/:id/download`                                  | 302 → 5-min signed URL, `x-content-sha256` (A)  | ✅     |
-| POST   | `/api/restores`                                              | `{filename, size}` → `201 {restoreRun, upload}` | 📝     |
-| POST   | `/api/restores/:id/start`                                    | `{mode}` → `202` (A)                            | 📝     |
-| GET    | `/api/restores/:id`                                          | status and report                               | 📝     |
-| POST   | `/api/integrity-checks` · GET `/api/integrity-checks/latest` | (A)                                             | 📝     |
+| Method | Path                                                         | Description                                                      | Status |
+| ------ | ------------------------------------------------------------ | ---------------------------------------------------------------- | ------ |
+| POST   | `/api/exports`                                               | `{}` → `202 {export}` (A)                                        | ✅     |
+| GET    | `/api/exports`                                               | `{items: export[]}` status and manifest summary                  | ✅     |
+| GET    | `/api/exports/:id/download`                                  | 302 → 5-min signed URL, `x-content-sha256` (A)                   | ✅     |
+| POST   | `/api/restores`                                              | `{filename, size}` → `201 {restoreRun, upload}`                  | 📝     |
+| POST   | `/api/restores/:id/start`                                    | `{mode}` → `202` (A)                                             | 📝     |
+| GET    | `/api/restores/:id`                                          | status and report                                                | 📝     |
+| POST   | `/api/integrity-checks` · GET `/api/integrity-checks/latest` | `202 {check}` (A, one pending per workspace) · `{check \| null}` | ✅     |
 
 ## 10. Storage (local adapter only)
 
