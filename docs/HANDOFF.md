@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 9: restore through the UI — Phase 1A complete)
+## 1. Snapshot (2026-10-20, after PR 10: sandboxed preview origin)
 
 **Merged and tested**
 
@@ -240,10 +240,64 @@ conversations. Update it at the end of every PR.
     `roundtrip.test.ts` (a retried copy-mode run duplicates nothing). The E2E test now restores
     the archive it just exported through the UI (`略過 2`).
 
+- **PR 10, P1B-PREVIEW** (`src/modules/preview`, SECURITY.md §5):
+  - `POST /api/artifacts/:id/versions/:versionId/preview-token` returns `{url, expiresAt}`, a
+    15-minute URL `PREVIEW_ORIGIN/p/<token>/<entry path>`. The token is an HMAC path token
+    (`signToken`, purpose `preview`, claims `v` version, `w` workspace, `s` scope `owner`).
+    404 when the version has no servable preview.
+  - `src/app/p/[token]/[...path]/route.ts` serves `derived_assets` `preview_file` rows.
+    - It re-checks the Host (defense behind `proxy.ts`).
+    - It decodes the raw path segments exactly once and refuses `.`/`..`, encoded `/` or
+      `\`, control characters and bad encoding. No filesystem is involved; the path is only a
+      lookup key.
+    - It serves only while the artifact is not deleted and the version's preview is `ready`,
+      even for live tokens.
+    - Headers: the CSP from SECURITY.md §5.4 (`sandbox allow-same-origin` except PDFs), and
+      `.js`/`.mjs` as `text/plain`. Also nosniff, `no-referrer`, ETag/304. No charset is
+      declared, so Big5 documents keep their own `<meta charset>`.
+    - Every refusal is the same bare 404; a row whose object is missing is a 404 plus a
+      warning log. `proxy.ts` refuses malformed percent-encoding on the preview host.
+    - `HEAD` answers from the manifest without opening the object.
+    - Only `static_html`/`static_site` versions get a URL. A ZIP holding only a PDF is
+      `pdf`, which a `sandbox=""` frame cannot show.
+  - `next.config.ts` global headers exclude `/p/*`: `X-Frame-Options: DENY` and the app's
+    Referrer-Policy would otherwise clash with the preview headers.
+  - Detail page: a "安全預覽" card with a `PreviewFrame` client component.
+    - The iframe uses `sandbox=""` and `referrerPolicy="no-referrer"`.
+    - "重新載入" mints a new token. The "在新分頁開啟" link is re-minted in the background
+      before it expires; refreshes use the server's `expiresInSeconds` on the browser's own
+      clock (a wrong clock cannot cause a busy loop), never run more often than every 10 s,
+      and back off on failure. When the frame's own token expires, a notice asks the user to
+      reload.
+    - Versions without a preview get an honest notice: pending, failed, framework source,
+      unavailable, or "reading mode later" for PDF/image/text.
+  - Tests:
+    - `tests/unit/preview/preview.test.ts`: token round trip, tamper, foreign secret, wrong
+      purpose, bad claims; path normalization; content types; CSP.
+    - `tests/unit/proxy.test.ts`: host isolation.
+    - `tests/integration/api/preview-api.test.ts`: issue and serve, relative resources,
+      304, HEAD, a 12-case refusal matrix (tamper, expiry, cross-version, cross-workspace,
+      encoded traversal, NUL, app host), the `kind` filter, a missing object, a PDF-only
+      ZIP, deleted artifact, no-preview and stranger → 404, CSRF.
+    - An independent review of the preview diff found 5 bugs, all fixed with tests: a refresh
+      busy-loop on fast client clocks, a forced UTF-8 charset, an iframe offered for a
+      PDF-only ZIP, a silent frame-token expiry, and a 1-in-16 flaky tamper test.
+    - E2E: the Claude Design ZIP renders in the cross-origin sandboxed frame, a planted script
+      does not run, `support.js` is served as `text/plain`, and `/p/*` returns 404 on the app
+      host.
+
 **Not done or not verified**
 
-- Preview files are stored but **not yet served**. The preview origin route (`/p/:token/*`) is
-  P1B-PREVIEW.
+- Preview limits:
+  - Root-relative URLs (`/style.css`) inside imported sites resolve to the preview host root
+    and 404; relative URLs work.
+  - Directory links (`docs/`) are redirected by Next.js to `docs` (trailing-slash 308) and
+    404; there is no directory-index resolution.
+  - No `Range` support. It is not needed while preview files are limited to
+    HTML/CSS/JS/JSON/images/fonts/text/PDF.
+  - Owner tokens cannot be revoked early. They expire after 15 minutes; deleting the
+    artifact stops the server at once, but a browser may show its cached copy for up to
+    5 minutes.
 - Export archives are unencrypted (P1A-ENC). The UI and CLI warn about this.
 - HTML extraction can join adjacent inline labels without a space. This is cosmetic.
 - The S3 adapter has not been verified against real R2.
@@ -283,24 +337,23 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 - P1A-ENC: built-in `age` encryption for exports.
 - Verify the S3 adapter against real R2. This needs the owner's credentials.
 
-**PR 10: P1B-PREVIEW** (SECURITY.md §5, ARCHITECTURE.md preview origin):
+**PR 11: P1B-READER** (SECURITY.md §5 "Reading mode", PRODUCT_SPEC reading mode):
 
-1. `POST /api/artifacts/:id/versions/:versionId/preview-token` returns a short-lived HMAC
-   path token, using `PREVIEW_TOKEN_SECRET` and `src/lib/signed-token.ts`.
-2. Route `/p/:token/*` on `PREVIEW_ORIGIN` only (`proxy.ts` already routes by host):
-   - resolve the token to `(workspace, version)`
-   - serve `derived_assets` `preview_file` rows by `path` with a strict CSP (`sandbox`,
-     `default-src 'none'`, `img-src`/`style-src`/`font-src 'self'`, no scripts),
-     `X-Content-Type-Options: nosniff`, and `Cross-Origin-Resource-Policy`
-   - never serve from `APP_ORIGIN`
-3. Detail page: an iframe (`sandbox` without `allow-scripts`) pointing at the preview origin,
-   plus a "open in new tab" link.
-4. Tests: token tamper/expiry, path traversal in `*`, the CSP header, a request on the app
-   origin → 404, and an E2E check that the Claude Design preview renders.
+1. Render the version's active extraction (`extracted_documents.normalized_markdown` and
+   `document_sections`) in an allow-list Markdown renderer under `src/components/reader/`:
+   - no raw HTML passthrough
+   - links get `rel="noopener noreferrer nofollow"`
+   - no `dangerouslySetInnerHTML`; add the ESLint ban for `src/components/reader/**`
+2. Images inside reading mode point only at derived assets through an app route.
+3. Detail page: a reading/preview toggle, a TOC that links to section anchors, and mobile
+   typography.
+4. PDF, image and text versions get their view here (the preview card currently says
+   "reading mode later" for them).
+5. Tests: renderer unit tests (script tags, `javascript:` links, raw HTML are inert), an
+   integration test for the page data, and an E2E reading step.
 
 **Then Phase 1B:**
 
-- preview origin route `/p/:token/*` (derived files already exist) plus the iframe
 - reading mode (safe Markdown renderer)
 - CJK search
 - organization (projects, collections, tags)

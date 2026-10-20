@@ -73,8 +73,12 @@ Layers:
 3. **No ambient credentials.** Auth cookies are host-only (no `Domain` attribute), so they
    are never sent to the preview host. Preview access uses a path token:
    `base64url(payload).base64url(HMAC-SHA256(PREVIEW_TOKEN_SECRET, payload))`. The payload
-   is `{v: versionId, w: workspaceId, s: scope, e: expiry}`. TTL is 15 minutes for owners;
+   is `{purpose: "preview", v: versionId, w: workspaceId, s: scope, exp: expiry}`
+   (`src/modules/preview`). TTL is 15 minutes for owners;
    for share links it is the shorter of the link expiry and 1 hour, re-issued per page view.
+   Only scope `owner` is accepted until sharing (P1B-SHARE) adds its own checks. The route
+   also re-checks the Host, so a routing mistake cannot serve preview content on the app
+   origin.
 4. **Response headers:**
    ```
    Content-Security-Policy: default-src 'none'; script-src 'none'; object-src 'none';
@@ -91,12 +95,19 @@ Layers:
    but they stay on the preview origin.
 5. **iframe sandbox.** The embedding page uses `<iframe sandbox="" referrerpolicy="no-referrer">`:
    no scripts, no same-origin, no top navigation, no forms, no popups.
-6. **Manifest lookup.** The requested path is normalized, then looked up in
-   `derived_assets(version, 'preview_file', path)`. A missing path returns 404. There is no
-   filesystem path join anywhere.
+6. **Manifest lookup.** The raw (still percent-encoded) path segments are decoded exactly
+   once and refused, not cleaned, when they are empty, `.`/`..`, contain an encoded `/` or
+   `\`, a control character, or invalid encoding. The result is looked up in
+   `derived_assets(version, 'preview_file', path)`, joined to the version and artifact, so a
+   deleted artifact or a version whose preview is not `ready` stops serving at once, even
+   for live tokens (a browser may still show its own cached copy for up to `max-age=300`).
+   Any refusal is the same bare 404; malformed percent-encoding is refused by `proxy.ts`
+   before routing. There is no filesystem path join anywhere.
 7. **Content-Type.** It comes from our own extension map; uploaded headers are never used.
    `.js` files are served as `text/plain`, which defeats any script execution even if CSP
-   failed.
+   failed. No charset is declared: preview files are the original bytes, possibly Big5, so
+   the document's own `<meta charset>` or BOM must win. Only `static_html`/`static_site`
+   versions get a preview URL; PDFs, images and text are shown by reading mode.
 
 Reading mode renders our normalized Markdown with an allow-list renderer: no raw HTML
 passthrough, links get `rel="noopener noreferrer nofollow"`, and images point only to

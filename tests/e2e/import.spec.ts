@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 import { claudeDesignZipEntries, htmlDocument } from "../fixtures/builders";
 import { buildZip } from "../fixtures/zip";
+import { e2eEnv } from "./e2e-env";
 import { login } from "./helpers";
 
 test.describe("import → library → artifact (Scenario A)", () => {
@@ -11,7 +12,17 @@ test.describe("import → library → artifact (Scenario A)", () => {
   }) => {
     // In-memory payloads: Chromium in some containers drops file *paths* with non-ASCII names,
     // and we specifically want a Traditional Chinese filename in this scenario.
-    const zipBytes = buildZip(await claudeDesignZipEntries("端對端 Claude Design 報告"));
+    // support.js is made to mutate the page: the preview must show the page without running it.
+    const zipBytes = buildZip(
+      (await claudeDesignZipEntries("端對端 Claude Design 報告")).map((entry) =>
+        entry.name === "support.js"
+          ? {
+              ...entry,
+              data: 'document.documentElement.dataset.scriptRan = "yes"; document.title = "pwned";',
+            }
+          : entry,
+      ),
+    );
     const files = [
       {
         name: "E2E 研究筆記.html",
@@ -51,6 +62,25 @@ test.describe("import → library → artifact (Scenario A)", () => {
     ).toBeVisible();
     await expect(page.getByText("Claude Design").first()).toBeVisible();
     await expect(page.getByText("30 秒答案")).toBeVisible();
+
+    // Sandboxed preview on the preview origin (SECURITY.md §5): rendered, but no script ran.
+    const frameElement = page.getByTestId("preview-frame");
+    await expect(frameElement).toHaveAttribute("sandbox", "");
+    await expect(frameElement).toHaveAttribute("referrerpolicy", "no-referrer");
+    const frameUrl = (await frameElement.getAttribute("src"))!;
+    expect(frameUrl.startsWith(`${e2eEnv.PREVIEW_ORIGIN}/p/`)).toBe(true);
+    const frame = page.frameLocator('[data-testid="preview-frame"]');
+    await expect(frame.getByRole("heading", { name: "端對端 Claude Design 報告" })).toBeVisible();
+    await expect(frame.locator("html[data-script-ran]")).toHaveCount(0);
+    const script = await page.request.get(new URL("support.js", frameUrl).href);
+    expect(script.headers()["content-type"]).toBe("text/plain");
+    expect(script.headers()["content-security-policy"]).toContain("script-src 'none'");
+    expect(script.headers()["x-frame-options"]).toBeUndefined();
+    // The app origin never serves /p/*, and the preview origin serves nothing else.
+    expect((await page.request.get(frameUrl.replace(e2eEnv.PREVIEW_ORIGIN!, ""))).status()).toBe(
+      404,
+    );
+    expect((await page.request.get(`${e2eEnv.PREVIEW_ORIGIN}/api/health`)).status()).toBe(404);
 
     const downloadPromise = page.waitForEvent("download");
     await page.getByRole("link", { name: "下載原始檔", exact: true }).click();

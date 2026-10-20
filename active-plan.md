@@ -4,11 +4,10 @@ _Last updated: 2026-10-20 by the implementing agent._
 
 ## Current focus
 
-**PR 9 (this branch): restore through the API and UI.** This completes Phase 1A, apart from
-P1A-ENC and the real-R2 check.
+**PR 10 (this branch): P1B-PREVIEW.** The sandboxed preview origin: token API, `/p/:token/*`
+route and the detail-page iframe.
 
-**Next: Phase 1B, starting with P1B-PREVIEW (PR 10).** The exact steps are in
-`docs/HANDOFF.md` §4.
+**Next: P1B-READER (PR 11).** The exact steps are in `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.
@@ -49,7 +48,8 @@ findings handled. If the review bot is unavailable, run an independent review fi
    - round-trip and tamper tests
 7. P1B (several PRs):
    - library and detail pages
-   - preview origin and reading mode
+   - ✅ preview origin (PR 10)
+   - reading mode
    - organization
    - search
    - sharing
