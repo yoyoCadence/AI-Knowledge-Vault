@@ -51,8 +51,10 @@ jobs:
 
       - name: Start S3-compatible emulator (moto) for storage adapter tests
         run: |
-          python3 -m pip install --quiet "moto[server]"
-          nohup python3 -m moto.server -H 127.0.0.1 -p 5055 > moto.log 2>&1 &
+          # Isolated venv: the runner's system Python ships conflicting boto3/pyOpenSSL packages.
+          python3 -m venv "$RUNNER_TEMP/moto"
+          "$RUNNER_TEMP/moto/bin/pip" install --quiet "moto[server]"
+          nohup "$RUNNER_TEMP/moto/bin/moto_server" -H 127.0.0.1 -p 5055 > moto.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:5055/ >/dev/null && exit 0; sleep 1; done
           echo "moto server did not start"; cat moto.log; exit 1
 
