@@ -1,4 +1,4 @@
-import { ArrowLeft, Download, Eye, FileWarning, ShieldCheck } from "lucide-react";
+import { ArrowLeft, BookOpen, Download, Eye, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -6,6 +6,7 @@ import { requirePageActor } from "@/app/_lib/session";
 import { label } from "@/components/library/artifact-card";
 import { KindIcon } from "@/components/library/kind-icon";
 import { PreviewFrame } from "@/components/preview/preview-frame";
+import { MarkdownView, PlainTextView } from "@/components/reader/markdown-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,10 +16,17 @@ import { isAppError } from "@/lib/errors";
 import { formatBytes, formatDate, formatDateTime } from "@/lib/format";
 import { isUuid } from "@/lib/ids";
 import { t, tOptional } from "@/lib/i18n";
-import { getArtifactDetail, getVersionOverview } from "@/modules/artifacts";
+import {
+  getArtifactDetail,
+  getVersionContent,
+  getVersionOverview,
+  type VersionContent,
+} from "@/modules/artifacts";
 import { issuePreviewUrl } from "@/modules/preview";
 
-async function load(id: string) {
+type View = "read" | "preview";
+
+async function load(id: string, requested?: string) {
   const actor = await requirePageActor();
   if (!isUuid(id)) notFound();
   try {
@@ -28,7 +36,12 @@ async function load(id: string) {
     const preview = currentId
       ? await issuePreviewUrl(getDb(), actor, { artifactId: id, versionId: currentId }, getEnv())
       : null;
-    return { ...detail, overview, preview };
+    // A site with a preview opens on it; everything else opens in reading mode.
+    const view: View =
+      requested === "read" || requested === "preview" ? requested : preview ? "preview" : "read";
+    const content =
+      currentId && view === "read" ? await getVersionContent(getDb(), actor, id, currentId) : null;
+    return { ...detail, overview, preview, view, content };
   } catch (error) {
     if (isAppError(error) && error.code === "NOT_FOUND") notFound();
     throw error;
@@ -41,7 +54,7 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const { artifact } = await load(id);
+  const { artifact } = await load(id, "preview");
   return { title: artifact.title };
 }
 
@@ -50,9 +63,88 @@ function previewNotice(version: { previewKind: string; previewStatus: string }):
   if (version.previewStatus === "pending") return t("preview.pending");
   if (version.previewStatus === "failed") return t("preview.failed");
   if (version.previewKind === "framework_source") return t("preview.framework");
-  // PDF, image and text versions get their view in reading mode (P1B-READ), not this frame.
+  // PDF, image and text versions are shown by reading mode, not this frame.
   if (["pdf", "image", "text_only"].includes(version.previewKind)) return t("preview.notYet");
   return t("preview.unavailable");
+}
+
+/** Reading mode for the current version: rendered from its extraction, never its raw HTML. */
+function ReadingBody({
+  artifactId,
+  title,
+  version,
+  content,
+}: {
+  artifactId: string;
+  title: string;
+  version: { contentKind: string; processingStatus: string };
+  content: VersionContent | null;
+}) {
+  const note = (text: string) => <p className="text-muted-foreground mb-4 text-xs">{text}</p>;
+  if (version.contentKind === "image") {
+    return (
+      <figure className="flex flex-col gap-3">
+        {/* eslint-disable-next-line @next/next/no-img-element -- authorized same-origin image route, not optimizable */}
+        <img
+          src={`/api/artifacts/${artifactId}/thumbnail`}
+          alt={title}
+          className="border-border max-h-[70vh] w-fit max-w-full rounded-md border object-contain"
+        />
+        <figcaption>{note(t("reader.imageNote"))}</figcaption>
+      </figure>
+    );
+  }
+  if (!content || !content.extraction.markdown.trim()) {
+    const busy = ["pending", "processing"].includes(version.processingStatus);
+    return (
+      <p className="text-muted-foreground text-sm" data-testid="reader-empty">
+        {busy ? t("reader.pending") : t("reader.empty")}
+      </p>
+    );
+  }
+  const { method, markdown } = content.extraction;
+  return (
+    <div data-testid="reader">
+      {note(
+        method === "pdf"
+          ? t("reader.pdfNote")
+          : method === "restore_archive"
+            ? t("reader.restored")
+            : t("reader.source"),
+      )}
+      {method === "text" ? (
+        <PlainTextView text={markdown} />
+      ) : (
+        <MarkdownView
+          markdown={markdown}
+          anchors={content.sections
+            .filter((section) => section.heading)
+            .map((section) => section.anchor)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ViewSwitch({ view }: { view: View }) {
+  const tab = (value: View, text: string) => (
+    <Link
+      href={`?view=${value}`}
+      aria-current={view === value ? "page" : undefined}
+      className={`rounded px-3 py-1 ${view === value ? "bg-surface-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
+    >
+      {text}
+    </Link>
+  );
+  return (
+    <nav
+      aria-label={t("reader.title")}
+      className="border-border flex w-fit gap-1 rounded-md border p-0.5 text-sm"
+    >
+      {tab("read", t("reader.tabRead"))}
+      {tab("preview", t("reader.tabPreview"))}
+    </nav>
+  );
 }
 
 function Field({ name, value }: { name: string; value: React.ReactNode }) {
@@ -64,9 +156,16 @@ function Field({ name, value }: { name: string; value: React.ReactNode }) {
   );
 }
 
-export default async function ArtifactPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ArtifactPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ view?: string }>;
+}) {
   const { id } = await params;
-  const { artifact, versions, overview, preview } = await load(id);
+  const { view: requested } = await searchParams;
+  const { artifact, versions, overview, preview, view, content } = await load(id, requested);
   const version = overview?.version;
   const unknown = <span className="text-muted-foreground">{t("artifact.unknown")}</span>;
   const warnings = [...(overview?.extraction?.warnings ?? [])];
@@ -118,14 +217,26 @@ export default async function ArtifactPage({ params }: { params: Promise<{ id: s
         <div className="flex min-w-0 flex-col gap-6">
           {version ? (
             <Card>
-              <CardHeader>
+              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
                 <CardTitle className="flex items-center gap-2">
-                  <Eye className="size-4" aria-hidden />
-                  {t("preview.title")}
+                  {view === "read" ? (
+                    <BookOpen className="size-4" aria-hidden />
+                  ) : (
+                    <Eye className="size-4" aria-hidden />
+                  )}
+                  {view === "read" ? t("reader.title") : t("preview.title")}
                 </CardTitle>
+                <ViewSwitch view={view} />
               </CardHeader>
               <CardContent>
-                {preview ? (
+                {view === "read" ? (
+                  <ReadingBody
+                    artifactId={artifact.id}
+                    title={artifact.title}
+                    version={version}
+                    content={content}
+                  />
+                ) : preview ? (
                   <PreviewFrame
                     artifactId={artifact.id}
                     versionId={version.id}
@@ -145,13 +256,6 @@ export default async function ArtifactPage({ params }: { params: Promise<{ id: s
             </Card>
           ) : null}
 
-          <Card>
-            <CardContent className="text-muted-foreground flex items-start gap-3 pt-5 text-sm">
-              <FileWarning className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <p>{t("artifact.readingSoon")}</p>
-            </CardContent>
-          </Card>
-
           {overview && overview.outline.length > 0 ? (
             <Card>
               <CardHeader>
@@ -164,7 +268,12 @@ export default async function ArtifactPage({ params }: { params: Promise<{ id: s
                       key={section.anchor}
                       style={{ paddingLeft: `${Math.max(0, section.level - 1) * 0.9}rem` }}
                     >
-                      {section.heading}
+                      <a
+                        href={`?view=read#${encodeURIComponent(section.anchor)}`}
+                        className="hover:text-primary hover:underline"
+                      >
+                        {section.heading}
+                      </a>
                     </li>
                   ))}
                 </ol>

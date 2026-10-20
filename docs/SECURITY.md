@@ -109,10 +109,20 @@ Layers:
    the document's own `<meta charset>` or BOM must win. Only `static_html`/`static_site`
    versions get a preview URL; PDFs, images and text are shown by reading mode.
 
-Reading mode renders our normalized Markdown with an allow-list renderer: no raw HTML
-passthrough, links get `rel="noopener noreferrer nofollow"`, and images point only to
-derived assets via the app proxy. `dangerouslySetInnerHTML` is banned by lint rule in
-`src/components/reader/**`.
+Reading mode (`src/components/reader/markdown-view.tsx`) renders our normalized Markdown
+with an allow-list renderer into React elements:
+
+- No raw HTML passthrough: an `html` node is shown as escaped text.
+- Only `http(s)`, `mailto` and in-page `#` links stay links. External ones get
+  `target="_blank" rel="noopener noreferrer nofollow"`; `javascript:`, `data:` and relative
+  targets become plain text.
+- Images in documents are shown as their alt text (`［圖片：…］`), so reading never loads
+  anything from elsewhere (no tracking pixels). Image versions show our own thumbnail.
+- Plain-text extractions are shown preformatted, never interpreted as Markdown.
+
+`dangerouslySetInnerHTML` is banned everywhere (`react/no-danger`). In
+`src/components/reader/**` a second rule also bans it and `innerHTML`/`outerHTML`
+assignment.
 
 ## 6. Authentication
 

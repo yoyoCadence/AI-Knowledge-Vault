@@ -82,6 +82,16 @@ test.describe("import → library → artifact (Scenario A)", () => {
     );
     expect((await page.request.get(`${e2eEnv.PREVIEW_ORIGIN}/api/health`)).status()).toBe(404);
 
+    // Reading mode: the same document rendered from its extraction, with a working outline.
+    await page.getByRole("link", { name: "閱讀", exact: true }).click();
+    await expect(page).toHaveURL(/[?&]view=read/);
+    const reader = page.getByTestId("reader");
+    await expect(reader.getByRole("heading", { name: "30 秒答案" })).toBeVisible();
+    await expect(reader.locator("script, iframe, img")).toHaveCount(0);
+    await page.getByRole("link", { name: "30 秒答案" }).click();
+    await expect(page).toHaveURL(/#30-%E7%A7%92%E7%AD%94%E6%A1%88$/);
+    await expect(page.locator("[id='30-秒答案']")).toBeInViewport();
+
     const downloadPromise = page.waitForEvent("download");
     await page.getByRole("link", { name: "下載原始檔", exact: true }).click();
     const download = await downloadPromise;

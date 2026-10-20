@@ -4,10 +4,10 @@ _Last updated: 2026-10-20 by the implementing agent._
 
 ## Current focus
 
-**PR 10 (this branch): P1B-PREVIEW.** The sandboxed preview origin: token API, `/p/:token/*`
-route and the detail-page iframe.
+**PR 11 (this branch): P1B-READER.** Reading mode: allow-list Markdown renderer, content API,
+read/preview switch and a working table of contents.
 
-**Next: P1B-READER (PR 11).** The exact steps are in `docs/HANDOFF.md` §4.
+**Next: P1B-SEARCH (PR 12).** The exact steps are in `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.
@@ -49,7 +49,7 @@ findings handled. If the review bot is unavailable, run an independent review fi
 7. P1B (several PRs):
    - library and detail pages
    - ✅ preview origin (PR 10)
-   - reading mode
+   - ✅ reading mode (PR 11)
    - organization
    - search
    - sharing

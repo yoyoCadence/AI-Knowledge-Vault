@@ -43,4 +43,5 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 | P1B-LIBRARY | Library grid with thumbnails, kinds, source, pagination            | 🚧 grid + cursor paging done (PR 5); recent/favorites/categories/stats pending |
 | P1B-DETAIL  | Artifact detail: metadata, outline, references, versions, download | 🚧 read-only detail done (PR 5); metadata editing pending                      |
 | P1B-PREVIEW | Preview origin route, preview token API, sandboxed iframe          | ✅ (PR 10)                                                                     |
+| P1B-READER  | Reading mode: allow-list renderer, content API, TOC, read/preview  | ✅ (PR 11)                                                                     |
 | others      | see `docs/ROADMAP.md`                                              | 📝                                                                             |

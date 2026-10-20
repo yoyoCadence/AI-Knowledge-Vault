@@ -223,3 +223,49 @@ export async function getVersionOverview(
     outline: outline.filter((section) => section.heading),
   };
 }
+
+/**
+ * Reading-mode content of a version (FR-LIB-4): its active extraction's normalized Markdown
+ * and sections, or null when it has none. Scoped like every read: out-of-workspace is 404.
+ */
+export async function getVersionContent(
+  db: DbExecutor,
+  actor: Actor,
+  artifactId: string,
+  versionId: string,
+) {
+  const { version } = await getVersionWithOriginal(db, actor, artifactId, versionId);
+  if (!version.activeExtractionId) return null;
+  const [document] = await db
+    .select({
+      id: extractedDocuments.id,
+      method: extractedDocuments.extractionMethod,
+      status: extractedDocuments.status,
+      title: extractedDocuments.title,
+      language: extractedDocuments.language,
+      markdown: extractedDocuments.normalizedMarkdown,
+      warnings: extractedDocuments.warnings,
+    })
+    .from(extractedDocuments)
+    .where(
+      and(
+        eq(extractedDocuments.id, version.activeExtractionId),
+        eq(extractedDocuments.workspaceId, actor.workspaceId),
+      ),
+    );
+  if (!document) return null;
+  const sections = await db
+    .select({
+      ordinal: documentSections.ordinal,
+      level: documentSections.level,
+      heading: documentSections.heading,
+      anchor: documentSections.anchor,
+    })
+    .from(documentSections)
+    .where(eq(documentSections.extractedDocumentId, document.id))
+    .orderBy(asc(documentSections.ordinal));
+  const { id: _id, ...extraction } = document;
+  return { contentKind: version.contentKind, extraction, sections };
+}
+
+export type VersionContent = NonNullable<Awaited<ReturnType<typeof getVersionContent>>>;
