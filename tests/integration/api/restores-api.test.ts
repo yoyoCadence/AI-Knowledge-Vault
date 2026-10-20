@@ -426,4 +426,31 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
       .set({ storageKey: null })
       .where(eq(exportRuns.storageKey, stuckExportKey));
   });
+
+  it("uploads that keep failing to delete never starve the ones after them", async () => {
+    const { cookie, actor } = await owner();
+    const keys: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const restore = await uploadArchive(cookie, archive);
+      await db
+        .update(restoreRuns)
+        .set({ status: "failed", completedAt: new Date() })
+        .where(eq(restoreRuns.id, restore.id));
+      keys.push(storageKeys.restoreUpload(actor.workspaceId, restore.id));
+    }
+    // The two oldest (first by id) keep failing; with one row per page they would fill every
+    // bounded batch if candidates were not paged past them.
+    const stuck = new Set(keys.slice(0, 2));
+    const storage = hookedStorage({
+      deleteObject: async (key) => {
+        if (stuck.has(key)) throw new Error("object locked");
+        return getStorage().deleteObject(key);
+      },
+    });
+    await expect(cleanupRestoreUploads(db, storage, new Date(), { pageSize: 1 })).rejects.toThrow(
+      /cleanup step\(s\) failed/,
+    );
+    expect(await getStorage().headObject(keys[2]!)).toBeNull();
+    expect(await getStorage().headObject(keys[0]!)).not.toBeNull();
+  });
 });

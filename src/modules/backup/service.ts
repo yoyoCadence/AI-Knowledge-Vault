@@ -2,7 +2,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import { exportRuns } from "@/infrastructure/database/schema";
 import { storageKeys, type SignedRequest, type StorageAdapter } from "@/infrastructure/storage";
@@ -14,7 +14,7 @@ import { sha256OfFile } from "@/modules/files/hash";
 import { enqueueJob, type JobContext, type JobDefinition } from "@/modules/jobs";
 import { EXPORT_FORMAT_VERSION } from "./format";
 import { writeExport } from "./export";
-import { eachIndependently } from "./each-independently";
+import { eachRowIndependently } from "./each-independently";
 import { cleanupRestoreUploads } from "./restore-runs";
 
 /**
@@ -217,22 +217,26 @@ export async function deleteExpiredExports(
   storage: StorageAdapter,
   now = new Date(),
 ): Promise<number> {
-  const expired = await db
-    .select()
-    .from(exportRuns)
-    .where(
-      and(
-        eq(exportRuns.status, "completed"),
-        lt(exportRuns.expiresAt, now),
-        sql`${exportRuns.storageKey} is not null`,
-      ),
-    )
-    .limit(200);
-  await eachIndependently(expired, async (run) => {
-    await storage.deleteObject(run.storageKey!);
-    await db.update(exportRuns).set({ storageKey: null }).where(eq(exportRuns.id, run.id));
-  });
-  return expired.length;
+  return eachRowIndependently(
+    (afterId, limit) =>
+      db
+        .select({ id: exportRuns.id, storageKey: exportRuns.storageKey })
+        .from(exportRuns)
+        .where(
+          and(
+            eq(exportRuns.status, "completed"),
+            lt(exportRuns.expiresAt, now),
+            sql`${exportRuns.storageKey} is not null`,
+            afterId ? gt(exportRuns.id, afterId) : undefined,
+          ),
+        )
+        .orderBy(exportRuns.id)
+        .limit(limit),
+    async (run) => {
+      await storage.deleteObject(run.storageKey!);
+      await db.update(exportRuns).set({ storageKey: null }).where(eq(exportRuns.id, run.id));
+    },
+  );
 }
 
 export function exportCleanupJobDefinition(): JobDefinition {

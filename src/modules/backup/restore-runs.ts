@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import { z } from "zod";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import { RESTORE_MODES, restoreRuns } from "@/infrastructure/database/schema";
@@ -9,7 +9,7 @@ import { recordAudit, type RequestMeta } from "@/modules/audit";
 import type { Actor } from "@/modules/auth";
 import { downloadToTempFile } from "@/modules/files/staging";
 import { enqueueJob, type JobContext, type JobDefinition } from "@/modules/jobs";
-import { eachIndependently } from "./each-independently";
+import { eachRowIndependently } from "./each-independently";
 import { restoreArchive, type RestoreLimits } from "./restore";
 
 /**
@@ -306,6 +306,7 @@ export async function cleanupRestoreUploads(
   db: DbExecutor,
   storage: StorageAdapter,
   now = new Date(),
+  options: { pageSize?: number } = {},
 ): Promise<number> {
   // Conditional on the row still being unstarted: startRestore locks the same row, so a run is
   // either started or abandoned, never both.
@@ -325,16 +326,21 @@ export async function cleanupRestoreUploads(
         lt(restoreRuns.createdAt, new Date(now.getTime() - ABANDONED_RESTORE_AFTER_MS)),
       ),
     );
-  const ended = await db
-    .select({ id: restoreRuns.id, sourceStorageKey: restoreRuns.sourceStorageKey })
-    .from(restoreRuns)
-    .where(
-      and(
-        inArray(restoreRuns.status, ["completed", "failed"]),
-        isNotNull(restoreRuns.sourceStorageKey),
-      ),
-    )
-    .limit(200);
-  await eachIndependently(ended, (run) => releaseUpload(db, storage, run));
-  return ended.length;
+  return eachRowIndependently(
+    (afterId, limit) =>
+      db
+        .select({ id: restoreRuns.id, sourceStorageKey: restoreRuns.sourceStorageKey })
+        .from(restoreRuns)
+        .where(
+          and(
+            inArray(restoreRuns.status, ["completed", "failed"]),
+            isNotNull(restoreRuns.sourceStorageKey),
+            afterId ? gt(restoreRuns.id, afterId) : undefined,
+          ),
+        )
+        .orderBy(restoreRuns.id)
+        .limit(limit),
+    (run) => releaseUpload(db, storage, run),
+    options.pageSize,
+  );
 }
