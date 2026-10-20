@@ -11,7 +11,12 @@ import { StorageObjectNotFoundError } from "@/infrastructure/storage";
 import { newId } from "@/lib/ids";
 import { recordAudit, type RequestMeta } from "@/modules/audit";
 import type { Actor } from "@/modules/auth";
-import { enqueueJob, type JobContext, type JobDefinition } from "@/modules/jobs";
+import {
+  enqueueJob,
+  getJobByIdempotencyKey,
+  type JobContext,
+  type JobDefinition,
+} from "@/modules/jobs";
 
 /**
  * Integrity checks (BACKUP_RECOVERY §7): re-hash every stored original of a workspace and record
@@ -54,7 +59,15 @@ export function toIntegrityDto(check: IntegrityCheck) {
 export async function requestIntegrityCheck(
   db: Database,
   workspaceId: string,
-  options: { actorUserId?: string | null; meta?: RequestMeta } = {},
+  options: {
+    actorUserId?: string | null;
+    meta?: RequestMeta;
+    /**
+     * Key of a scheduled run. Its check is created at most once per workspace, even if the
+     * scheduling job is retried after its earlier check already finished.
+     */
+    scheduleKey?: string;
+  } = {},
 ): Promise<IntegrityCheck> {
   return db.transaction(async (tx) => {
     await tx
@@ -62,6 +75,19 @@ export async function requestIntegrityCheck(
       .from(workspaces)
       .where(eq(workspaces.id, workspaceId))
       .for("update");
+    const scheduledKey = options.scheduleKey
+      ? `${INTEGRITY_JOB_TYPE}:${options.scheduleKey}:${workspaceId}`
+      : null;
+    if (scheduledKey) {
+      const existing = await getJobByIdempotencyKey(tx, scheduledKey);
+      const [scheduled] = existing
+        ? await tx
+            .select()
+            .from(integrityChecks)
+            .where(eq(integrityChecks.id, String(existing.payload.checkId ?? "")))
+        : [];
+      if (scheduled) return scheduled;
+    }
     const [pending] = await tx
       .select()
       .from(integrityChecks)
@@ -76,7 +102,7 @@ export async function requestIntegrityCheck(
     const id = newId();
     await enqueueJob(tx, {
       type: INTEGRITY_JOB_TYPE,
-      idempotencyKey: `${INTEGRITY_JOB_TYPE}:${id}`,
+      idempotencyKey: scheduledKey ?? `${INTEGRITY_JOB_TYPE}:${id}`,
       workspaceId,
       payload: { checkId: id },
       maxAttempts: 3,
@@ -201,7 +227,10 @@ export async function runIntegrityCheck(ctx: JobContext): Promise<Record<string,
     await ctx.reportProgress({ current: counts.checked, total });
   }
 
-  await db
+  // A timed-out or lease-lost run keeps going in the background; it must not report success
+  // after the queue has already failed it (onFailed marks it failed).
+  ctx.signal.throwIfAborted();
+  const [completed] = await db
     .update(integrityChecks)
     .set({
       status: "completed",
@@ -212,7 +241,9 @@ export async function runIntegrityCheck(ctx: JobContext): Promise<Record<string,
       report: { failures },
       completedAt: new Date(),
     })
-    .where(eq(integrityChecks.id, check.id));
+    .where(and(eq(integrityChecks.id, check.id), eq(integrityChecks.status, "running")))
+    .returning({ id: integrityChecks.id });
+  if (!completed) return { checkId: check.id, skipped: "no_longer_running" };
   if (counts.missing + counts.corrupt > 0) {
     ctx.logger.error(
       { checkId: check.id, missing: counts.missing, corrupt: counts.corrupt },
@@ -250,9 +281,11 @@ export function integrityScheduleJobDefinition(): JobDefinition {
   return {
     type: INTEGRITY_SCHEDULE_JOB_TYPE,
     timeoutMs: 5 * 60 * 1000,
-    handler: async ({ db }) => {
+    handler: async ({ db, job }) => {
       const rows = await db.select({ id: workspaces.id }).from(workspaces);
-      for (const row of rows) await requestIntegrityCheck(db, row.id);
+      for (const row of rows) {
+        await requestIntegrityCheck(db, row.id, { scheduleKey: job.idempotencyKey });
+      }
       return { workspaces: rows.length };
     },
   };

@@ -9,7 +9,13 @@ import { closeDb } from "@/infrastructure/database/client";
 import { fileAssets, integrityChecks } from "@/infrastructure/database/schema";
 import { getStorage } from "@/infrastructure/storage";
 import { newId } from "@/lib/ids";
-import { requestIntegrityCheck } from "@/modules/backup";
+import {
+  integrityScheduleJobDefinition,
+  requestIntegrityCheck,
+  runIntegrityCheck,
+} from "@/modules/backup";
+import type { JobContext } from "@/modules/jobs";
+import { getLogger } from "@/infrastructure/observability/logger";
 import { htmlDocument, markdownDocument, pngImage } from "@tests/fixtures/builders";
 import { createTestAdmin, signIn } from "../helpers/auth";
 import { closeTestDb, testDb } from "../helpers/db";
@@ -148,5 +154,68 @@ describe("integrity check (BACKUP_RECOVERY §7)", () => {
           .where(eq(integrityChecks.workspaceId, actor.workspaceId))
       ).length,
     ).toBe(2);
+  });
+});
+
+describe("integrity check robustness", () => {
+  it("a retried weekly scheduling run never queues a second check for a workspace", async () => {
+    const { actor } = await owner();
+    const schedule = integrityScheduleJobDefinition();
+    const ctx = (key: string) =>
+      ({
+        db,
+        job: { idempotencyKey: key, payload: {} },
+        storage: getStorage(),
+        logger: getLogger({ test: true }),
+        signal: new AbortController().signal,
+        reportProgress: async () => {},
+      }) as unknown as JobContext;
+    const countChecks = async () =>
+      (
+        await db
+          .select()
+          .from(integrityChecks)
+          .where(eq(integrityChecks.workspaceId, actor.workspaceId))
+      ).length;
+
+    await schedule.handler(ctx("maintenance.schedule_integrity_checks:week-1"));
+    await drainJobs(); // the check completes
+    await schedule.handler(ctx("maintenance.schedule_integrity_checks:week-1")); // retry
+    expect(await countChecks()).toBe(1);
+    await schedule.handler(ctx("maintenance.schedule_integrity_checks:week-2"));
+    expect(await countChecks()).toBe(2);
+    await drainJobs();
+  });
+
+  it("does not report success for a run the queue already failed", async () => {
+    const { actor } = await owner();
+    await uploadFile(actor, (await newBatch(actor)).id, {
+      filename: "integrity-race.html",
+      bytes: htmlDocument({ title: `競態 ${actor.workspaceId}` }),
+    });
+    await drainJobs();
+    const check = await requestIntegrityCheck(db, actor.workspaceId);
+    // While the handler is hashing, the queue gives up on it (timeout / lease loss → onFailed).
+    const storage = getStorage();
+    const racing = Object.create(storage) as typeof storage;
+    racing.getObject = async (key: string) => {
+      await db
+        .update(integrityChecks)
+        .set({ status: "failed" })
+        .where(eq(integrityChecks.id, check.id));
+      return storage.getObject(key);
+    };
+    const result = await runIntegrityCheck({
+      db,
+      job: { payload: { checkId: check.id } },
+      storage: racing,
+      logger: getLogger({ test: true }),
+      signal: new AbortController().signal,
+      reportProgress: async () => {},
+    } as unknown as JobContext);
+    expect(result).toMatchObject({ skipped: "no_longer_running" });
+    const [row] = await db.select().from(integrityChecks).where(eq(integrityChecks.id, check.id));
+    expect(row?.status).toBe("failed");
+    await drainJobs(); // the queued job finds the check no longer pending work
   });
 });
