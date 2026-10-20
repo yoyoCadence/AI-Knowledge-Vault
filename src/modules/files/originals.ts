@@ -16,15 +16,31 @@ export async function storeOriginal(
     size: number;
     mimeType: string;
     sourcePath: string;
+    /** Aborting destroys the upload's source stream, so the write fails instead of finishing. */
+    signal?: AbortSignal;
   },
 ): Promise<{ storageKey: string; created: boolean }> {
   const storageKey = storageKeys.original(input.workspaceId, input.sha256);
-  const { created } = await storage.putObject(storageKey, createReadStream(input.sourcePath), {
-    contentLength: input.size,
-    contentType: input.mimeType,
-    metadata: { sha256: input.sha256 },
-    ifNoneMatch: true,
-  });
+  input.signal?.throwIfAborted();
+  const body = createReadStream(input.sourcePath);
+  // The adapter may await (mkdir, network) before attaching its own listeners: an abort in
+  // that gap must reject putObject (it sees the stream's error state), never surface as an
+  // uncaught 'error' event that would crash the worker.
+  body.on("error", () => {});
+  const onAbort = () => body.destroy(input.signal?.reason as Error);
+  input.signal?.addEventListener("abort", onAbort, { once: true });
+  let created: boolean;
+  try {
+    ({ created } = await storage.putObject(storageKey, body, {
+      contentLength: input.size,
+      contentType: input.mimeType,
+      metadata: { sha256: input.sha256 },
+      ifNoneMatch: true,
+    }));
+  } finally {
+    input.signal?.removeEventListener("abort", onAbort);
+  }
+  input.signal?.throwIfAborted();
   if (!created) {
     const existing = await storage.headObject(storageKey);
     if (!existing)

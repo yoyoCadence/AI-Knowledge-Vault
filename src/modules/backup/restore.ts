@@ -385,6 +385,27 @@ export async function restoreArchive(
     /** Copy-mode id: derived from this run, so a retried attempt finds what it already copied. */
     const copyId = (oldId: string) => deterministicId(`restore-copy:${input.restoreId}:${oldId}`);
     /**
+     * Second, still deterministic choice for when the derived/copy id already belongs to another
+     * workspace (e.g. a restored export of an earlier restore): a retry finds it again, which a
+     * random id would not. Both taken by others is refused rather than guessed.
+     */
+    const fallbackId = (oldId: string) =>
+      deterministicId(
+        mode === "copy"
+          ? `restore-copy:${input.restoreId}:${oldId}:fallback`
+          : `restore:${workspaceId}:${oldId}:fallback`,
+      );
+    const fallback = (oldId: string, owners: Map<string, string | null>) => {
+      const id = fallbackId(oldId);
+      const owner = owners.get(id);
+      if (owner === undefined) return { id, existing: false, remapped: true, resumed: false };
+      if (owner === workspaceId)
+        return { id, existing: true, remapped: true, resumed: mode === "copy" };
+      throw new AppError("CONFLICT", `restore ids for ${oldId} are taken by other workspaces`, {
+        retryable: false,
+      });
+    };
+    /**
      * Where an archived row goes. skip_existing: its own id when free or already ours, else a
      * derived id (so re-running the same restore finds it instead of duplicating it).
      * copy: always its copy id; `resumed` when an earlier attempt of this run inserted it.
@@ -395,7 +416,7 @@ export async function restoreArchive(
         const owner = owners.get(id);
         if (owner === undefined) return { id, existing: false, remapped: true, resumed: false };
         if (owner === workspaceId) return { id, existing: true, remapped: true, resumed: true };
-        return { id: newId(), existing: false, remapped: true, resumed: false };
+        return fallback(oldId, owners);
       }
       const owner = owners.get(oldId);
       if (owner === undefined)
@@ -408,11 +429,12 @@ export async function restoreArchive(
         return { id: derived, existing: false, remapped: true, resumed: false };
       if (derivedOwner === workspaceId)
         return { id: derived, existing: true, remapped: true, resumed: false };
-      return { id: newId(), existing: false, remapped: true, resumed: false };
+      return fallback(oldId, owners);
     };
     const withDerived = (ids: string[]) => [
       ...ids,
       ...ids.map(mode === "copy" ? copyId : derivedId),
+      ...ids.map(fallbackId),
     ];
 
     // ---- 1. Originals (content-addressed; the target workspace dedups by hash) ----
@@ -446,6 +468,7 @@ export async function restoreArchive(
       if (hash.digest("hex") !== asset.sha256)
         throw checksumMismatch("an original changed while restoring", [asset.archivePath]);
       const { storageKey, created } = await storeOriginal(storage, {
+        signal,
         workspaceId,
         sha256: asset.sha256,
         size: asset.byteSize,

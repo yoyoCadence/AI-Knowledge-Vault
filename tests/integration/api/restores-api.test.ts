@@ -11,7 +11,13 @@ import { GET as listRoute, POST as createRoute } from "@/app/api/restores/route"
 import { PUT as localUpload } from "@/app/api/storage/local/upload/route";
 import { getEnv } from "@/infrastructure/config/env";
 import { closeDb } from "@/infrastructure/database/client";
-import { artifacts, auditLogs, exportRuns, restoreRuns } from "@/infrastructure/database/schema";
+import {
+  artifacts,
+  auditLogs,
+  exportRuns,
+  fileAssets,
+  restoreRuns,
+} from "@/infrastructure/database/schema";
 import { getStorage, storageKeys, type StorageAdapter } from "@/infrastructure/storage";
 import { newId } from "@/lib/ids";
 import {
@@ -298,6 +304,10 @@ describe("restore over HTTP (BACKUP_RECOVERY §6)", () => {
       "PROCESSING_TIMEOUT",
     );
     expect(await artifactCount(actor.workspaceId)).toBe(0);
+    // The abort also stopped the original's own upload and its row.
+    expect(
+      await db.select().from(fileAssets).where(eq(fileAssets.workspaceId, actor.workspaceId)),
+    ).toHaveLength(0);
   });
 
   it("a late attempt never overwrites the failure recorded for its timeout", async () => {

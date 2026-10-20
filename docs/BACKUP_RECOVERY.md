@@ -127,7 +127,11 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    - `mode = skip_existing` (default): UUIDs are globally unique, so restoring into a clean
      environment **keeps the original IDs**. A row whose ID already exists in the target
      workspace is kept and reported as `skipped`; one whose ID belongs to another workspace is
-     restored under `uuidv5("restore:{targetWorkspace}:{oldId}")`.
+     restored under `uuidv5("restore:{targetWorkspace}:{oldId}")`. If that id is taken by
+     yet another workspace (an export of an earlier restore restored elsewhere), a second
+     derived id `…:fallback` is used, and copy mode works the same way; if both are taken,
+     the restore is refused (`CONFLICT`) rather than given a random id that a retry could
+     not find again.
    - `mode = copy`: the whole archive is duplicated. Every row gets
      `uuidv5("restore-copy:{restoreId}:{oldId}")`, every FK is rewritten through the mapping,
      `origin_ref = restore:{restoreId}:{oldId}` is set, and the title of an artifact that
