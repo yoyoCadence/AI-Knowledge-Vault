@@ -65,6 +65,30 @@ export default defineConfig([
     },
   },
   {
+    // Reading mode renders untrusted documents: no HTML strings may reach the DOM here
+    // (docs/SECURITY.md §5 "Reading mode"). Restates the global sql.raw ban, which a
+    // file-scoped no-restricted-syntax would otherwise replace.
+    files: ["src/components/reader/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "MemberExpression[object.name='sql'][property.name='raw']",
+          message: "sql.raw is banned outside migrations (docs/SECURITY.md §11).",
+        },
+        {
+          selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
+          message: "Reading mode never injects HTML (docs/SECURITY.md §5).",
+        },
+        {
+          selector:
+            "AssignmentExpression > MemberExpression.left[property.name=/^(innerHTML|outerHTML)$/]",
+          message: "Reading mode never injects HTML (docs/SECURITY.md §5).",
+        },
+      ],
+    },
+  },
+  {
     files: [
       "src/modules/**/*.ts",
       "src/infrastructure/**/*.ts",

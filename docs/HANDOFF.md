@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 10: sandboxed preview origin)
+## 1. Snapshot (2026-10-20, after PR 11: reading mode)
 
 **Merged and tested**
 
@@ -286,7 +286,32 @@ conversations. Update it at the end of every PR.
       does not run, `support.js` is served as `text/plain`, and `/p/*` returns 404 on the app
       host.
 
+- **PR 11, P1B-READER** (`src/components/reader/markdown-view.tsx`, SECURITY.md §5):
+  - `MarkdownView` parses our normalized Markdown (mdast with GFM) and renders it through an
+    allow-list into React elements. Raw HTML is shown as escaped text, and only
+    `http(s)`/`mailto`/`#` links remain links (external ones with
+    `noopener noreferrer nofollow`). Images show their alt text and load nothing.
+    `PlainTextView` shows `text` extractions as written.
+  - Root-level headings take the stored section anchors in order, so the outline links work
+    for HTML, Claude Design, Markdown and PDF (`page-N`). A unit test runs the real
+    extractors and checks that every anchor exists in the rendered output.
+  - `GET /api/artifacts/:id/versions/:versionId/content` (`getVersionContent`).
+  - Detail page: a server-driven `?view=read|preview` switch. Sites open on the preview,
+    everything else on reading mode. Outline entries link to `?view=read#anchor`. Image
+    versions show their thumbnail, and PDFs carry a note that layout and images are only in
+    the original.
+  - Lint: a reader-only `no-restricted-syntax` rule bans `dangerouslySetInnerHTML` and
+    `innerHTML`/`outerHTML` assignment, on top of the global `react/no-danger`.
+  - Tests: `tests/unit/reader/markdown-view.test.ts` (raw HTML inert, link allow-list, no
+    image loads, structure, anchors only at root, plain text, anchor alignment across
+    extractors), `tests/integration/api/content-api.test.ts`, and an E2E reading step
+    (switch tab, heading rendered, no script/iframe/img in the reader, outline link jumps to
+    its anchor).
+
 **Not done or not verified**
+
+- Reading mode shows document images as alt text only. Serving derived images of imported
+  documents through an authorized route is not built.
 
 - Preview limits:
   - Root-relative URLs (`/style.css`) inside imported sites resolve to the preview host root
@@ -337,25 +362,22 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 - P1A-ENC: built-in `age` encryption for exports.
 - Verify the S3 adapter against real R2. This needs the owner's credentials.
 
-**PR 11: P1B-READER** (SECURITY.md §5 "Reading mode", PRODUCT_SPEC reading mode):
+**PR 12: P1B-SEARCH** (docs/SEARCH_DESIGN.md, ADR-009):
 
-1. Render the version's active extraction (`extracted_documents.normalized_markdown` and
-   `document_sections`) in an allow-list Markdown renderer under `src/components/reader/`:
-   - no raw HTML passthrough
-   - links get `rel="noopener noreferrer nofollow"`
-   - no `dangerouslySetInnerHTML`; add the ESLint ban for `src/components/reader/**`
-2. Images inside reading mode point only at derived assets through an app route.
-3. Detail page: a reading/preview toggle, a TOC that links to section anchors, and mobile
-   typography.
-4. PDF, image and text versions get their view here (the preview card currently says
-   "reading mode later" for them).
-5. Tests: renderer unit tests (script tags, `javascript:` links, raw HTML are inert), an
-   integration test for the page data, and an E2E reading step.
+1. `src/modules/search/tokenizer.ts` (versioned): NFKC + lower-case; CJK runs become bigrams
+   plus unigrams with explicit positions; Latin/number runs become words. Output is a
+   `tsvector` literal; the query side builds `<->` phrases from bigrams.
+2. Schema: a search document per version (title, summary, plain text, weights) with a GIN
+   index; migration via `pnpm db:generate --name search_index`.
+3. Index on extraction save and on re-extraction (`modules/jobs`), plus a backfill job.
+4. `GET /api/search?q=` with workspace scoping, ranking, snippets (highlighting by our own
+   offsets, rendered as text), and keyset pagination.
+5. UI: the search box on the library page, with results and highlighted snippets.
+6. Tests: tokenizer unit tests (Traditional Chinese phrases, mixed scripts, full-width),
+   integration tests for ranking, scoping and the backfill, and an E2E search step.
 
 **Then Phase 1B:**
 
-- reading mode (safe Markdown renderer)
-- CJK search
 - organization (projects, collections, tags)
 - notes, reading state
 - sharing

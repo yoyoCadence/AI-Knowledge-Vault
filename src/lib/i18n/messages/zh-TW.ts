@@ -114,8 +114,19 @@ export const zhTW = {
   "artifact.processing.pending": "等待處理",
   "artifact.processing.processing": "處理中",
   "artifact.references": "文件內引用的來源",
-  "artifact.readingSoon":
-    "閱讀模式將在下一個版本提供。目前可以使用上方的安全預覽，或下載原始檔在本機開啟。",
+
+  "reader.title": "閱讀模式",
+  "reader.tabRead": "閱讀",
+  "reader.tabPreview": "預覽",
+  "reader.image": "［圖片：{alt}］",
+  "reader.imageNoAlt": "未提供說明",
+  "reader.empty": "這個版本沒有可閱讀的文字內容。可以下載原始檔查看。",
+  "reader.pending": "內容仍在處理中，完成後即可閱讀。",
+  "reader.source": "內容由原始檔擷取並重新排版，原始樣式與互動不會顯示。",
+  "reader.pdfNote": "PDF 依頁擷取文字；原始版面與圖片請下載原始檔。",
+  "reader.imageNote": "圖片作品以縮圖顯示；完整解析度請下載原始檔。",
+  "reader.imageMissing": "這張圖片還沒有縮圖。可以下載原始檔查看。",
+  "reader.restored": "目前顯示的是備份中的文字，背景正在重新擷取完整內容。",
 
   "preview.title": "安全預覽",
   "preview.isolated": "預覽在獨立的網域中顯示，並停用所有指令碼；互動功能不會執行。",
@@ -128,7 +139,7 @@ export const zhTW = {
   "preview.failed": "預覽產生失敗。原始檔已完整保存，可以下載後在本機開啟。",
   "preview.framework": "這是需要建置的原始碼專案。為了安全，不在此執行；可以下載原始檔在本機建置。",
   "preview.unavailable": "這個作品沒有可安全顯示的網頁預覽。",
-  "preview.notYet": "此格式的預覽將在閱讀模式中提供。目前可以下載原始檔。",
+  "preview.notYet": "這個格式沒有網頁預覽，請切換到「閱讀」查看內容，或下載原始檔。",
   "artifact.warnings": "處理備註",
 
   "import.title": "匯入與備份",

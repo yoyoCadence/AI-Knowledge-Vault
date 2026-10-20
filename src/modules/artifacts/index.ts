@@ -5,7 +5,9 @@ export {
   getArtifactDetail,
   getVersionWithOriginal,
   getVersionOverview,
+  getVersionContent,
   type ArtifactCard,
+  type VersionContent,
 } from "./queries";
 export { createOriginalDownload, ORIGINAL_DOWNLOAD_TTL_SECONDS } from "./download";
 export { getThumbnailForActor } from "./thumbnail";
