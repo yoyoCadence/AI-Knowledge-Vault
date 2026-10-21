@@ -18,6 +18,8 @@ import {
   extractedDocuments,
   fileAssets,
   processingJobs,
+  tags,
+  artifactTags,
   workspaces,
 } from "@/infrastructure/database/schema";
 import { getStorage, LocalStorageAdapter } from "@/infrastructure/storage";
@@ -31,7 +33,9 @@ import {
   writeExport,
 } from "@/modules/backup";
 import { formatChecksums } from "@/modules/backup/format";
-import { SEARCH_INDEX_JOB_TYPE, TOKENIZER_VERSION } from "@/modules/search";
+import type { Actor } from "@/modules/auth";
+import { SEARCH_INDEX_JOB_TYPE, searchArtifacts, TOKENIZER_VERSION } from "@/modules/search";
+import { ensureTag, setArtifactTag } from "@/modules/tags";
 import { SafeZip } from "@/modules/extraction";
 import {
   claudeDesignZipEntries,
@@ -52,6 +56,7 @@ import { createTestActor, drainJobs, newBatch, uploadFile } from "../helpers/imp
 
 const db = testDb();
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+const meta = { ipAddress: null, userAgent: "vitest" };
 let dir: string;
 
 beforeAll(async () => {
@@ -90,7 +95,23 @@ async function snapshot(workspaceId: string) {
     .from(fileAssets)
     .where(eq(fileAssets.workspaceId, workspaceId))
     .orderBy(asc(fileAssets.sha256));
+  const tagRows = await db
+    .select()
+    .from(tags)
+    .where(eq(tags.workspaceId, workspaceId))
+    .orderBy(asc(tags.id));
+  const tagLinkRows = await db
+    .select()
+    .from(artifactTags)
+    .where(eq(artifactTags.workspaceId, workspaceId))
+    .orderBy(asc(artifactTags.artifactId), asc(artifactTags.tagId));
   return {
+    tags: tagRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      normalizedName: row.normalizedName,
+    })),
+    artifactTags: tagLinkRows.map((row) => ({ artifactId: row.artifactId, tagId: row.tagId })),
     artifacts: artifactRows.map((row) => ({
       id: row.id,
       title: row.title,
@@ -177,7 +198,7 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
   let archive: string;
   let before: Awaited<ReturnType<typeof snapshot>>;
   let originals: Map<string, Buffer>;
-  let target: { workspaceId: string; userId: string };
+  let target: Actor;
   let restored: LocalStorageAdapter;
   beforeAll(() => {
     restored = freshStorage("restored");
@@ -208,7 +229,26 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     });
     await drainJobs();
 
+    // Tags (format v2): two on the first artifact, one shared with the second, one unused.
+    const seeded = await db
+      .select({ id: artifacts.id })
+      .from(artifacts)
+      .where(eq(artifacts.workspaceId, source.workspaceId))
+      .orderBy(asc(artifacts.createdAt), asc(artifacts.id));
+    const city = (await ensureTag(db, source, "城市研究", meta)).tag;
+    const model = (await ensureTag(db, source, "ＡＩ 模型", meta)).tag;
+    await ensureTag(db, source, "未使用", meta);
+    for (const [artifactId, tagId] of [
+      [seeded[0]!.id, city.id],
+      [seeded[0]!.id, model.id],
+      [seeded[1]!.id, city.id],
+    ] as const) {
+      await setArtifactTag(db, source, { artifactId, tagId, present: true }, meta);
+    }
+
     before = await snapshot(source.workspaceId);
+    expect(before.tags).toHaveLength(3);
+    expect(before.artifactTags).toHaveLength(3);
     expect(before.artifacts).toHaveLength(5);
     expect(before.versions).toHaveLength(6);
     originals = new Map();
@@ -225,11 +265,14 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     archive = path.join(dir, "export.zip");
     const { manifest, filename } = await exportTo(source.workspaceId, archive);
     expect(filename).toMatch(/^knowledge-vault-export-.+-\d{8}T\d{6}Z\.zip$/);
+    expect(manifest.formatVersion).toBe(2);
     expect(manifest.counts).toMatchObject({
       artifacts: 5,
       artifactVersions: 6,
       fileAssets: 6,
       artifactFiles: 6,
+      tags: 3,
+      artifactTags: 3,
     });
     expect(manifest.counts.normalizedDocuments).toBeGreaterThanOrEqual(5);
 
@@ -267,7 +310,7 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
 
   it("restores into a clean workspace and empty storage with identical ids, metadata and bytes", async () => {
     const actor = await createTestActor();
-    target = { workspaceId: actor.workspaceId, userId: actor.userId };
+    target = actor;
     const report = await restoreArchive(db, restored, {
       archivePath: archive,
       workspaceId: target.workspaceId,
@@ -281,11 +324,15 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(report.counts.artifactVersions.restored).toBe(6);
     expect(report.counts.fileAssets).toEqual({ stored: 6, reused: 0, repaired: 0 });
     expect(report.reextractJobs).toBe(6);
+    expect(report.counts.tags).toMatchObject({ restored: 3, skipped: 0, copied: 0 });
+    expect(report.counts.artifactTags).toBe(3);
 
     const after = await snapshot(target.workspaceId);
     expect(after.artifacts).toEqual(before.artifacts);
     expect(after.versions).toEqual(before.versions);
     expect(after.assets).toEqual(before.assets);
+    expect(after.tags).toEqual(before.tags);
+    expect(after.artifactTags).toEqual(before.artifactTags);
 
     // Every original is byte-identical in the new storage.
     for (const asset of await db
@@ -339,6 +386,9 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
 
   it("re-extraction rebuilds text, sections, thumbnails and previews from the originals", async () => {
     await drainJobs({ storage: restored });
+    // The index jobs queued by the restore include the restored tags in the metadata.
+    const tagged = await searchArtifacts(db, target, { q: "城市研究" });
+    expect(tagged.items).toHaveLength(2);
     const versions = await db
       .select()
       .from(artifactVersions)
@@ -386,7 +436,43 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     });
     expect(report.counts.artifacts).toMatchObject({ restored: 0, skipped: 5, copied: 0 });
     expect(report.counts.fileAssets).toEqual({ stored: 0, reused: 6, repaired: 0 });
+    expect(report.counts.tags).toMatchObject({ restored: 0, skipped: 3, copied: 0 });
+    expect(report.counts.artifactTags).toBe(0);
+    // Nothing differs, so nothing is reported as kept.
+    expect(report.counts.artifactTagsKept).toBe(0);
+    expect(report.warnings.join("\n")).not.toMatch(/tag link/);
     expect(await workspaceRowCounts(target.workspaceId)).toEqual(counts);
+    const again = await snapshot(target.workspaceId);
+    expect(again.tags).toEqual(before.tags);
+    expect(again.artifactTags).toEqual(before.artifactTags);
+
+    // A tag removed since the export stays removed, and the report says so.
+    const removed = before.artifactTags[0]!;
+    await setArtifactTag(
+      db,
+      target,
+      { artifactId: removed.artifactId, tagId: removed.tagId, present: false },
+      meta,
+    );
+    const rerun = await restoreArchive(db, restored, {
+      archivePath: archive,
+      workspaceId: target.workspaceId,
+      userId: target.userId,
+      mode: "skip_existing",
+      restoreId: crypto.randomUUID(),
+      limits: restoreLimitsFromEnv(getEnv()),
+    });
+    expect(rerun.counts.artifactTagsKept).toBe(1);
+    expect(rerun.warnings.join("\n")).toMatch(
+      /1 tag link\(s\) from the archive were not added to artifacts that already existed/,
+    );
+    expect((await snapshot(target.workspaceId)).artifactTags).toHaveLength(2);
+    await setArtifactTag(
+      db,
+      target,
+      { artifactId: removed.artifactId, tagId: removed.tagId, present: true },
+      meta,
+    );
   });
 
   it("copy mode creates new ids for the same content and reuses the stored originals", async () => {
@@ -402,6 +488,12 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     });
     expect(report.counts.artifacts).toMatchObject({ restored: 0, skipped: 0, copied: 5 });
     expect(report.counts.fileAssets).toEqual({ stored: 0, reused: 6, repaired: 0 });
+    // Tags are merged by name: the copies carry the existing tags, none is duplicated.
+    expect(report.counts.tags).toMatchObject({ restored: 0, skipped: 3, copied: 0 });
+    expect(report.counts.artifactTags).toBe(3);
+    const afterCopy = await snapshot(target.workspaceId);
+    expect(afterCopy.tags).toEqual(before.tags);
+    expect(afterCopy.artifactTags).toHaveLength(6);
     const now = await workspaceRowCounts(target.workspaceId);
     expect(now).toEqual({
       artifacts: counts.artifacts + 5,
@@ -574,7 +666,117 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(configs).toEqual([{ isolationLevel: "repeatable read", accessMode: "read only" }]);
   });
 
-  it("rejects archives that are not format v1 exports", async () => {
+  it("still restores a format v1 archive (no tags)", async () => {
+    const v1 = path.join(dir, "format-v1.zip");
+    await rewriteArchive(archive, v1, (entries) => {
+      for (const name of [PATHS.tags, PATHS.artifactTags]) {
+        entries.splice(
+          entries.findIndex((entry) => entry.name === name),
+          1,
+        );
+      }
+      for (const name of [PATHS.manifest, PATHS.schemaVersion]) {
+        const entry = entries.find((candidate) => candidate.name === name)!;
+        const json = JSON.parse(Buffer.from(entry.data as Buffer).toString("utf8")) as {
+          formatVersion: number;
+          counts?: Record<string, number>;
+        };
+        json.formatVersion = 1;
+        delete json.counts?.tags;
+        delete json.counts?.artifactTags;
+        entry.data = Buffer.from(JSON.stringify(json));
+      }
+      reseal(entries);
+    });
+    const fresh = await createTestActor();
+    const report = await restoreArchive(db, freshStorage("format-v1"), {
+      archivePath: v1,
+      workspaceId: fresh.workspaceId,
+      userId: fresh.userId,
+      mode: "copy",
+      restoreId: crypto.randomUUID(),
+      limits: restoreLimitsFromEnv(getEnv()),
+    });
+    expect(report.source.formatVersion).toBe(1);
+    expect(report.failures).toEqual([]);
+    expect(report.counts.artifacts.copied).toBe(5);
+    expect(report.counts.tags).toMatchObject({ restored: 0, skipped: 0, copied: 0 });
+    expect((await snapshot(fresh.workspaceId)).tags).toEqual([]);
+  });
+
+  it("refuses inconsistent tag metadata before anything is written", async () => {
+    const cases: [string, (tagList: { id: string; name: string }[], links: unknown[]) => void][] = [
+      [
+        "dangling",
+        (_tags, links) => links.push({ ...(links[0] as object), tagId: crypto.randomUUID() }),
+      ],
+      ["same name", (tagList) => (tagList[1]!.name = ` ${tagList[0]!.name.toUpperCase()} `)],
+    ];
+    for (const [label, mutate] of cases) {
+      const broken = path.join(dir, `tags-${label.replace(" ", "-")}.zip`);
+      await rewriteArchive(archive, broken, (entries) => {
+        const tagEntry = entries.find((entry) => entry.name === PATHS.tags)!;
+        const linkEntry = entries.find((entry) => entry.name === PATHS.artifactTags)!;
+        const tagList = JSON.parse(Buffer.from(tagEntry.data as Buffer).toString("utf8")) as {
+          id: string;
+          name: string;
+        }[];
+        const links = JSON.parse(
+          Buffer.from(linkEntry.data as Buffer).toString("utf8"),
+        ) as unknown[];
+        mutate(tagList, links);
+        tagEntry.data = Buffer.from(JSON.stringify(tagList));
+        linkEntry.data = Buffer.from(JSON.stringify(links));
+        reseal(entries);
+      });
+      const fresh = await createTestActor();
+      await expect(
+        restoreArchive(db, freshStorage(`tags-${label}`), {
+          archivePath: broken,
+          workspaceId: fresh.workspaceId,
+          userId: fresh.userId,
+          mode: "skip_existing",
+          restoreId: crypto.randomUUID(),
+          limits: restoreLimitsFromEnv(getEnv()),
+        }),
+        label,
+      ).rejects.toSatisfy(
+        (error: unknown) =>
+          error instanceof AppError &&
+          error.code === "UNSUPPORTED_EXPORT_FORMAT" &&
+          error.details?.nothingWritten === true,
+      );
+      expect(await workspaceRowCounts(fresh.workspaceId), label).toEqual({
+        artifacts: 0,
+        versions: 0,
+        fileAssets: 0,
+      });
+    }
+  });
+
+  it("rejects archives that are not supported exports", async () => {
+    const future = path.join(dir, "format-v99.zip");
+    await rewriteArchive(archive, future, (entries) => {
+      const entry = entries.find((candidate) => candidate.name === PATHS.manifest)!;
+      const json = JSON.parse(Buffer.from(entry.data as Buffer).toString("utf8")) as {
+        formatVersion: number;
+      };
+      json.formatVersion = 99;
+      entry.data = Buffer.from(JSON.stringify(json));
+      reseal(entries);
+    });
+    const someone = await createTestActor();
+    await expect(
+      restoreArchive(db, freshStorage("future"), {
+        archivePath: future,
+        workspaceId: someone.workspaceId,
+        userId: someone.userId,
+        mode: "skip_existing",
+        restoreId: crypto.randomUUID(),
+        limits: restoreLimitsFromEnv(getEnv()),
+      }),
+    ).rejects.toThrow(/unsupported export format .* v99/);
+
     const bogus = path.join(dir, "bogus.zip");
     await writeFile(bogus, buildZip([{ name: "index.html", data: htmlDocument() }]));
     const fresh = await createTestActor();

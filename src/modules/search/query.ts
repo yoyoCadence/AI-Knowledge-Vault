@@ -97,7 +97,7 @@ type Row = {
 export async function searchArtifacts(
   db: DbExecutor,
   actor: Actor,
-  input: { q: string; offset?: number; limit?: number },
+  input: { q: string; offset?: number; limit?: number; tagId?: string },
 ): Promise<{ items: SearchHit[]; nextOffset: number | null; terms: QueryTerm[] }> {
   const terms = parseQuery(input.q);
   const termQueries = termTsqueries(terms);
@@ -105,6 +105,10 @@ export async function searchArtifacts(
   const limit = Math.min(Math.max(input.limit ?? SEARCH_PAGE_SIZE, 1), 50);
   const offset = Math.min(Math.max(input.offset ?? 0, 0), MAX_OFFSET);
   const workspaceId = actor.workspaceId;
+  // Filters apply where candidates are chosen, in the same scoped query (never afterwards).
+  const tagFilter = input.tagId
+    ? sql`and exists (select 1 from artifact_tags f where f.artifact_id = a.id and f.tag_id = ${input.tagId})`
+    : sql``;
   const termRows = sql.join(
     termQueries.map((query, index) => sql`(${index + 1}::int, ${query}::tsquery)`),
     sql`, `,
@@ -124,6 +128,7 @@ export async function searchArtifacts(
         and a.deleted_at is null
         and c.artifact_version_id = a.current_version_id
         and c.search_vector @@ q.query
+        ${tagFilter}
     ),
     meta_rows as (
       select d.artifact_id, d.search_vector,
@@ -134,6 +139,7 @@ export async function searchArtifacts(
       where d.workspace_id = ${workspaceId} and a.workspace_id = ${workspaceId}
         and a.deleted_at is null
         and d.search_vector @@ q.query
+        ${tagFilter}
     ),
     -- Which term matched which row. One aggregation (no joins back onto its own result: the
     -- planner cannot estimate a HAVING, and nested loops over it grew quadratically).

@@ -4,6 +4,7 @@ export const zhTW = {
   "app.tagline": "不依賴單一 AI 平台的個人知識資產庫",
 
   "nav.library": "知識庫",
+  "nav.tags": "標籤",
   "nav.collections": "收藏分類",
   "nav.knowledgeMap": "知識地圖",
   "nav.aiResearch": "AI 研究",
@@ -214,6 +215,7 @@ export const zhTW = {
   "restore.counts.versions":
     "版本：還原 {restored} · 略過 {skipped} · 副本 {copied} · 失敗 {failed}",
   "restore.counts.files": "原始檔：新存 {stored} · 已存在 {reused} · 修復 {repaired}",
+  "restore.counts.tags": "標籤：新增 {restored} · 併入既有 {skipped} · 副本 {copied}",
   "restore.reextract": "{count} 個版本正在背景重建內容",
   "restore.warnings": "{count} 則說明",
   "restore.nothingWritten": "驗證未通過，沒有寫入任何資料。",
@@ -252,6 +254,34 @@ export const zhTW = {
   "backup.restoreHint":
     "還原：使用下方的「從備份還原」，或在伺服器上執行 pnpm backup:restore <檔案> --workspace <slug>。",
   "settings.title": "設定",
+  "tags.title": "標籤",
+  "tags.description":
+    "用標籤整理作品；點一個標籤就能看到帶有它的所有作品。只差在大小寫、全形半形或空白的名稱，視為同一個標籤。",
+  "tags.empty.title": "還沒有標籤",
+  "tags.empty.body": "在作品頁面的「標籤」區塊輸入名稱，就會建立標籤並加到作品上。",
+  "tags.count": "{count} 份作品",
+  "tags.rename": "重新命名",
+  "tags.merge": "合併",
+  "tags.mergeInto": "合併到",
+  "tags.choose": "選擇標籤",
+  "tags.delete": "刪除",
+  "tags.deleteConfirm": "再按一次確認刪除",
+  "tags.save": "儲存",
+  "tags.cancel": "取消",
+  "tags.section": "標籤",
+  "tags.none": "還沒有標籤。",
+  "tags.add": "加上標籤",
+  "tags.placeholder": "輸入標籤名稱",
+  "tags.remove": "移除標籤「{name}」",
+  "tags.more": "+{count}",
+  "tags.filtered": "標籤：#{name}",
+  "tags.clearFilter": "清除標籤篩選",
+  "tags.unknown": "找不到這個標籤",
+  "tags.noArtifacts": "沒有作品帶有這個標籤。",
+  "tags.error.invalid": "標籤名稱需為 1 到 50 個可見字元。",
+  "tags.error.conflict": "已經有同名的標籤；如果要把兩者合一，請使用「合併」。",
+  "tags.error.gone": "這個標籤或作品已經不存在，請重新整理頁面。",
+  "tags.error.generic": "標籤沒有更新，請再試一次。",
 } as const;
 
 export type MessageKey = keyof typeof zhTW;

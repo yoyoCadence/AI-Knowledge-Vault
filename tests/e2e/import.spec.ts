@@ -111,6 +111,22 @@ test.describe("import → library → artifact (Scenario A)", () => {
       createHash("sha256").update(zipBytes).digest("hex"),
     );
 
+    // Tag it, follow the tag to the filtered library, and search by the tag's name.
+    const tagEditor = page.getByTestId("tag-editor");
+    await tagEditor.getByRole("combobox", { name: "加上標籤" }).fill("熱島專題");
+    await tagEditor.getByRole("button", { name: "加上標籤" }).click();
+    const tagLink = tagEditor.getByRole("link", { name: "#熱島專題" });
+    await expect(tagLink).toBeVisible();
+    await tagLink.click();
+    await expect(page.getByTestId("tag-filter")).toContainText("熱島專題");
+    await expect(page.getByRole("heading", { name: "端對端 Claude Design 報告" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "端對端測試筆記" })).toHaveCount(0);
+    await page.goto(`/?q=${encodeURIComponent("熱島專題")}`);
+    await expect(page.getByTestId("search-results").getByRole("link")).toHaveCount(1);
+    await page.goto("/tags");
+    await expect(page.getByTestId("tag-row")).toContainText("#熱島專題");
+    await expect(page.getByTestId("tag-row")).toContainText("1 份作品");
+
     // Portable export of the library (same session: sign-in is rate limited).
     await page.goto("/import");
     await page.getByTestId("export-create").click();
@@ -159,6 +175,8 @@ test.describe("import → library → artifact (Scenario A)", () => {
     const result = page.getByTestId("restore-result");
     await expect(result.getByText("完成", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(result.getByText(/作品：還原 0 · 略過 2 · 副本 0 · 失敗 0/)).toBeVisible();
+    // The archive carried the tag (format v2); it already exists here, so it is merged.
+    await expect(result.getByText(/標籤：新增 0 · 併入既有 1 · 副本 0/)).toBeVisible();
     expect(creates).toHaveLength(1);
   });
 

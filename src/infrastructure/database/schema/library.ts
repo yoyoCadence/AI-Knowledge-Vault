@@ -161,6 +161,9 @@ export const artifacts = pgTable(
     index("artifacts_workspace_listing_idx").on(t.workspaceId, t.deletedAt, t.createdAt.desc()),
     index("artifacts_workspace_identity_idx").on(t.workspaceId, t.identityKey),
     index("artifacts_workspace_project_idx").on(t.workspaceId, t.projectId),
+    // Target of workspace-scoped composite foreign keys (artifact_tags): a link row can only
+    // pair an artifact and a tag of the same workspace.
+    unique("artifacts_workspace_id_id_unique").on(t.workspaceId, t.id),
   ],
 );
 

@@ -7,6 +7,7 @@ import { label } from "@/components/library/artifact-card";
 import { KindIcon } from "@/components/library/kind-icon";
 import { PreviewFrame } from "@/components/preview/preview-frame";
 import { ReadingBody } from "@/components/reader/reading-body";
+import { TagEditor } from "@/components/tags/tag-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,8 +18,15 @@ import { formatBytes, formatDate, formatDateTime } from "@/lib/format";
 import { isUuid } from "@/lib/ids";
 import { t, tOptional } from "@/lib/i18n";
 import { firstParam, type PageSearchParams } from "@/lib/search-params";
-import { getArtifactDetail, getVersionContent, getVersionOverview } from "@/modules/artifacts";
+import {
+  getArtifactDetail,
+  getVersionContent,
+  getVersionOverview,
+  tagsByArtifact,
+} from "@/modules/artifacts";
+import { roleAllows } from "@/modules/auth";
 import { issuePreviewUrl } from "@/modules/preview";
+import { listTags } from "@/modules/tags";
 
 type View = "read" | "preview";
 
@@ -37,7 +45,10 @@ async function load(id: string, requested?: string) {
       requested === "read" || requested === "preview" ? requested : preview ? "preview" : "read";
     const content =
       currentId && view === "read" ? await getVersionContent(getDb(), actor, id, currentId) : null;
-    return { ...detail, overview, preview, view, content };
+    const tags = (await tagsByArtifact(getDb(), actor.workspaceId, [id])).get(id) ?? [];
+    const canEdit = roleAllows(actor.role, "library:write");
+    const allTags = canEdit ? await listTags(getDb(), actor) : [];
+    return { ...detail, overview, preview, view, content, tags, allTags, canEdit };
   } catch (error) {
     if (isAppError(error) && error.code === "NOT_FOUND") notFound();
     throw error;
@@ -103,7 +114,8 @@ export default async function ArtifactPage({
 }) {
   const { id } = await params;
   const requested = firstParam((await searchParams).view);
-  const { artifact, versions, overview, preview, view, content } = await load(id, requested);
+  const { artifact, versions, overview, preview, view, content, tags, allTags, canEdit } =
+    await load(id, requested);
   const version = overview?.version;
   const unknown = <span className="text-muted-foreground">{t("artifact.unknown")}</span>;
   const warnings = [...(overview?.extraction?.warnings ?? [])];
@@ -292,6 +304,20 @@ export default async function ArtifactPage({
               </CardContent>
             </Card>
           ) : null}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{t("tags.section")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <TagEditor
+                artifactId={artifact.id}
+                tags={tags}
+                allTags={allTags.map((tag) => ({ id: tag.id, name: tag.name }))}
+                canEdit={canEdit}
+              />
+            </CardContent>
+          </Card>
 
           {version ? (
             <Card>

@@ -4,12 +4,14 @@ import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import {
   artifacts,
   artifactSearchDocuments,
+  artifactTags,
   artifactVersions,
   contentChunks,
   documentSections,
   extractedDocuments,
   fileAssets,
   searchIndexStates,
+  tags,
 } from "@/infrastructure/database/schema";
 import { enqueueJob, type JobDefinition } from "@/modules/jobs";
 import { chunkText } from "./chunks";
@@ -26,11 +28,11 @@ export const SEARCH_INDEX_JOB_TYPE = "search.index_version";
 export const SEARCH_REINDEX_ALL_JOB_TYPE = "search.reindex_all";
 const INSERT_BATCH = 200;
 /**
- * Metadata indexed per field, in characters. A tsvector holds at most 1 MB, and an unbounded
+ * Metadata indexed per field, in characters (tags: how many). A tsvector holds at most 1 MB, and an unbounded
  * description (from an edited archive, say) would fail the whole index job every time. The
  * full text stays in the database; only the searchable copy is capped.
  */
-const METADATA_LIMITS = { title: 500, text: 5_000, source: 500 } as const;
+const METADATA_LIMITS = { title: 500, text: 5_000, source: 500, tags: 200 } as const;
 
 /** The first `max` characters (code points, never half a surrogate pair). */
 function clip(text: string | null | undefined, max: number): string {
@@ -65,7 +67,8 @@ export async function enqueueVersionIndex(
 }
 
 /**
- * Rebuilds an artifact's metadata search document from its row and current version. Call it
+ * Rebuilds an artifact's metadata search document from its row, its tags and its current
+ * version (title A; description, summary and tags B; source fields C). Call it
  * inside a transaction: the artifact row is locked first, so a version that becomes current
  * while this runs is either read here or waits until this document is written. Without the
  * lock, a slower job for the old version could overwrite the new version's document.
@@ -93,6 +96,13 @@ export async function indexArtifactMetadata(tx: DbExecutor, artifactId: string) 
     .leftJoin(fileAssets, eq(fileAssets.id, artifactVersions.primaryFileId))
     .where(eq(artifacts.id, artifactId));
   if (!row) return;
+  const tagRows = await tx
+    .select({ name: tags.name })
+    .from(artifactTags)
+    .innerJoin(tags, eq(tags.id, artifactTags.tagId))
+    .where(eq(artifactTags.artifactId, artifactId))
+    .orderBy(asc(tags.normalizedName))
+    .limit(METADATA_LIMITS.tags);
   const searchVector = toTsvector([
     { text: clip(row.title, METADATA_LIMITS.title), weight: "A" },
     {
@@ -102,6 +112,8 @@ export async function indexArtifactMetadata(tx: DbExecutor, artifactId: string) 
         .join("\n"),
       weight: "B",
     },
+    // One part per tag: a phrase never runs from one tag into the next.
+    ...tagRows.map((tag) => ({ text: tag.name, weight: "B" as const })),
     {
       text: [row.sourcePlatform, row.sourceModel, row.author, row.filename]
         .map((text) => clip(text, METADATA_LIMITS.source))

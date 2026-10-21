@@ -284,3 +284,21 @@ peer dependencies). Anything not verified that way is marked _assumption_.
   - `file_assets` are deleted only by a GC job when no `artifact_files` row references them
     and a grace period has elapsed. `artifact_files.file_asset_id` is `ON DELETE NO ACTION`,
     so the database refuses to delete a file asset that is still in use.
+
+## ADR-018 Export format versions: bump for every added table, read every older version
+
+- **Status:** accepted (PR 13, tags)
+- **Context:** Tags are the first data added after export format v1. An optional `tags.json`
+  inside "v1" would let an older app restore a newer archive and silently drop the tags:
+  a backup that looks complete but is not.
+- **Decision:**
+  - Every format change that adds data bumps `formatVersion` (v2 = v1 + `tags.json` and
+    `artifact_tags.json`). Exports are written in the latest version.
+  - Restore keeps a schema per version and reads every supported one (a v1 archive has no
+    tags). An unknown version is refused with `UNSUPPORTED_EXPORT_FORMAT`, which names the
+    versions this app reads.
+  - Restored tags merge by normalized name; an artifact that already exists keeps its own
+    tags (BACKUP_RECOVERY §6).
+- **Consequences:** Collections, notes and reading state will each bump the version again
+  (or ship together in one bump). The round-trip test restores a rewritten v1 archive, so
+  backward compatibility is checked on every change.

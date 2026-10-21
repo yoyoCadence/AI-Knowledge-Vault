@@ -18,14 +18,14 @@ verified.** `tests/integration/backup-roundtrip.test.ts` proves this on every CI
 | Users, password hashes, sessions, auth accounts | **never**                                             | —               | the admin is re-created with `admin:create` |
 | Audit logs                                      | optional (`--include-audit`)                          | P2              | no, but not needed for restore              |
 
-## 2. Portable export format v1
+## 2. Portable export format (current: v2)
 
 File name: `knowledge-vault-export-{workspaceSlug}-{YYYYMMDDTHHmmssZ}.zip`
 
 ```
 README.txt                     # human-readable explanation of this format (no app needed)
 manifest.json                  # format, versions, counts, created_at, source app version, encryption: "none"
-schema-version.json            # {"format":"ai-knowledge-vault-export","formatVersion":1,"dbMigration":"0003_…"}
+schema-version.json            # {"format":"ai-knowledge-vault-export","formatVersion":2,"dbMigration":"0007_…"}
 metadata/
   workspace.json               # {id, name, slug}
   research_projects.json
@@ -33,10 +33,10 @@ metadata/
   artifact_versions.json       # includes source metadata, analysis, version_number, primary_file_id
   file_assets.json             # id, sha256, byte_size, mime_type, original_filename, archive_path
   artifact_files.json
-  collections.json             # Phase 1B+
+  tags.json                    # v2+: [{id, name, createdAt, updatedAt}]
+  artifact_tags.json           # v2+: [{artifactId, tagId, createdAt}]
+  collections.json             # planned (a later format version)
   collection_items.json
-  tags.json
-  artifact_tags.json
   artifact_notes.json
   artifact_reading_states.json # user ids replaced by "owner"
   share_links.json             # without token_hash
@@ -51,13 +51,16 @@ Properties:
    original filenames preserved, and Markdown text.
 2. **Originals fully retrievable.** The bytes are the originals, and the path includes the
    SHA-256.
-3. **Versioned.** `formatVersion` (integer) plus the DB migration tag.
+3. **Versioned.** `formatVersion` (integer) plus the DB migration tag. Every format change
+   that adds data bumps the version (ADR-018): v1 = the original layout; v2 adds
+   `tags.json` and `artifact_tags.json`. Exports are always written in the latest version.
 4. **Integrity.** `checksums.sha256` covers every entry except itself and `manifest.json`.
    `manifest.json` carries the SHA-256 of `checksums.sha256`, so the manifest is the root of
    trust and the two files together cover the whole archive. (Listing the manifest in the
    checksums would be circular.)
-5. **Migratable.** The restore code keeps a reader per `formatVersion`, and newer readers
-   upgrade older formats in memory.
+5. **Migratable.** Restore reads every supported `formatVersion` (today v1 and v2; a v1
+   archive simply has no tags). An app that does not know a version refuses the archive
+   with `UNSUPPORTED_EXPORT_FORMAT` instead of silently dropping data it cannot read.
 6. **Re-importable.** Import & Backup → 從備份還原 (`POST /api/restores`), or `pnpm backup:restore <file>`.
 7. **No secrets.** See §1.
 
@@ -117,7 +120,10 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
 2. **Integrity.** Recompute SHA-256 for every entry and compare with `checksums.sha256`. Any
    mismatch → **abort before writing anything** (`CHECKSUM_MISMATCH`, listing the files).
    Each original's path hash must also equal its content hash.
-3. **Parse metadata.** Zod-validate every JSON file against the format v1 schema.
+3. **Parse metadata.** Zod-validate every JSON file against the schema of the archive's
+   format version, and cross-check it: every reference resolves inside the archive, primary
+   ids are unique, and (v2) tag names are valid and distinct as the app compares them
+   (NFKC, case, spacing). Problems abort before anything is written.
 4. **Originals.** For each file asset:
    - If `(target_workspace, sha256)` already exists, reuse it.
    - Otherwise, put the bytes to `ws/{ws}/originals/{sha256}` and insert `file_assets`
@@ -141,15 +147,31 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    Workspace IDs are always remapped to the target workspace. User references
    (`created_by`, `author_id`) map to the restoring user.
 
+   **Tags are merged by name, in both modes.** A tag whose normalized name the target
+   workspace already has maps to that tag (reported as `skipped`); the same tag (same id,
+   already in the target, perhaps renamed since the export) maps to itself. Only a new name
+   is inserted. The unique name constraint makes this hold under retries and concurrent
+   restores too, so a restore never creates two tags that look the same.
+
 6. **Rows** are inserted in dependency order inside one transaction per artifact, so a
    failure affects only that artifact, which is reported: projects → collections → tags →
    artifacts → versions → artifact_files → tags/collections links → notes → reading states.
-   `current_version_id` is set after versions exist.
+   `current_version_id` is set after versions exist. Tag links are written with each newly
+   restored artifact, in its transaction, de-duplicated (two archived tags can map to one
+   tag here: merged by name, or the same tag renamed since an older export). An artifact
+   that already exists keeps its own tags: a tag removed since the export stays removed
+   (versions it lacks are still added). Archived links such an artifact lacks are counted
+   (`artifactTagsKept`) and named in a warning, so nothing is dropped silently. Before writing
+   links, the target tags are locked `FOR KEY SHARE` in id order, as every tag operation
+   locks them, so a restore cannot deadlock with a tag merge; a tag deleted or merged while
+   the restore ran is gone, and its link is dropped and counted (`artifactTagsDropped`)
+   instead of failing the artifact.
 7. **Rebuild.** One `restore.reextract_version` job per restored version. It re-runs
    extraction and preview generation from the restored original, then indexing (Phase 1B).
    The archived `normalized/*.md` is used as a fallback extraction if re-extraction fails.
 8. **Report:**
-   - counts per entity (`restored`, `skipped`, `copied`, `failed`)
+   - counts per entity (`restored`, `skipped`, `copied`, `failed`; for tags `skipped` means
+     merged into an existing tag) and the number of tag links written
    - ID-mapping entries (for copies)
    - checksum results
    - warnings

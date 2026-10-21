@@ -5,16 +5,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import {
   artifactFiles,
   artifacts,
+  artifactTags,
   artifactVersions,
   fileAssets,
   researchProjects,
   type RestoreMode,
+  tags,
 } from "@/infrastructure/database/schema";
 import type { StorageAdapter } from "@/infrastructure/storage";
 import { AppError, isAppError } from "@/lib/errors";
@@ -24,25 +26,31 @@ import { storeOriginal } from "@/modules/files/originals";
 import { deterministicId, saveExtraction } from "@/modules/imports/derive";
 import { enqueueJob } from "@/modules/jobs";
 import { enqueueVersionIndex } from "@/modules/search/indexer";
+import { normalizeTagName } from "@/modules/tags";
 import {
   ArtifactFileV1,
+  ArtifactTagV2,
   ArtifactV1,
   ChecksumFormatError,
   EXPORT_FORMAT,
   EXPORT_FORMAT_VERSION,
   FileAssetV1,
   hashFromOriginalPath,
+  type Manifest,
   ManifestV1,
+  ManifestV2,
   normalizedPath,
   parseChecksums,
   PATHS,
   ProjectV1,
+  SchemaVersion,
+  SUPPORTED_FORMAT_VERSIONS,
+  TagV2,
   VersionV1,
-  type ManifestV1 as Manifest,
 } from "./format";
 
 /**
- * Restore of a format v1 archive into a workspace (docs/BACKUP_RECOVERY.md §6).
+ * Restore of a format v1 or v2 archive into a workspace (docs/BACKUP_RECOVERY.md §6).
  *
  * Order matters for safety:
  * 1. The archive is opened with the same SafeZip defences as imports.
@@ -75,6 +83,7 @@ const MAX_LISTED_PROBLEMS = 50;
 export type RestoreLimits = ZipLimits;
 
 type Outcome = "restored" | "skipped" | "copied" | "failed";
+const SUPPORTED: readonly number[] = SUPPORTED_FORMAT_VERSIONS;
 type Tally = Record<Outcome, number>;
 const tally = (): Tally => ({ restored: 0, skipped: 0, copied: 0, failed: 0 });
 
@@ -93,6 +102,17 @@ export interface RestoreReport {
     artifactVersions: Tally;
     /** stored: new originals; reused: already present by hash; repaired: object re-written. */
     fileAssets: { stored: number; reused: number; repaired: number };
+    /** skipped: merged into the target's tag of the same name (or the same tag). v2 only. */
+    tags: Tally;
+    /** Tag links written for newly restored artifacts. */
+    artifactTags: number;
+    /**
+     * Archived tag links an artifact that already existed does not have. They are not added:
+     * the artifact keeps its current tags (a tag removed since the export stays removed).
+     */
+    artifactTagsKept: number;
+    /** Links not restored because their tag was deleted or merged while the restore ran. */
+    artifactTagsDropped: number;
   };
   /** Old → new ids for everything restored under a new id (capped). */
   idMap: Record<string, string>;
@@ -138,7 +158,7 @@ async function readJson<T>(zip: SafeZip, entryPath: string, schema: z.ZodType<T>
   }
   const result = schema.safeParse(parsed);
   if (!result.success) {
-    throw invalidArchive(`${entryPath} does not match export format v1`, {
+    throw invalidArchive(`${entryPath} does not match the export format`, {
       issues: result.error.issues.slice(0, 10).map((issue) => ({
         path: issue.path.join("."),
         message: issue.message,
@@ -180,15 +200,24 @@ function markdownBody(text: string): { title: string | null; body: string } {
 
 /** Verifies the archive completely; returns its validated contents. Writes nothing. */
 async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
-  const manifest = await readJson(zip, PATHS.manifest, ManifestV1.loose());
-  if (manifest.format !== EXPORT_FORMAT || manifest.formatVersion !== EXPORT_FORMAT_VERSION) {
-    throw invalidArchive(`unsupported export format ${manifest.format} v${manifest.formatVersion}`);
-  }
-  await readJson(
+  const header = await readJson(
     zip,
-    PATHS.schemaVersion,
-    z.object({ format: z.literal(EXPORT_FORMAT), formatVersion: z.literal(1) }).loose(),
+    PATHS.manifest,
+    z.object({ format: z.string(), formatVersion: z.number() }).loose(),
   );
+  if (header.format !== EXPORT_FORMAT || !SUPPORTED.includes(header.formatVersion)) {
+    throw invalidArchive(
+      `unsupported export format ${header.format} v${header.formatVersion} (this app reads v${SUPPORTED.join(", v")})`,
+    );
+  }
+  const manifest: Manifest =
+    header.formatVersion === 1
+      ? await readJson(zip, PATHS.manifest, ManifestV1.loose())
+      : await readJson(zip, PATHS.manifest, ManifestV2.loose());
+  const schemaVersion = await readJson(zip, PATHS.schemaVersion, SchemaVersion.loose());
+  if (schemaVersion.formatVersion !== manifest.formatVersion) {
+    throw invalidArchive("schema-version.json and manifest.json disagree on the format version");
+  }
   if (!zip.has(PATHS.checksums)) throw invalidArchive("checksums.sha256 is missing");
   const checksumsBytes = await zip.readBuffer(PATHS.checksums, MAX_METADATA_BYTES);
   if (createHash("sha256").update(checksumsBytes).digest("hex") !== manifest.checksumsSha256) {
@@ -238,6 +267,13 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
   const versions = await readJson(zip, PATHS.versions, z.array(VersionV1));
   const assets = await readJson(zip, PATHS.fileAssets, z.array(FileAssetV1));
   const links = await readJson(zip, PATHS.artifactFiles, z.array(ArtifactFileV1));
+  // v1 archives have no tags.
+  const tagList =
+    manifest.formatVersion >= 2 ? await readJson(zip, PATHS.tags, z.array(TagV2)) : [];
+  const tagLinks =
+    manifest.formatVersion >= 2
+      ? await readJson(zip, PATHS.artifactTags, z.array(ArtifactTagV2))
+      : [];
 
   // Primary ids must be unique: duplicates would silently collapse in the maps below, so a
   // version could be restored against the wrong original.
@@ -248,6 +284,7 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
     ["version", versions],
     ["file asset", assets],
     ["artifact file", links],
+    ["tag", tagList],
   ];
   for (const [kind, rows] of tables) {
     const seen = new Set<string>();
@@ -284,12 +321,42 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
     if (!versionById.has(link.artifactVersionId) || !assetById.has(link.fileAssetId))
       problems.push(`artifact file ${link.id}: dangling reference`);
   }
+  // Tag names must be valid and distinct as the app compares them (restore merges by name).
+  const tagIds = new Set(tagList.map((tag) => tag.id));
+  const tagNames = new Set<string>();
+  for (const tag of tagList) {
+    try {
+      const { normalizedName } = normalizeTagName(tag.name);
+      if (tagNames.has(normalizedName)) problems.push(`tag ${tag.id}: duplicate name`);
+      tagNames.add(normalizedName);
+    } catch {
+      problems.push(`tag ${tag.id}: invalid name`);
+    }
+  }
+  const tagPairs = new Set<string>();
+  for (const link of tagLinks) {
+    if (!artifactIds.has(link.artifactId) || !tagIds.has(link.tagId))
+      problems.push(`artifact tag ${link.artifactId}/${link.tagId}: dangling reference`);
+    const pair = `${link.artifactId}/${link.tagId}`;
+    if (tagPairs.has(pair)) problems.push(`artifact tag ${pair}: duplicate`);
+    tagPairs.add(pair);
+  }
   if (problems.length > 0) {
     throw invalidArchive("the archive's metadata is inconsistent", {
       problems: problems.slice(0, MAX_LISTED_PROBLEMS),
     });
   }
-  return { manifest, verified: listed.size, projects, artifactList, versions, assets, links };
+  return {
+    manifest,
+    verified: listed.size,
+    projects,
+    artifactList,
+    versions,
+    assets,
+    links,
+    tagList,
+    tagLinks,
+  };
 }
 
 /** Postgres caps bind parameters at 65,535; id lookups are done in chunks well below that. */
@@ -307,7 +374,11 @@ async function inChunks<T>(ids: string[], query: (chunk: string[]) => Promise<T[
 async function existingIds(
   db: DbExecutor,
   table:
-    typeof artifacts | typeof researchProjects | typeof artifactVersions | typeof artifactFiles,
+    | typeof artifacts
+    | typeof researchProjects
+    | typeof artifactVersions
+    | typeof artifactFiles
+    | typeof tags,
   ids: string[],
 ): Promise<Map<string, string | null>> {
   const rows = await inChunks(ids, async (chunk) =>
@@ -369,6 +440,10 @@ export async function restoreArchive(
         artifacts: tally(),
         artifactVersions: tally(),
         fileAssets: { stored: 0, reused: 0, repaired: 0 },
+        tags: tally(),
+        artifactTags: 0,
+        artifactTagsKept: 0,
+        artifactTagsDropped: 0,
       },
       idMap: {},
       failures: [],
@@ -555,6 +630,83 @@ export async function restoreArchive(
       report.counts.researchProjects[placed.remapped ? "copied" : "restored"] += 1;
     }
 
+    // ---- 2b. Tags (v2): merged by name, so a restore never duplicates a tag ----
+    // The same tag (same id, already ours, perhaps renamed since the export) and a copy resumed
+    // from an earlier attempt map to themselves. Otherwise the tag is inserted under its placed
+    // id, and a name the target workspace already has maps to that tag instead (the unique
+    // name constraint decides, so a concurrent restore cannot duplicate it either).
+    const tagIdMap = new Map<string, string>();
+    const tagOwners = await existingIds(
+      db,
+      tags,
+      withDerived(archive.tagList.map((tag) => tag.id)),
+    );
+    for (const tag of archive.tagList) {
+      signal?.throwIfAborted();
+      const { name, normalizedName } = normalizeTagName(tag.name);
+      const byName = async () =>
+        (
+          await db
+            .select({ id: tags.id })
+            .from(tags)
+            .where(and(eq(tags.workspaceId, workspaceId), eq(tags.normalizedName, normalizedName)))
+        )[0];
+      const placed = place(tag.id, tagOwners);
+      if (placed.existing) {
+        tagIdMap.set(tag.id, placed.id);
+        remember(tag.id, placed.id);
+        report.counts.tags[placed.resumed ? "copied" : "skipped"] += 1;
+        continue;
+      }
+      let finalId: string | undefined;
+      let inserted = false;
+      // The same-name tag can be renamed or deleted between the insert and the lookup: try
+      // again a few times, then fail clearly rather than guess.
+      for (let attempt = 0; attempt < 3 && !finalId; attempt += 1) {
+        const [row] = await db
+          .insert(tags)
+          .values({
+            id: placed.id,
+            workspaceId,
+            name,
+            normalizedName,
+            createdAt: new Date(tag.createdAt),
+            updatedAt: new Date(tag.updatedAt),
+          })
+          .onConflictDoNothing({ target: [tags.workspaceId, tags.normalizedName] })
+          .returning({ id: tags.id });
+        inserted = row !== undefined;
+        finalId = row?.id ?? (await byName())?.id;
+      }
+      if (!finalId) {
+        throw new AppError("CONFLICT", `tag ${tag.id} changed while it was being restored`, {
+          retryable: true,
+        });
+      }
+      tagIdMap.set(tag.id, finalId);
+      remember(tag.id, finalId);
+      report.counts.tags[inserted ? (placed.remapped ? "copied" : "restored") : "skipped"] += 1;
+    }
+    const tagLinksByArtifact = new Map<string, typeof archive.tagLinks>();
+    for (const link of archive.tagLinks) {
+      const list = tagLinksByArtifact.get(link.artifactId) ?? [];
+      list.push(link);
+      tagLinksByArtifact.set(link.artifactId, list);
+    }
+    /**
+     * The target tags an archived artifact's links map to, with the first link's date. Two
+     * archived tags can map to one tag here (merged by name, or the same tag renamed since an
+     * older export), so this is de-duplicated.
+     */
+    const mappedLinks = (archivedArtifactId: string) => {
+      const links = new Map<string, Date>();
+      for (const link of tagLinksByArtifact.get(archivedArtifactId) ?? []) {
+        const tagId = tagIdMap.get(link.tagId)!;
+        if (!links.has(tagId)) links.set(tagId, new Date(link.createdAt));
+      }
+      return links;
+    };
+
     // ---- 3. Artifacts and versions, one transaction per artifact ----
     const versionsByArtifact = new Map<string, typeof archive.versions>();
     for (const version of archive.versions) {
@@ -691,6 +843,25 @@ export async function restoreArchive(
       }
 
       if (placed.existing) {
+        const links = mappedLinks(artifact.id);
+        if (links.size > 0) {
+          const present = new Set(
+            (
+              await db
+                .select({ tagId: artifactTags.tagId })
+                .from(artifactTags)
+                .where(
+                  and(
+                    eq(artifactTags.artifactId, placed.id),
+                    inArray(artifactTags.tagId, [...links.keys()]),
+                  ),
+                )
+            ).map((row) => row.tagId),
+          );
+          // A copy resumed from an earlier attempt wrote its links then: count them as now.
+          if (placed.resumed) report.counts.artifactTags += present.size;
+          else report.counts.artifactTagsKept += links.size - present.size;
+        }
         // skip_existing keeps the artifact as it is, but versions it lacks (e.g. newer ones in
         // the archive than in a database restored to an earlier point) are added to it. A copy
         // resumed from an earlier attempt of this run counts as copied, as it was then.
@@ -759,7 +930,7 @@ export async function restoreArchive(
       }
 
       try {
-        await db.transaction(async (tx) => {
+        const linkedTags = await db.transaction(async (tx) => {
           await tx.insert(artifacts).values({
             id: placed.id,
             workspaceId,
@@ -792,8 +963,45 @@ export async function restoreArchive(
               .set({ currentVersionId: versionIdMap.get(artifact.currentVersionId)! })
               .where(eq(artifacts.id, placed.id));
           }
+          // Tags come back with the artifact, in its transaction (an artifact that already
+          // exists keeps its own tags, above). The target tags are locked in id order first,
+          // as every tag operation locks them, so this cannot deadlock with a merge; a tag
+          // deleted or merged since the tag phase is gone, and its link is dropped and counted
+          // instead of failing the artifact.
+          const links = mappedLinks(artifact.id);
+          if (links.size === 0) return { written: 0, dropped: 0 };
+          const live = new Set(
+            (
+              await tx
+                .select({ id: tags.id })
+                .from(tags)
+                .where(and(eq(tags.workspaceId, workspaceId), inArray(tags.id, [...links.keys()])))
+                .orderBy(asc(tags.id))
+                .for("key share")
+            ).map((row) => row.id),
+          );
+          const rows = [...links]
+            .filter(([tagId]) => live.has(tagId))
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+            .map(([tagId, createdAt]) => ({
+              workspaceId,
+              artifactId: placed.id,
+              tagId,
+              createdAt,
+            }));
+          const written =
+            rows.length > 0
+              ? await tx
+                  .insert(artifactTags)
+                  .values(rows)
+                  .onConflictDoNothing()
+                  .returning({ tagId: artifactTags.tagId })
+              : [];
+          return { written: written.length, dropped: links.size - rows.length };
         });
         report.reextractJobs += versions.length;
+        report.counts.artifactTags += linkedTags.written;
+        report.counts.artifactTagsDropped += linkedTags.dropped;
         report.counts.artifacts[placed.remapped ? "copied" : "restored"] += 1;
         report.counts.artifactVersions[placed.remapped ? "copied" : "restored"] += versions.length;
         remember(artifact.id, placed.id);
@@ -805,6 +1013,16 @@ export async function restoreArchive(
     }
 
     signal?.throwIfAborted();
+    if (report.counts.artifactTagsKept > 0) {
+      report.warnings.push(
+        `${report.counts.artifactTagsKept} tag link(s) from the archive were not added to artifacts that already existed; those artifacts kept their current tags`,
+      );
+    }
+    if (report.counts.artifactTagsDropped > 0) {
+      report.warnings.push(
+        `${report.counts.artifactTagsDropped} tag link(s) were not restored: their tag was deleted or merged while the restore ran`,
+      );
+    }
     report.durationMs = Date.now() - startedAt;
     return report;
   } finally {
