@@ -125,7 +125,11 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    format version, and cross-check it: every reference resolves inside the archive, primary
    ids are unique, (v2) tag names are valid and distinct as the app compares them
    (NFKC, case, spacing), and (v3) collections form a tree (no cycle, at most 7 levels) whose
-   names are valid and distinct among siblings. Problems abort before anything is written.
+   names are valid and distinct among siblings, with descriptions that follow the app's text
+   rules. Values Postgres would refuse are refused here too, so a crafted archive cannot fail
+   the restore half-way: a NUL character anywhere in the metadata, dates and timestamps before
+   year 1, and sort orders or positions outside 0–1,000,000,000. Problems abort before
+   anything is written.
 4. **Originals.** For each file asset:
    - If `(target_workspace, sha256)` already exists, reuse it.
    - Otherwise, put the bytes to `ws/{ws}/originals/{sha256}` and insert `file_assets`

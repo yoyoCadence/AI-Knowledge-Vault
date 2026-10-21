@@ -141,5 +141,7 @@ export const collectionItems = pgTable(
       foreignColumns: [artifacts.workspaceId, artifacts.id],
     }).onDelete("cascade"),
     index("collection_items_artifact_idx").on(t.artifactId),
+    // max(position) for the next add is an index lookup.
+    index("collection_items_position_idx").on(t.collectionId, t.position),
   ],
 );

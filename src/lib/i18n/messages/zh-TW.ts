@@ -301,7 +301,8 @@ export const zhTW = {
   "collections.remove": "從「{name}」移除",
   "collections.createFirst": "先到「收藏分類」建立分類或集合",
   "collections.error.invalid":
-    "名稱需為 1 到 100 個可見字元；不能移到自己或自己的子分類底下，最多 7 層。",
+    "名稱需為 1 到 100 個可見字元，說明最多 2000 字；不能移到自己或自己的子分類底下，最多 7 層。",
+  "collections.error.gone": "這個分類、集合或作品已經不存在，請重新整理頁面。",
   "collections.error.conflict": "同一層已經有同名的分類或集合。",
   "collections.error.hasChildren": "請先移走或刪除它底下的子分類。",
   "projects.title": "研究專案",

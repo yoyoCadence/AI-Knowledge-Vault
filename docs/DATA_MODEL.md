@@ -355,7 +355,10 @@ not make a query run forever.
 **collection_items** (built, PR 15): `workspace_id`, `collection_id`, `artifact_id`,
 `position int` (order added), `added_at`; `pk(collection_id, artifact_id)`, index on
 `artifact_id`. Both foreign keys are composite with the workspace, `ON DELETE CASCADE`, as
-for `artifact_tags`. Filtering the library by a collection includes its whole subtree.
+for `artifact_tags`. Filtering the library by a collection includes its whole subtree. Adding
+or removing an item locks the collection `FOR NO KEY UPDATE` (adds to one collection are
+serialized, so positions are never handed out twice, and the collection cannot be deleted
+meanwhile) and then the artifact `FOR SHARE`, re-checking that it is not deleted.
 
 **artifact_notes**: `id`, `workspace_id`, `artifact_id → CASCADE`,
 `artifact_version_id? → SET NULL`, `author_id? → users SET NULL`, `body_markdown`, timestamps.

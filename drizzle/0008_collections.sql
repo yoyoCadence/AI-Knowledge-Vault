@@ -30,5 +30,6 @@ ALTER TABLE "collection_items" ADD CONSTRAINT "collection_items_artifact_fk" FOR
 ALTER TABLE "collections" ADD CONSTRAINT "collections_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "collections" ADD CONSTRAINT "collections_parent_fk" FOREIGN KEY ("workspace_id","parent_id") REFERENCES "public"."collections"("workspace_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "collection_items_artifact_idx" ON "collection_items" USING btree ("artifact_id");--> statement-breakpoint
+CREATE INDEX "collection_items_position_idx" ON "collection_items" USING btree ("collection_id","position");--> statement-breakpoint
 CREATE INDEX "collections_parent_idx" ON "collections" USING btree ("parent_id");--> statement-breakpoint
 ALTER TABLE "import_batches" ADD CONSTRAINT "import_batches_target_collection_id_collections_id_fk" FOREIGN KEY ("target_collection_id") REFERENCES "public"."collections"("id") ON DELETE set null ON UPDATE no action;

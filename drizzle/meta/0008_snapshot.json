@@ -1,5 +1,5 @@
 {
-  "id": "38dcdb3e-7027-41cb-b1bf-633a291c478a",
+  "id": "31b9be44-20dc-4819-bece-804eba35d28f",
   "prevId": "2484aaa7-53d8-4522-83c0-72e1dd7d4b05",
   "version": "7",
   "dialect": "postgresql",
@@ -3840,6 +3840,27 @@
           "columns": [
             {
               "expression": "artifact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "collection_items_position_idx": {
+          "name": "collection_items_position_idx",
+          "columns": [
+            {
+              "expression": "collection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "position",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

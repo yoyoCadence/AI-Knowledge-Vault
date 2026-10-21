@@ -229,6 +229,24 @@ describe("collections API (API_CONTRACT §6)", () => {
       collection: Collection;
     };
     expect((await item("PUT", theirs.collection.id, artifactId)).status).toBe(404);
+    // Filtering by another workspace's collection shows nothing, as for a missing one.
+    await item("PUT", mine.id, artifactId);
+    const filtered = (await (
+      await listArtifactsRoute(
+        request(`/api/artifacts?collection=${mine.id}`, { cookie: stranger.cookie }),
+        params({}),
+      )
+    ).json()) as { items: unknown[] };
+    expect(filtered.items).toEqual([]);
+    const searched = (await (
+      await searchRoute(
+        request(`/api/search?q=${encodeURIComponent("雨水花園")}&collection=${mine.id}`, {
+          cookie: stranger.cookie,
+        }),
+        params({}),
+      )
+    ).json()) as { items: unknown[] };
+    expect(searched.items).toEqual([]);
     const theirList = (await (
       await listCollectionsRoute(
         request("/api/collections", { cookie: stranger.cookie }),

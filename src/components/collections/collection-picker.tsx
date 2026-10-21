@@ -61,7 +61,11 @@ export function CollectionPicker({
     event.preventDefault();
     if (!selected) return;
     void run(async () => {
-      await jsonRequest(`/api/collections/${selected}/items/${artifactId}`, { method: "PUT" });
+      await jsonRequest(
+        `/api/collections/${selected}/items/${artifactId}`,
+        { method: "PUT" },
+        { gone: t("collections.error.gone") },
+      );
       setSelected("");
     });
   }
@@ -80,9 +84,11 @@ export function CollectionPicker({
                   type="button"
                   onClick={() =>
                     void run(() =>
-                      jsonRequest(`/api/collections/${collection.id}/items/${artifactId}`, {
-                        method: "DELETE",
-                      }),
+                      jsonRequest(
+                        `/api/collections/${collection.id}/items/${artifactId}`,
+                        { method: "DELETE" },
+                        { gone: t("collections.error.gone") },
+                      ),
                     )
                   }
                   disabled={busy}

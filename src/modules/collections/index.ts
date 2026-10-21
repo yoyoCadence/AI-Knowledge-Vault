@@ -51,6 +51,11 @@ export function normalizeCollectionName(input: string) {
   return { name, normalizedName: identityOf(name) };
 }
 
+/** Up to 2,000 characters of text (see `cleanDescription`); empty becomes null. */
+export function normalizeCollectionDescription(input: string | null | undefined) {
+  return cleanDescription(input ?? null, DESCRIPTION_MAX, "Collection descriptions");
+}
+
 function pgCode(error: unknown): string | undefined {
   for (let current = error; current instanceof Error; current = current.cause) {
     const code = (current as { code?: unknown }).code;
@@ -161,7 +166,25 @@ async function requireParent(tx: DbExecutor, actor: Actor, parentId: string) {
   if (!parent) throw notFound("Parent collection");
 }
 
-/** After the collection's last item (positions keep the order artifacts were added in). */
+/**
+ * Locks a collection of the workspace (null if there is none) before its items change. The
+ * lock keeps it from being deleted until the transaction ends, and serializes adds to it, so
+ * `nextPosition` never hands out a position twice; it does not conflict with the key-share
+ * locks foreign keys take, so it never waits for unrelated writes.
+ */
+async function lockForItems(tx: DbExecutor, workspaceId: string, collectionId: string) {
+  const [collection] = await tx
+    .select({ id: collections.id })
+    .from(collections)
+    .where(and(eq(collections.id, collectionId), eq(collections.workspaceId, workspaceId)))
+    .for("no key update");
+  return collection ?? null;
+}
+
+/**
+ * After the collection's last item (positions keep the order artifacts were added in). Only
+ * correct under `lockForItems`: the statement then runs after any earlier add has committed.
+ */
 const nextPosition = (collectionId: string) =>
   sql`coalesce((select max(${collectionItems.position}) from ${collectionItems} where ${collectionItems.collectionId} = ${collectionId}), 0) + 1`;
 
@@ -184,7 +207,7 @@ export async function createCollection(
   meta: RequestMeta,
 ) {
   const { name, normalizedName } = normalizeCollectionName(input.name);
-  const description = cleanDescription(input.description ?? null, DESCRIPTION_MAX);
+  const description = normalizeCollectionDescription(input.description);
   try {
     return await db.transaction(async (tx) => {
       await lockCollectionTree(tx, actor.workspaceId);
@@ -245,7 +268,7 @@ export async function updateCollection(
   const changes: Partial<typeof collections.$inferInsert> = {};
   if (input.name !== undefined) Object.assign(changes, normalizeCollectionName(input.name));
   if (input.description !== undefined)
-    changes.description = cleanDescription(input.description, DESCRIPTION_MAX);
+    changes.description = normalizeCollectionDescription(input.description);
   if (input.kind !== undefined) changes.kind = input.kind;
   if (input.parentId !== undefined) changes.parentId = input.parentId;
   if (Object.keys(changes).length === 0) {
@@ -396,16 +419,23 @@ export async function setCollectionItem(
   meta: RequestMeta,
 ): Promise<ArtifactCollection[]> {
   return db.transaction(async (tx) => {
-    const artifact = await getArtifactForActor(tx, actor, input.artifactId);
-    // Shared lock: a concurrent delete of the collection waits for this transaction.
-    const [collection] = await tx
-      .select({ id: collections.id })
-      .from(collections)
+    await getArtifactForActor(tx, actor, input.artifactId);
+    const collection = await lockForItems(tx, actor.workspaceId, input.collectionId);
+    if (!collection) throw notFound("Collection");
+    // Then the artifact, as tag links lock theirs (label first, then artifact), and checked
+    // again under the lock: a soft delete that committed since the read above wins.
+    const [artifact] = await tx
+      .select({ id: artifacts.id })
+      .from(artifacts)
       .where(
-        and(eq(collections.id, input.collectionId), eq(collections.workspaceId, actor.workspaceId)),
+        and(
+          eq(artifacts.id, input.artifactId),
+          eq(artifacts.workspaceId, actor.workspaceId),
+          isNull(artifacts.deletedAt),
+        ),
       )
       .for("share");
-    if (!collection) throw notFound("Collection");
+    if (!artifact) throw notFound("Artifact");
     const changed = input.present
       ? await tx
           .insert(collectionItems)
@@ -444,8 +474,7 @@ export async function setCollectionItem(
 /**
  * Adds a just-imported artifact to its batch's collection, inside the import transaction. The
  * collection may have been deleted since the batch was created (the batch's reference is then
- * cleared, or the row is gone): the artifact is simply not added. The key-share lock keeps the
- * collection from being deleted before this transaction commits.
+ * cleared, or the row is gone): the artifact is simply not added.
  */
 export async function addImportedArtifact(
   tx: DbExecutor,
@@ -453,11 +482,7 @@ export async function addImportedArtifact(
   collectionId: string,
   artifactId: string,
 ) {
-  const [collection] = await tx
-    .select({ id: collections.id })
-    .from(collections)
-    .where(and(eq(collections.id, collectionId), eq(collections.workspaceId, workspaceId)))
-    .for("key share");
+  const collection = await lockForItems(tx, workspaceId, collectionId);
   if (!collection) return;
   await tx
     .insert(collectionItems)

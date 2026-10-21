@@ -497,6 +497,19 @@ conversations. Update it at the end of every PR.
     `collectionItemsKept`, `collectionItemsDropped`). Verification refuses unknown parents,
     cycles, trees deeper than 7 levels, invalid or duplicate sibling names, and dangling or
     duplicate items before anything is written.
+  - Codex review found, and this PR fixes, each with a deterministic test that fails without
+    the fix: an add could link an artifact soft-deleted meanwhile (it now locks and re-checks
+    the artifact, as tag links do), and concurrent adds to one collection (parallel imports)
+    could get the same position (the collection is now locked `FOR NO KEY UPDATE` first).
+  - An independent review found, and this PR fixes, each with a test that fails without the
+    fix: a crafted archive could fail a restore half-way (a NUL anywhere in the metadata, year
+    0 dates, an int4-overflowing sort order or position) or restore a collection description
+    the app refuses, which then blocked every edit of it; an archived position near the int4
+    limit broke later adds; a collection deleted while a batch was created gave a 500 (now
+    404). Also: the edit form sends only changed fields, collection errors name collections,
+    a refused delete asks for confirmation again, and `max(position)` uses an index. Not
+    changed: older archives' project and artifact texts are restored as they are (projects
+    made before PR 14 were never validated, so refusing them would refuse real backups).
   - Tests: `tests/integration/collections/collections.test.ts` (tree, names, cycles, depth,
     items, subtree filter in library and search, delete rules, isolation, import into a
     collection, concurrent moves), `tests/integration/collections/collections-restore.test.ts`

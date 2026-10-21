@@ -7,6 +7,7 @@ import { jsonRequest } from "@/components/artifacts/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
+import { normalizeLineEndings } from "@/lib/text";
 
 export interface CollectionRow {
   id: string;
@@ -26,6 +27,7 @@ const indent = (depth: number) => "\u3000".repeat(depth);
 const messages = {
   invalid: t("collections.error.invalid"),
   conflict: t("collections.error.conflict"),
+  gone: t("collections.error.gone"),
 };
 
 function useAction() {
@@ -178,23 +180,30 @@ function CollectionItem({
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const parentId = String(form.get("parentId") ?? "") || null;
+    // Only what changed is sent, so a save never overwrites another tab's edit of the other
+    // fields (and only a changed parent is a move, which takes the tree lock).
+    const edited = {
+      name: String(form.get("name") ?? ""),
+      kind: String(form.get("kind") ?? row.kind),
+      // A browser may submit a textarea's line breaks as CRLF; compared as stored.
+      description: normalizeLineEndings(String(form.get("description") ?? "")) || null,
+      parentId: String(form.get("parentId") ?? "") || null,
+    };
+    const body = Object.fromEntries(
+      Object.entries(edited).filter(
+        ([field, value]) =>
+          value !==
+          (field === "description"
+            ? (row.description ?? null)
+            : row[field as "name" | "kind" | "parentId"]),
+      ),
+    );
+    if (Object.keys(body).length === 0) {
+      setEditing(false);
+      return;
+    }
     void run(
-      () =>
-        jsonRequest(
-          `/api/collections/${row.id}`,
-          {
-            method: "PATCH",
-            body: {
-              name: String(form.get("name") ?? ""),
-              kind: String(form.get("kind") ?? row.kind),
-              description: String(form.get("description") ?? "") || null,
-              // Only a changed parent is a move (a move takes the tree lock).
-              ...(parentId !== row.parentId ? { parentId } : {}),
-            },
-          },
-          messages,
-        ),
+      () => jsonRequest(`/api/collections/${row.id}`, { method: "PATCH", body }, messages),
       () => setEditing(false),
     );
   }
@@ -228,8 +237,12 @@ function CollectionItem({
                       jsonRequest(
                         `/api/collections/${row.id}`,
                         { method: "DELETE" },
-                        { conflict: t("collections.error.hasChildren") },
-                      ),
+                        { conflict: t("collections.error.hasChildren"), gone: messages.gone },
+                      ).catch((error: unknown) => {
+                        // Refused (it has subcollections): ask again before the next try.
+                        setConfirmDelete(false);
+                        throw error;
+                      }),
                     )
                   : setConfirmDelete(true)
               }

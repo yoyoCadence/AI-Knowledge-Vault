@@ -4,7 +4,7 @@ import { t } from "@/lib/i18n";
 export async function jsonRequest<T>(
   url: string,
   init: { method: string; body?: unknown },
-  messages: { invalid?: string; conflict?: string } = {},
+  messages: { invalid?: string; conflict?: string; gone?: string } = {},
 ) {
   const response = await fetch(url, {
     method: init.method,
@@ -22,7 +22,7 @@ export async function jsonRequest<T>(
       : code === "CONFLICT" && messages.conflict
         ? messages.conflict
         : code === "NOT_FOUND"
-          ? t("edit.error.gone")
+          ? (messages.gone ?? t("edit.error.gone"))
           : code === "FORBIDDEN"
             ? t("edit.error.forbidden")
             : t("edit.error.generic"),

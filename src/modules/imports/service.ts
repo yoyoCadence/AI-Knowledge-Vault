@@ -92,29 +92,39 @@ export async function createBatch(
       );
     if (!project) throw notFound("Research project");
   }
-  if (input.collectionId) {
-    const [collection] = await db
-      .select({ id: collections.id })
-      .from(collections)
-      .where(
-        and(eq(collections.id, input.collectionId), eq(collections.workspaceId, actor.workspaceId)),
-      );
-    if (!collection) throw notFound("Collection");
-  }
-  const [batch] = await db
-    .insert(importBatches)
-    .values({
-      workspaceId: actor.workspaceId,
-      createdBy: actor.userId,
-      targetProjectId: input.projectId ?? null,
-      targetCollectionId: input.collectionId ?? null,
-      options: {
-        autoVersionByFilename: input.options?.autoVersionByFilename ?? true,
-        ...(input.options?.sourcePlatform ? { sourcePlatform: input.options.sourcePlatform } : {}),
-      },
-    })
-    .returning();
-  return batch!;
+  return db.transaction(async (tx) => {
+    // Key share: a concurrent delete of the collection waits for the batch, or wins and makes
+    // this a 404 (never a foreign-key error).
+    if (input.collectionId) {
+      const [collection] = await tx
+        .select({ id: collections.id })
+        .from(collections)
+        .where(
+          and(
+            eq(collections.id, input.collectionId),
+            eq(collections.workspaceId, actor.workspaceId),
+          ),
+        )
+        .for("key share");
+      if (!collection) throw notFound("Collection");
+    }
+    const [batch] = await tx
+      .insert(importBatches)
+      .values({
+        workspaceId: actor.workspaceId,
+        createdBy: actor.userId,
+        targetProjectId: input.projectId ?? null,
+        targetCollectionId: input.collectionId ?? null,
+        options: {
+          autoVersionByFilename: input.options?.autoVersionByFilename ?? true,
+          ...(input.options?.sourcePlatform
+            ? { sourcePlatform: input.options.sourcePlatform }
+            : {}),
+        },
+      })
+      .returning();
+    return batch!;
+  });
 }
 
 async function signUpload(

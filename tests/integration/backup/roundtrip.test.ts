@@ -630,6 +630,8 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(retry.counts.artifacts).toEqual(first.counts.artifacts);
     expect(retry.counts.artifactVersions).toEqual(first.counts.artifactVersions);
     expect(retry.counts.researchProjects).toEqual(first.counts.researchProjects);
+    expect(retry.counts.collections).toEqual(first.counts.collections);
+    expect(retry.counts.collectionItems).toEqual(first.counts.collectionItems);
     expect(retry.idMap).toEqual(first.idMap);
   });
 
@@ -890,8 +892,15 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
   });
 
   it("refuses inconsistent collection metadata before anything is written", async () => {
-    type Row = { id: string; parentId: string | null; name: string };
-    type Item = { collectionId: string; artifactId: string };
+    type Row = {
+      id: string;
+      parentId: string | null;
+      name: string;
+      description: string | null;
+      sortOrder: number;
+      createdAt: string;
+    };
+    type Item = { collectionId: string; artifactId: string; position: number };
     const cases: [string, (rows: Row[], items: Item[]) => void][] = [
       ["unknown parent", (rows) => (rows[0]!.parentId = crypto.randomUUID())],
       [
@@ -925,6 +934,12 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
         (_rows, items) => items.push({ ...items[0]!, artifactId: crypto.randomUUID() }),
       ],
       ["duplicate item", (_rows, items) => items.push({ ...items[0]! })],
+      // Values Postgres or the app would refuse, which must not fail the restore half-way.
+      ["sort order", (rows) => (rows[0]!.sortOrder = 2 ** 31)],
+      ["position", (_rows, items) => (items[0]!.position = 2 ** 31)],
+      ["spoofed description", (rows) => (rows[0]!.description = "abc\u202eexe")],
+      ["long description", (rows) => (rows[0]!.description = "長".repeat(2_001))],
+      ["year 0", (rows) => (rows[0]!.createdAt = "0000-01-01T00:00:00.000Z")],
     ];
     for (const [label, mutate] of cases) {
       const broken = path.join(dir, `collections-${label.replace(" ", "-")}.zip`);
@@ -954,9 +969,60 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
           error instanceof AppError &&
           error.code === "UNSUPPORTED_EXPORT_FORMAT" &&
           error.details?.nothingWritten === true &&
-          /collection/.test(JSON.stringify(error.details.problems)),
+          /collection/.test(error.message + JSON.stringify(error.details)),
       );
       expect((await snapshot(fresh.workspaceId)).collections, label).toEqual([]);
+      expect(await workspaceRowCounts(fresh.workspaceId), label).toEqual({
+        artifacts: 0,
+        versions: 0,
+        fileAssets: 0,
+      });
+    }
+  });
+
+  it("refuses text and dates Postgres cannot store before anything is written", async () => {
+    type Json = Record<string, unknown>[];
+    const cases: [string, string, (rows: Json) => void][] = [
+      ["NUL in a title", PATHS.artifacts, (rows) => (rows[0]!.title = "a\u0000b")],
+      [
+        "NUL in a nested key",
+        PATHS.versions,
+        (rows) => (rows[0]!.analysis = { deep: [{ ["k\u0000"]: 1 }] }),
+      ],
+      ["year 0 research date", PATHS.versions, (rows) => (rows[0]!.researchDate = "0000-01-01")],
+      ["year 0 timestamp", PATHS.tags, (rows) => (rows[0]!.createdAt = "0000-06-01T00:00:00Z")],
+    ];
+    for (const [label, entryPath, mutate] of cases) {
+      const broken = path.join(dir, `unstorable-${label.replaceAll(" ", "-")}.zip`);
+      await rewriteArchive(archive, broken, (entries) => {
+        const entry = entries.find((candidate) => candidate.name === entryPath)!;
+        const rows = JSON.parse(Buffer.from(entry.data as Buffer).toString("utf8")) as Json;
+        mutate(rows);
+        entry.data = Buffer.from(JSON.stringify(rows));
+        reseal(entries);
+      });
+      const fresh = await createTestActor();
+      await expect(
+        restoreArchive(db, freshStorage(`unstorable-${label}`), {
+          archivePath: broken,
+          workspaceId: fresh.workspaceId,
+          userId: fresh.userId,
+          mode: "skip_existing",
+          restoreId: crypto.randomUUID(),
+          limits: restoreLimitsFromEnv(getEnv()),
+        }),
+        label,
+      ).rejects.toSatisfy(
+        (error: unknown) =>
+          error instanceof AppError &&
+          error.code === "UNSUPPORTED_EXPORT_FORMAT" &&
+          error.details?.nothingWritten === true,
+      );
+      expect(await workspaceRowCounts(fresh.workspaceId), label).toEqual({
+        artifacts: 0,
+        versions: 0,
+        fileAssets: 0,
+      });
     }
   });
 

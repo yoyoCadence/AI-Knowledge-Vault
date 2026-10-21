@@ -51,7 +51,14 @@ export const PATHS = {
 const SHA256 = /^[0-9a-f]{64}$/;
 const sha256 = z.string().regex(SHA256);
 const id = z.uuid();
-const timestamp = z.iso.datetime({ offset: true });
+// Postgres refuses year 0, which the ISO formats allow: refused at verification instead of
+// failing an insert after the restore has started writing.
+const timestamp = z.iso
+  .datetime({ offset: true })
+  .refine((value) => value >= "0001", "year must be 1 or later");
+const day = z.iso.date().refine((value) => value >= "0001", "year must be 1 or later");
+/** Orders kept by the app (sort orders, positions): small non-negative integers. */
+const ordinal = z.number().int().min(0).max(1_000_000_000);
 const nullableText = z.string().nullable();
 
 export function normalizedPath(versionId: string): string {
@@ -188,7 +195,7 @@ export const VersionV1 = z.object({
   sourceModel: nullableText,
   originalPrompt: nullableText,
   sourceUrl: nullableText,
-  researchDate: z.iso.date().nullable(),
+  researchDate: day.nullable(),
   author: nullableText,
   referenceSources: z.array(ReferenceV1),
   changeSummary: nullableText,
@@ -236,7 +243,7 @@ export const CollectionV3 = z.object({
   kind: z.enum(COLLECTION_KINDS),
   name: z.string().min(1).max(200),
   description: nullableText,
-  sortOrder: z.number().int(),
+  sortOrder: ordinal,
   createdAt: timestamp,
   updatedAt: timestamp,
 });
@@ -245,7 +252,7 @@ export type CollectionV3 = z.infer<typeof CollectionV3>;
 export const CollectionItemV3 = z.object({
   collectionId: id,
   artifactId: id,
-  position: z.number().int(),
+  position: ordinal,
   addedAt: timestamp,
 });
 export type CollectionItemV3 = z.infer<typeof CollectionItemV3>;

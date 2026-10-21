@@ -27,6 +27,7 @@ import { newId } from "@/lib/ids";
 import {
   collectionDepth,
   lockCollectionTree,
+  normalizeCollectionDescription,
   normalizeCollectionName,
 } from "@/modules/collections";
 import { SafeZip, ZipRejectedError, type ZipLimits } from "@/modules/extraction";
@@ -169,6 +170,29 @@ function beforeAnyWrite(error: unknown): unknown {
   });
 }
 
+/**
+ * Postgres text and jsonb cannot store U+0000, so a NUL anywhere in the metadata would fail an
+ * insert after the restore had started writing: it is refused at verification instead.
+ * Iterative, so deeply nested JSON cannot overflow the stack.
+ */
+function holdsNul(root: unknown): boolean {
+  const pending: unknown[] = [root];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (typeof value === "string") {
+      if (value.includes("\u0000")) return true;
+    } else if (Array.isArray(value)) {
+      pending.push(...value);
+    } else if (value !== null && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        if (key.includes("\u0000")) return true;
+        pending.push(item);
+      }
+    }
+  }
+  return false;
+}
+
 async function readJson<T>(zip: SafeZip, entryPath: string, schema: z.ZodType<T>): Promise<T> {
   if (!zip.has(entryPath)) throw invalidArchive(`${entryPath} is missing`);
   const raw = (await zip.readBuffer(entryPath, MAX_METADATA_BYTES)).toString("utf8");
@@ -178,6 +202,7 @@ async function readJson<T>(zip: SafeZip, entryPath: string, schema: z.ZodType<T>
   } catch {
     throw invalidArchive(`${entryPath} is not valid JSON`);
   }
+  if (holdsNul(parsed)) throw invalidArchive(`${entryPath} contains a NUL character`);
   const result = schema.safeParse(parsed);
   if (!result.success) {
     throw invalidArchive(`${entryPath} does not match the export format`, {
@@ -390,6 +415,11 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
       siblingNames.add(key);
     } catch {
       problems.push(`collection ${collection.id}: invalid name`);
+    }
+    try {
+      normalizeCollectionDescription(collection.description);
+    } catch {
+      problems.push(`collection ${collection.id}: invalid description`);
     }
     let level = 0;
     for (let at = collection.parentId; at !== null; at = collectionById.get(at)?.parentId ?? null) {
@@ -841,7 +871,7 @@ export async function restoreArchive(
                   kind: collection.kind,
                   name,
                   normalizedName,
-                  description: collection.description,
+                  description: normalizeCollectionDescription(collection.description),
                   sortOrder: collection.sortOrder,
                   createdAt: new Date(collection.createdAt),
                   updatedAt: new Date(collection.updatedAt),

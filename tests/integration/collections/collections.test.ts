@@ -12,6 +12,7 @@ import { AppError } from "@/lib/errors";
 import { listArtifacts } from "@/modules/artifacts";
 import type { Actor } from "@/modules/auth";
 import {
+  addImportedArtifact,
   createCollection,
   deleteCollection,
   findCollection,
@@ -50,6 +51,45 @@ async function importOne(actor: Actor, filename: string, title: string, batchId?
 
 const put = (actor: Actor, collectionId: string, artifactId: string, present = true) =>
   setCollectionItem(db, actor, { collectionId, artifactId, present }, meta);
+
+/**
+ * Runs `run` with two extra connections: one to hold locks, one to watch `pg_stat_activity`.
+ * `blocked` resolves once a session waits on a lock while running a statement like `pattern`,
+ * or once `pending` has settled (the statement never needed the lock).
+ */
+async function withClients(
+  run: (
+    blocker: Client,
+    blocked: (pattern: string, pending: Promise<unknown>) => Promise<void>,
+  ) => Promise<void>,
+) {
+  const blocker = new Client({ connectionString: process.env.DATABASE_URL });
+  const watcher = new Client({ connectionString: process.env.DATABASE_URL });
+  await blocker.connect();
+  await watcher.connect();
+  const blocked = async (pattern: string, pending: Promise<unknown>) => {
+    let settled = false;
+    pending.then(
+      () => (settled = true),
+      () => (settled = true),
+    );
+    for (const deadline = Date.now() + 10_000; !settled;) {
+      const { rows } = await watcher.query(
+        "select 1 from pg_stat_activity where wait_event_type = 'Lock' and query ilike $1",
+        [pattern],
+      );
+      if (rows.length > 0) return;
+      if (Date.now() > deadline) throw new Error(`nothing waited on ${pattern}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  };
+  try {
+    await run(blocker, blocked);
+  } finally {
+    await blocker.end();
+    await watcher.end();
+  }
+}
 
 const listedIds = async (actor: Actor, collectionId: string) =>
   (await listArtifacts(db, actor, { limit: 50, filters: { collectionId } })).items.map(
@@ -271,6 +311,68 @@ describe("collections (FR-LIB-5, API_CONTRACT §6)", () => {
     await expect(newBatch(owner, { collectionId: theirs.id })).rejects.toSatisfy(
       (error) => code(error) === "NOT_FOUND",
     );
+  });
+
+  it("does not add an artifact that was deleted while the add waited for it", async () => {
+    const target = await createCollection(db, owner, { name: "刪除競態" }, meta);
+    const artifactId = await importOne(owner, "deleted-mid-add.html", "刪除中的作品");
+    await withClients(async (blocker, blocked) => {
+      // A soft delete in flight (artifact deletion has no API yet; this is its update).
+      await blocker.query("begin");
+      await blocker.query("update artifacts set deleted_at = now() where id = $1", [artifactId]);
+      const adding = put(owner, target.id, artifactId);
+      adding.catch(() => undefined);
+      await blocked('%"artifacts"%for share%', adding);
+      await blocker.query("commit");
+      await expect(adding).rejects.toSatisfy((error) => code(error) === "NOT_FOUND");
+    });
+    expect(
+      await db.select().from(collectionItems).where(eq(collectionItems.artifactId, artifactId)),
+    ).toEqual([]);
+  });
+
+  it("hands out each position once when artifacts are added at the same time", async () => {
+    // Two imports into one collection (the worker runs several at once).
+    const shared = await createCollection(db, owner, { name: "同時加入" }, meta);
+    const first = await importOne(owner, "concurrent-a.html", "同時加入 A");
+    const second = await importOne(owner, "concurrent-b.html", "同時加入 B");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let reached!: () => void;
+    const added = new Promise<void>((resolve) => (reached = resolve));
+    await withClients(async (_blocker, blocked) => {
+      const holding = db.transaction(async (tx) => {
+        await addImportedArtifact(tx, owner.workspaceId, shared.id, first);
+        reached();
+        await gate; // still uncommitted
+      });
+      await added;
+      const racing = db.transaction((tx) =>
+        addImportedArtifact(tx, owner.workspaceId, shared.id, second),
+      );
+      racing.catch(() => undefined);
+      await blocked('%"collections"%for no key update%', racing);
+      release();
+      await Promise.all([holding, racing]);
+    });
+    const positions = await db
+      .select({ position: collectionItems.position })
+      .from(collectionItems)
+      .where(eq(collectionItems.collectionId, shared.id));
+    expect(positions.map((row) => row.position).sort()).toEqual([1, 2]);
+  });
+
+  it("a collection deleted while an import batch is created is a 404, not a database error", async () => {
+    const doomed = await createCollection(db, owner, { name: "建立批次時刪除" }, meta);
+    await withClients(async (blocker, blocked) => {
+      await blocker.query("begin");
+      await blocker.query("delete from collections where id = $1", [doomed.id]);
+      const creating = newBatch(owner, { collectionId: doomed.id });
+      creating.catch(() => undefined);
+      await blocked("%collection%", creating);
+      await blocker.query("commit");
+      await expect(creating).rejects.toSatisfy((error) => code(error) === "NOT_FOUND");
+    });
   });
 
   it("two concurrent moves cannot close a cycle", async () => {
