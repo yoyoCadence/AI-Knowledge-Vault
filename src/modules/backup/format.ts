@@ -4,7 +4,9 @@ import {
   COLLECTION_KINDS,
   CONTENT_KINDS,
   PREVIEW_KINDS,
+  NOTE_MAX_LENGTH,
   PROJECT_STATUSES,
+  READING_STATUSES,
   REVIEW_STATUSES,
   SENSITIVITIES,
   VISIBILITIES,
@@ -17,14 +19,15 @@ import {
  *
  * Versions: v1 is the original layout; v2 adds `metadata/tags.json` and
  * `metadata/artifact_tags.json`; v3 adds `metadata/collections.json` and
- * `metadata/collection_items.json`. Exports are written as the latest version; restore reads
+ * `metadata/collection_items.json`; v4 adds `metadata/artifact_notes.json` and
+ * `metadata/artifact_reading_states.json`. Exports are written as the latest version; restore reads
  * every supported one. An app that only knows an older version refuses a newer archive instead
  * of silently dropping what it cannot restore (ADR-018).
  */
 
 export const EXPORT_FORMAT = "ai-knowledge-vault-export";
-export const EXPORT_FORMAT_VERSION = 3;
-export const SUPPORTED_FORMAT_VERSIONS = [1, 2, 3] as const;
+export const EXPORT_FORMAT_VERSION = 4;
+export const SUPPORTED_FORMAT_VERSIONS = [1, 2, 3, 4] as const;
 export type FormatVersion = (typeof SUPPORTED_FORMAT_VERSIONS)[number];
 
 export const PATHS = {
@@ -46,6 +49,10 @@ export const PATHS = {
   collections: "metadata/collections.json",
   /** v3+ */
   collectionItems: "metadata/collection_items.json",
+  /** v4+ */
+  notes: "metadata/artifact_notes.json",
+  /** v4+ */
+  readingStates: "metadata/artifact_reading_states.json",
 } as const;
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -135,13 +142,24 @@ export const ManifestV3 = ManifestV2.extend({
 });
 export type ManifestV3 = z.infer<typeof ManifestV3>;
 
+export const ManifestV4 = ManifestV3.extend({
+  formatVersion: z.literal(4),
+  counts: ManifestV3.shape.counts.extend({ notes: count, readingStates: count }),
+});
+export type ManifestV4 = z.infer<typeof ManifestV4>;
+
 /** The manifest of any supported version, told apart by `formatVersion`. */
-export const Manifest = z.discriminatedUnion("formatVersion", [ManifestV1, ManifestV2, ManifestV3]);
+export const Manifest = z.discriminatedUnion("formatVersion", [
+  ManifestV1,
+  ManifestV2,
+  ManifestV3,
+  ManifestV4,
+]);
 export type Manifest = z.infer<typeof Manifest>;
 
 export const SchemaVersion = z.object({
   format: z.literal(EXPORT_FORMAT),
-  formatVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  formatVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
   dbMigration: z.string().max(200),
 });
 
@@ -257,6 +275,29 @@ export const CollectionItemV3 = z.object({
 });
 export type CollectionItemV3 = z.infer<typeof CollectionItemV3>;
 
+/** A note; its author is not exported (restored notes are the restoring user's). */
+export const NoteV4 = z.object({
+  id,
+  artifactId: id,
+  bodyMarkdown: z.string().min(1).max(NOTE_MAX_LENGTH),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+export type NoteV4 = z.infer<typeof NoteV4>;
+
+/**
+ * The workspace's reading state of an artifact, without users: favorite if any member marked
+ * it, the furthest status any member reached, and the latest time anyone opened it. A restore
+ * gives it to the restoring user.
+ */
+export const ReadingStateV4 = z.object({
+  artifactId: id,
+  status: z.enum(READING_STATUSES),
+  isFavorite: z.boolean(),
+  lastOpenedAt: timestamp.nullable(),
+});
+export type ReadingStateV4 = z.infer<typeof ReadingStateV4>;
+
 // ---------- checksums.sha256 ----------
 
 export interface ChecksumEntry {
@@ -331,6 +372,10 @@ This archive is readable without the application.
                               tree (parentId null at the top)
     collection_items.json     which artifact is in which collection {collectionId, artifactId,
                               position}
+    artifact_notes.json       notes {id, artifactId, bodyMarkdown (Markdown), createdAt, …}
+    artifact_reading_states.json
+                              reading state per artifact {artifactId, status (unread /
+                              reading / read), isFavorite, lastOpenedAt}; no user ids
   originals/<aa>/<sha256>/<filename>
                          the untouched original files; <sha256> is the hash of the bytes
   normalized/<version-id>.md

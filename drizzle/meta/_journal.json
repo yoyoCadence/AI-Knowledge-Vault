@@ -64,6 +64,13 @@
       "when": 1792575205355,
       "tag": "0008_collections",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792575935163,
+      "tag": "0009_notes_reading_state",
+      "breakpoints": true
     }
   ]
 }

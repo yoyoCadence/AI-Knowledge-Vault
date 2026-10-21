@@ -28,6 +28,8 @@ export interface RestoreView {
       tags?: Tally;
       /** Format v3 archives (reports of earlier runs have none). */
       collections?: Tally;
+      /** Format v4 archives (reports of earlier runs have none). */
+      notes?: Tally;
     };
     warnings?: string[];
     failures?: { artifactId: string; title: string; error: string }[];
@@ -274,6 +276,16 @@ export function RestorePanel({ initial }: { initial: RestoreView | null }) {
                     skipped: counts.collections.skipped,
                     copied: counts.collections.copied,
                     failed: counts.collections.failed,
+                  })}
+                </li>
+              ) : null}
+              {counts.notes &&
+              counts.notes.restored + counts.notes.skipped + counts.notes.copied > 0 ? (
+                <li>
+                  {t("restore.counts.notes", {
+                    restored: counts.notes.restored,
+                    skipped: counts.notes.skipped,
+                    copied: counts.notes.copied,
                   })}
                 </li>
               ) : null}

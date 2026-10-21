@@ -4,13 +4,12 @@ _Last updated: 2026-10-21 by the implementing agent._
 
 ## Current focus
 
-**PR 15 (this branch): P1B-ORG, collections.** A tree of categories and collections
-(`/collections` page, detail-page card, API), the collection filter with subcollections in
-the library and search, imports into a collection, and export format v3 with restore of
-v1–v3.
+**PR 16 (this branch): P1B-NOTES, notes and reading state.** Markdown notes on artifacts
+(searchable, rendered by the allow-list renderer), per-user reading status, favorites and
+recently opened, the library shortcuts and filters, and export format v4 with restore of
+v1–v4.
 
-**Next: P1B-NOTES (PR 16): notes and reading state.** The exact steps are in
-`docs/HANDOFF.md` §4.
+**Next: P1B-SHARE (PR 17): share links.** The exact steps are in `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.
@@ -55,7 +54,7 @@ findings handled. If the review bot is unavailable, run an independent review fi
    - ✅ reading mode (PR 11)
    - 🚧 search (PR 12: keyword search; filters with organization)
    - ✅ organization: tags (PR 13), projects and filters (PR 14), collections (PR 15)
-   - notes and reading state
+   - ✅ notes and reading state (PR 16)
    - sharing
    - ops dashboard
    - E2E

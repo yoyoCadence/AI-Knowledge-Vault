@@ -9,6 +9,8 @@ import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import { MIGRATIONS_FOLDER } from "@/infrastructure/database/migrate";
 import {
   artifactFiles,
+  artifactNotes,
+  artifactReadingStates,
   artifacts,
   artifactTags,
   artifactVersions,
@@ -40,8 +42,10 @@ import {
   type CollectionItemV3,
   type CollectionV3,
   type FileAssetV1,
-  type ManifestV3,
+  type ManifestV4,
+  type NoteV4,
   type ProjectV1,
+  type ReadingStateV4,
   type TagV2,
   type VersionV1,
 } from "./format";
@@ -56,7 +60,7 @@ import {
 
 export interface ExportSummary {
   filename: string;
-  manifest: ManifestV3;
+  manifest: ManifestV4;
 }
 
 const iso = (value: Date | null) => (value ? value.toISOString() : null);
@@ -202,6 +206,25 @@ async function readSnapshot(tx: DbExecutor, workspaceId: string) {
     .from(collectionItems)
     .where(eq(collectionItems.workspaceId, workspaceId))
     .orderBy(asc(collectionItems.collectionId), asc(collectionItems.artifactId));
+  const noteRows = await tx
+    .select()
+    .from(artifactNotes)
+    .where(eq(artifactNotes.workspaceId, workspaceId))
+    .orderBy(asc(artifactNotes.createdAt), asc(artifactNotes.id));
+  // Users are not exported: one state per artifact, merged over the workspace's members.
+  const readingStateRows = await tx
+    .select({
+      artifactId: artifactReadingStates.artifactId,
+      rank: sql<number>`max(case ${artifactReadingStates.status} when 'read' then 2 when 'reading' then 1 else 0 end)::int`,
+      isFavorite: sql<boolean>`bool_or(${artifactReadingStates.isFavorite})`,
+      lastOpenedAt: sql<Date | null>`max(${artifactReadingStates.lastOpenedAt})`.mapWith(
+        (value: string | null) => (value === null ? null : new Date(value)),
+      ),
+    })
+    .from(artifactReadingStates)
+    .where(eq(artifactReadingStates.workspaceId, workspaceId))
+    .groupBy(artifactReadingStates.artifactId)
+    .orderBy(asc(artifactReadingStates.artifactId));
   return {
     workspace,
     projectRows,
@@ -210,6 +233,8 @@ async function readSnapshot(tx: DbExecutor, workspaceId: string) {
     artifactTagRows,
     collectionRows,
     collectionItemRows,
+    noteRows,
+    readingStateRows,
     versionRows,
     assetRows,
     linkRows,
@@ -247,6 +272,8 @@ export async function writeExport(
     artifactTagRows,
     collectionRows,
     collectionItemRows,
+    noteRows,
+    readingStateRows,
     documents,
     dbMigration,
   } = await Promise.race([reading, outputFailed]);
@@ -345,6 +372,21 @@ export async function writeExport(
     addedAt: row.addedAt.toISOString(),
   }));
 
+  const noteJson: NoteV4[] = noteRows.map((row) => ({
+    id: row.id,
+    artifactId: row.artifactId,
+    bodyMarkdown: row.bodyMarkdown,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  }));
+  const STATUS_BY_RANK = ["unread", "reading", "read"] as const;
+  const readingStateJson: ReadingStateV4[] = readingStateRows.map((row) => ({
+    artifactId: row.artifactId,
+    status: STATUS_BY_RANK[row.rank]!,
+    isFavorite: row.isFavorite,
+    lastOpenedAt: row.lastOpenedAt ? row.lastOpenedAt.toISOString() : null,
+  }));
+
   // Buffers whose bytes (and so hashes) are known up front.
   const buffers = new Map<string, Buffer>();
   const json = (value: unknown) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -363,6 +405,8 @@ export async function writeExport(
   buffers.set(PATHS.artifactTags, json(artifactTagJson));
   buffers.set(PATHS.collections, json(collectionJson));
   buffers.set(PATHS.collectionItems, json(collectionItemJson));
+  buffers.set(PATHS.notes, json(noteJson));
+  buffers.set(PATHS.readingStates, json(readingStateJson));
   let normalizedCount = 0;
   for (const version of versionRows) {
     const document = version.activeExtractionId
@@ -398,7 +442,7 @@ export async function writeExport(
     ...assets.map((asset) => ({ path: asset.archivePath, sha256: asset.sha256 })),
   ];
   const checksums = Buffer.from(formatChecksums(checksumEntries), "utf8");
-  const manifest: ManifestV3 = {
+  const manifest: ManifestV4 = {
     format: EXPORT_FORMAT,
     formatVersion: EXPORT_FORMAT_VERSION,
     createdAt: now.toISOString(),
@@ -417,6 +461,8 @@ export async function writeExport(
       artifactTags: artifactTagJson.length,
       collections: collectionJson.length,
       collectionItems: collectionItemJson.length,
+      notes: noteJson.length,
+      readingStates: readingStateJson.length,
     },
     checksumsSha256: sha256OfBuffer(checksums),
   };

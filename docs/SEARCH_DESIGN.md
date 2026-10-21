@@ -64,7 +64,10 @@ break phrase matching. Content is therefore indexed per **chunk**:
   locations for free.
 
 Artifact-level metadata (title A, tags and description B, notes and source info C) lives in
-`artifact_search_documents`, one row per artifact.
+`artifact_search_documents`, one row per artifact. Each note is its own part (a phrase never
+runs from one note into the next), newest first, up to 20,000 characters of notes in all, so
+many long notes can never push the vector past Postgres' 1 MB limit. A note write re-indexes
+its artifact in the same transaction.
 
 ## 4. Query execution
 

@@ -1,7 +1,8 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { DbExecutor } from "@/infrastructure/database/client";
 import { afterCursor, beforeCursor, cursorTimestamp } from "@/infrastructure/database/keyset";
 import {
+  artifactReadingStates,
   artifacts,
   artifactTags,
   artifactVersions,
@@ -9,6 +10,7 @@ import {
   documentSections,
   extractedDocuments,
   fileAssets,
+  type ReadingStatus,
   tags,
 } from "@/infrastructure/database/schema";
 import type { KeysetCursor } from "@/lib/cursor";
@@ -20,7 +22,8 @@ import { filterConditions, type LibraryFilters } from "./filters";
  * Read models for artifacts. Every query is workspace-scoped and hides soft-deleted artifacts
  * (SECURITY.md §7): objects outside the actor's workspace are indistinguishable from missing ones.
  */
-export const LIBRARY_SORTS = ["newest", "oldest"] as const;
+/** `opened`: the artifacts the actor opened, most recently opened first. */
+export const LIBRARY_SORTS = ["newest", "oldest", "opened"] as const;
 export type LibrarySort = (typeof LIBRARY_SORTS)[number];
 
 export interface TagSummary {
@@ -48,6 +51,10 @@ export interface ArtifactCard {
   versionCount: number;
   hasThumbnail: boolean;
   tags: TagSummary[];
+  /** The actor's own reading state (unread when they never touched it). */
+  readingStatus: ReadingStatus;
+  isFavorite: boolean;
+  lastOpenedAt: Date | null;
 }
 
 /** Source models recorded on current versions of the actor's artifacts, for the filter. */
@@ -99,11 +106,24 @@ export async function listArtifacts(
     limit: number;
     cursor?: KeysetCursor;
     filters?: LibraryFilters;
-    /** newest (default) or oldest first; the cursor continues in that order. */
+    /**
+     * newest (default) or oldest first, or `opened` (only the artifacts the actor opened, most
+     * recently opened first); the cursor continues in that order.
+     */
     sort?: LibrarySort;
   },
 ): Promise<{ items: ArtifactCard[]; nextCursor: KeysetCursor | null }> {
   const oldest = options.sort === "oldest";
+  const opened = options.sort === "opened";
+  // The `opened` cursor carries `last_opened_at` in its timestamp field.
+  const position = opened
+    ? [
+        isNotNull(artifactReadingStates.lastOpenedAt),
+        beforeCursor(artifactReadingStates.lastOpenedAt, artifacts.id, options.cursor),
+      ]
+    : oldest
+      ? [afterCursor(artifacts.createdAt, artifacts.id, options.cursor)]
+      : [beforeCursor(artifacts.createdAt, artifacts.id, options.cursor)];
   const rows = await db
     .select({
       id: artifacts.id,
@@ -113,7 +133,11 @@ export async function listArtifacts(
       sensitivity: artifacts.sensitivity,
       createdAt: artifacts.createdAt,
       cursorCreatedAt: cursorTimestamp(artifacts.createdAt),
+      cursorOpenedAt: cursorTimestamp(artifactReadingStates.lastOpenedAt),
       updatedAt: artifacts.updatedAt,
+      readingStatus: artifactReadingStates.status,
+      isFavorite: artifactReadingStates.isFavorite,
+      lastOpenedAt: artifactReadingStates.lastOpenedAt,
       versionId: artifactVersions.id,
       versionNumber: artifactVersions.versionNumber,
       contentKind: artifactVersions.contentKind,
@@ -128,20 +152,27 @@ export async function listArtifacts(
     })
     .from(artifacts)
     .leftJoin(artifactVersions, eq(artifactVersions.id, artifacts.currentVersionId))
+    .leftJoin(
+      artifactReadingStates,
+      and(
+        eq(artifactReadingStates.artifactId, artifacts.id),
+        eq(artifactReadingStates.userId, actor.userId),
+      ),
+    )
     .where(
       and(
         eq(artifacts.workspaceId, actor.workspaceId),
         isNull(artifacts.deletedAt),
-        oldest
-          ? afterCursor(artifacts.createdAt, artifacts.id, options.cursor)
-          : beforeCursor(artifacts.createdAt, artifacts.id, options.cursor),
-        ...filterConditions(sql.identifier("artifacts"), options.filters ?? {}),
+        ...position,
+        ...filterConditions(sql.identifier("artifacts"), options.filters ?? {}, actor.userId),
       ),
     )
     .orderBy(
-      ...(oldest
-        ? [asc(artifacts.createdAt), asc(artifacts.id)]
-        : [desc(artifacts.createdAt), desc(artifacts.id)]),
+      ...(opened
+        ? [desc(artifactReadingStates.lastOpenedAt), desc(artifacts.id)]
+        : oldest
+          ? [asc(artifacts.createdAt), asc(artifacts.id)]
+          : [desc(artifacts.createdAt), desc(artifacts.id)]),
     )
     .limit(options.limit + 1);
 
@@ -173,12 +204,17 @@ export async function listArtifacts(
     versionCount: row.versionCount,
     hasThumbnail: row.hasThumbnail,
     tags: tagMap.get(row.id) ?? [],
+    readingStatus: row.readingStatus ?? "unread",
+    isFavorite: row.isFavorite ?? false,
+    lastOpenedAt: row.lastOpenedAt,
   }));
   const last = page.at(-1);
   return {
     items,
     nextCursor:
-      rows.length > options.limit && last ? { createdAt: last.cursorCreatedAt, id: last.id } : null,
+      rows.length > options.limit && last
+        ? { createdAt: opened ? last.cursorOpenedAt : last.cursorCreatedAt, id: last.id }
+        : null,
   };
 }
 

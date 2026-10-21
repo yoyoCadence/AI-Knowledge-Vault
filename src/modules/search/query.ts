@@ -123,7 +123,7 @@ export async function searchArtifacts(
   const offset = Math.min(Math.max(input.offset ?? 0, 0), MAX_OFFSET);
   const workspaceId = actor.workspaceId;
   // Filters apply where candidates are chosen, in the same scoped query (never afterwards).
-  const conditions = filterConditions(sql.identifier("a"), input.filters ?? {});
+  const conditions = filterConditions(sql.identifier("a"), input.filters ?? {}, actor.userId);
   const filter = conditions.length > 0 ? sql`and ${sql.join(conditions, sql` and `)}` : sql``;
   const order =
     input.sort === "newest"

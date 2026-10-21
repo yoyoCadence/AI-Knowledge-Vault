@@ -184,6 +184,41 @@ test.describe("import → library → artifact (Scenario A)", () => {
     await expect(page.getByRole("heading", { name: "端對端 Claude Design 報告" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "端對端測試筆記" })).toHaveCount(0);
 
+    // Notes and reading state: a Markdown note on the artifact page (rendered, never as HTML),
+    // a favorite and "read"; the library views and search follow.
+    await page.goto("/");
+    await page.getByRole("heading", { name: "端對端 Claude Design 報告" }).click();
+    const noteForm = page.getByTestId("note-create");
+    await noteForm
+      .getByRole("textbox", { name: "新增筆記" })
+      .fill("**重點**：熱島強度與綠覆率相關 <script>alert(1)</script>");
+    await noteForm.getByRole("button", { name: "新增筆記" }).click();
+    const notes = page.getByTestId("notes");
+    await expect(notes.locator("strong")).toHaveText("重點");
+    await expect(notes).toContainText("<script>alert(1)</script>");
+    await expect(notes.locator("script")).toHaveCount(0);
+    const reading = page.getByTestId("reading-controls");
+    await reading.getByRole("button", { name: "加入收藏" }).click();
+    await expect(reading.getByRole("button", { name: "已收藏" })).toBeVisible();
+    const saved = page.waitForResponse(
+      (response) =>
+        response.url().includes("/reading-state") && response.request().method() === "PUT",
+    );
+    await reading.getByRole("combobox", { name: "閱讀狀態" }).selectOption("read");
+    expect((await saved).ok()).toBe(true);
+    await page.goto("/?favorite=1");
+    await expect(page.getByRole("heading", { name: "端對端 Claude Design 報告" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "端對端測試筆記" })).toHaveCount(0);
+    await expect(page.getByTestId("reading-badge").first()).toHaveText("已讀");
+    await page
+      .getByRole("navigation", { name: "檢視" })
+      .getByRole("link", { name: "最近開啟" })
+      .click();
+    await expect(page).toHaveURL(/sort=opened/);
+    await expect(page.getByRole("heading", { name: "端對端 Claude Design 報告" })).toBeVisible();
+    await page.goto(`/?q=${encodeURIComponent("綠覆率")}`);
+    await expect(page.getByTestId("search-results").getByRole("link")).toHaveCount(1);
+
     // Portable export of the library (same session: sign-in is rate limited).
     await page.goto("/import");
     await page.getByTestId("export-create").click();

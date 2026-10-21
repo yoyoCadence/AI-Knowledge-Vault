@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-21, after PR 15: collections)
+## 1. Snapshot (2026-10-21, after PR 16: notes and reading state)
 
 **Merged and tested**
 
@@ -521,6 +521,37 @@ conversations. Update it at the end of every PR.
     import step, the subtree recursion, the restore's depth check, its live-collection check
     or its merge by name each fails a test.
 
+- **PR 16, P1B-NOTES: notes and reading state** (`src/modules/notes`, migration
+  `0009_notes_reading_state`, DATA_MODEL §4.4, API_CONTRACT §5–§7, BACKUP_RECOVERY §2 and §6,
+  ADR-019):
+  - Notes: Markdown on an artifact (1–20,000 characters, the description text rules), listed
+    newest first with the author, shown with the reading mode's allow-list renderer (never as
+    HTML), editable and deletable by editors, and searchable: each write locks the artifact
+    first, then writes and re-indexes it in the same transaction (notes are metadata weight C,
+    newest first, up to 20,000 characters in all). API: `GET/POST /api/artifacts/:id/notes`,
+    `PATCH/DELETE /api/notes/:id`.
+  - Reading state, per user: unread / reading / read, favorite, last opened. Opening the
+    detail page records it from the browser (a link prefetch never counts) and moves unread to
+    reading; the page has a favorite button and a status picker. API: `GET/PUT
+/api/artifacts/:id/reading-state` (`library:read`: viewers keep their own state).
+  - Library: "全部作品 / 最近開啟 / 我的收藏 / 未讀" shortcuts, a status filter and a favorite
+    checkbox in the filter panel (library and search), `sort=opened` with its own keyset
+    cursor, and a star and status badge on cards.
+  - Export format v4 (`artifact_notes.json`, `artifact_reading_states.json` with one state
+    per artifact merged over members); restore reads v1–v4, writes notes with new artifacts,
+    adds the notes an existing artifact lacks (like versions), and gives the restoring user
+    the archived reading state of newly restored artifacts (ADR-019).
+  - Tests: `tests/integration/notes/notes.test.ts` (CRUD and search, text rules, isolation
+    and deleted artifacts, the note-length cap, a deterministic two-writers deadlock test,
+    per-user state, filters, recently opened with the cursor, the merged export),
+    `tests/integration/api/notes-api.test.ts`; the round trip covers v4 exactly, a lost note
+    coming back and being searchable again, copy mode, v3/v2/v1 archives and broken note and
+    state metadata; E2E writes a note (Markdown rendered, a `<script>` shown as text), marks a
+    favorite and "read", and follows the favorites and recently-opened views and search.
+    Mutation-checked: the artifact lock before a note write, note indexing, its cap and
+    newest-first order, the per-user filter, the open transition, the opened cursor, the
+    merged export.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -586,25 +617,25 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 - P1A-ENC: built-in `age` encryption for exports.
 - Verify the S3 adapter against real R2. This needs the owner's credentials.
 
-**PR 16: P1B-NOTES, notes and reading state** (DATA_MODEL §4.4, API_CONTRACT §6). Follow
-the collections slice (PR 15) as the pattern:
+**PR 17: P1B-SHARE, share links** (DATA_MODEL §4.1 `share_links`, API_CONTRACT §8,
+SECURITY.md §5 and §7, TEST_PLAN §4). Security-sensitive: read SECURITY.md first.
 
-1. Schema: `artifact_notes` (workspace-scoped composite key to the artifact, optional
-   version `SET NULL`, author `SET NULL`, Markdown body with a length CHECK) and
-   `artifact_reading_states` (`pk(user_id, artifact_id)`, status, favorite, last opened).
-2. APIs: `GET/POST /api/artifacts/:id/notes`, `PATCH/DELETE /api/notes/:id`,
-   `PUT /api/artifacts/:id/reading-state`. Notes are user content: render them with the
-   reader's allow-list renderer, never as HTML.
-3. Library: "最近開啟" and "我的最愛" views and a favorite filter; opening the detail page
-   records `last_opened_at`.
-4. Notes are searchable (index them into the artifact's metadata document, weight C).
-5. Export format v4 with `artifact_notes.json` and `artifact_reading_states.json` (user ids
-   replaced by "owner"; ADR-018); restore reads v1–v4.
-6. Tests in the same shape as PR 15 and a review before merging.
+1. Schema: `share_links` as in DATA_MODEL (only `token_hash` stored; the token is shown once).
+   Workspace-scoped composite key to the artifact, like notes.
+2. APIs: `POST /api/artifacts/:id/share-check` (advisory scan: sensitivity, emails, keys),
+   `POST/GET /api/artifacts/:id/shares`, `DELETE /api/shares/:id` (revoke), all audited.
+3. Public reader `/s/:token`: constant-time token check, 404 for revoked, expired, deleted or
+   unknown (indistinguishable); reading mode only, preview through the preview origin with a
+   share-scoped token (SECURITY.md §5 already reserves the scope), download only if allowed.
+   No session, no workspace data beyond the artifact. Rate limited.
+4. UI: a share panel on the detail page (create with options and the check's findings,
+   copy the URL once, list and revoke).
+5. Export: share links are never exported (tokens are secrets; FR-BAK-2) — no format bump.
+6. Tests: unauthorized access, revocation, expiry, token not stored, timing-safe compare,
+   E2E create → open in a fresh context → revoke → 404. Review before merging.
 
 **Then Phase 1B:**
 
-- notes, reading state
 - sharing
 - ops dashboard
 - remaining E2E

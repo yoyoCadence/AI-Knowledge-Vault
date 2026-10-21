@@ -9,6 +9,9 @@ import { PreviewFrame } from "@/components/preview/preview-frame";
 import { ArtifactMetaEditor } from "@/components/artifacts/artifact-meta-editor";
 import { ReadingBody } from "@/components/reader/reading-body";
 import { CollectionPicker } from "@/components/collections/collection-picker";
+import { NewNote, NoteItem } from "@/components/notes/notes-panel";
+import { ReadingControls } from "@/components/notes/reading-controls";
+import { MarkdownView } from "@/components/reader/markdown-view";
 import { TagEditor } from "@/components/tags/tag-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +32,7 @@ import {
 import { roleAllows } from "@/modules/auth";
 import { issuePreviewUrl } from "@/modules/preview";
 import { collectionOptions, collectionsOf } from "@/modules/collections";
+import { listNotes, readingStateOf } from "@/modules/notes";
 import { findProject, listProjects } from "@/modules/projects";
 import { listTags } from "@/modules/tags";
 
@@ -54,6 +58,8 @@ async function load(id: string, requested?: string) {
     const allTags = canEdit ? await listTags(getDb(), actor) : [];
     const collections = await collectionsOf(getDb(), actor.workspaceId, id);
     const collectionChoices = canEdit ? await collectionOptions(getDb(), actor) : [];
+    const notes = await listNotes(getDb(), actor, id);
+    const readingState = await readingStateOf(getDb(), actor, id);
     // A deleted project (or one that no longer exists) shows as none.
     const project = detail.artifact.projectId
       ? await findProject(getDb(), actor, detail.artifact.projectId)
@@ -73,6 +79,8 @@ async function load(id: string, requested?: string) {
       allTags,
       collections,
       collectionChoices,
+      notes,
+      readingState,
       canEdit,
       project,
       projects,
@@ -153,6 +161,8 @@ export default async function ArtifactPage({
     allTags,
     collections,
     collectionChoices,
+    notes,
+    readingState,
     canEdit,
     project,
     projects,
@@ -194,6 +204,10 @@ export default async function ArtifactPage({
             {artifact.summary}
           </p>
         ) : null}
+        <ReadingControls
+          artifactId={artifact.id}
+          initial={{ status: readingState.status, isFavorite: readingState.isFavorite }}
+        />
         {version ? (
           <Button asChild className="w-fit lg:hidden">
             <a href={`/api/artifacts/${artifact.id}/versions/${version.id}/original`}>
@@ -296,6 +310,40 @@ export default async function ArtifactPage({
               </CardContent>
             </Card>
           ) : null}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{t("notes.section")}</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              {canEdit ? <NewNote artifactId={artifact.id} /> : null}
+              {notes.length > 0 ? (
+                <ul className="divide-border divide-y" data-testid="notes">
+                  {notes.map((note) => (
+                    <NoteItem
+                      key={note.id}
+                      note={{ id: note.id, bodyMarkdown: note.bodyMarkdown }}
+                      meta={[
+                        note.authorName ?? t("notes.unknownAuthor"),
+                        formatDateTime(note.createdAt),
+                        note.updatedAt.getTime() - note.createdAt.getTime() > 1_000
+                          ? t("notes.edited")
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                      canEdit={canEdit}
+                    >
+                      {/* Notes are user Markdown: the reading mode's allow-list renderer. */}
+                      <MarkdownView markdown={note.bodyMarkdown} anchors={[]} />
+                    </NoteItem>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-muted-foreground text-sm">{t("notes.none")}</p>
+              )}
+            </CardContent>
+          </Card>
 
           {warnings.length > 0 ? (
             <details className="border-border bg-surface rounded-lg border p-4 text-sm">

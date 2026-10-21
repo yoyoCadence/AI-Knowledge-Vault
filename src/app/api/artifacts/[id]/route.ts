@@ -3,6 +3,7 @@ import { isUuid } from "@/lib/ids";
 import { z } from "zod";
 import { getArtifactDetail, tagsByArtifact, updateArtifact } from "@/modules/artifacts";
 import { collectionsOf } from "@/modules/collections";
+import { readingStateOf } from "@/modules/notes";
 import { findProject } from "@/modules/projects";
 import { json, parseJsonBody } from "../../_lib/http";
 import { authedRoute } from "../../_lib/route";
@@ -16,6 +17,7 @@ export const GET = authedRoute<{ id: string }>(
     const { artifact, versions } = await getArtifactDetail(services.db(), actor, params.id);
     const tags = await tagsByArtifact(services.db(), actor.workspaceId, [artifact.id]);
     const collections = await collectionsOf(services.db(), actor.workspaceId, artifact.id);
+    const readingState = await readingStateOf(services.db(), actor, artifact.id);
     // A deleted project reads as none here too.
     const project = artifact.projectId
       ? await findProject(services.db(), actor, artifact.projectId)
@@ -35,6 +37,7 @@ export const GET = authedRoute<{ id: string }>(
         updatedAt: artifact.updatedAt,
         tags: tags.get(artifact.id) ?? [],
         collections,
+        readingState,
       },
       versions,
     });

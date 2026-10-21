@@ -302,3 +302,23 @@ peer dependencies). Anything not verified that way is marked _assumption_.
 - **Consequences:** Collections, notes and reading state will each bump the version again
   (or ship together in one bump). The round-trip test restores a rewritten v1 archive, so
   backward compatibility is checked on every change.
+
+## ADR-019 Notes and reading state in backups: notes return, reading state is merged
+
+- **Status:** accepted (PR 16, notes and reading state)
+- **Context:** Notes are content the owner wrote; reading state (unread / reading / read,
+  favorite, last opened) is per user. Users are never exported (BACKUP_RECOVERY §1), and a
+  restore runs as one user.
+- **Decision:**
+  - Format v4 adds `artifact_notes.json` (without authors: restored notes belong to the
+    restoring user) and `artifact_reading_states.json` with **one state per artifact merged
+    over the workspace's members**: favorite if anyone marked it, the furthest status anyone
+    reached, and the latest time anyone opened it.
+  - Restore gives a newly restored artifact its archived state for the restoring user; an
+    artifact that already exists keeps the user's current state.
+  - Notes an existing artifact lacks are added back, as versions are (tags and collection
+    items are not: they are organization, and a removed tag stays removed). A note deleted
+    after the export therefore returns on a restore of that export.
+- **Consequences:** A personal vault restores exactly. A shared workspace loses whose state
+  was whose (it was never exported). Re-running a restore after deleting a note brings the
+  note back; deleting it again is the remedy.

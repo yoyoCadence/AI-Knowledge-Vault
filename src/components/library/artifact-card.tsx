@@ -1,3 +1,4 @@
+import { Star } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/format";
@@ -17,6 +18,9 @@ export interface ArtifactCardData {
   sourceModel: string | null;
   /** Tag names, by name. */
   tags: string[];
+  /** The viewer's own reading state. */
+  readingStatus: "unread" | "reading" | "read";
+  isFavorite: boolean;
 }
 
 const SHOWN_TAGS = 3;
@@ -46,6 +50,15 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactCardData }) {
       </div>
       <div className="flex flex-1 flex-col gap-2 p-4">
         <h3 className="group-hover:text-primary line-clamp-2 text-sm leading-snug font-semibold">
+          {artifact.isFavorite ? (
+            <>
+              <Star
+                className="fill-warning text-warning mr-1 inline size-3.5 align-[-2px]"
+                aria-hidden
+              />
+              <span className="sr-only">{t("reading.favorite")}: </span>
+            </>
+          ) : null}
           {artifact.title}
         </h3>
         <p className="text-muted-foreground line-clamp-2 text-xs leading-relaxed">
@@ -58,6 +71,11 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactCardData }) {
           </Badge>
           {artifact.sourcePlatform ? (
             <Badge variant="accent">{label("platform", artifact.sourcePlatform)}</Badge>
+          ) : null}
+          {artifact.readingStatus !== "unread" ? (
+            <Badge variant="outline" data-testid="reading-badge">
+              {t(`reading.status.${artifact.readingStatus}`)}
+            </Badge>
           ) : null}
           {artifact.versionCount > 1 ? (
             <Badge variant="outline">

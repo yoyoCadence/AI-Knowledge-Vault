@@ -7,7 +7,7 @@ import { SearchResults } from "@/components/library/search-results";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/states";
 import { getDb } from "@/infrastructure/database/client";
-import { CONTENT_KINDS } from "@/infrastructure/database/schema";
+import { CONTENT_KINDS, READING_STATUSES } from "@/infrastructure/database/schema";
 import { decodeCursorOrFirstPage, encodeCursor } from "@/lib/cursor";
 import { t } from "@/lib/i18n";
 import { isUuid } from "@/lib/ids";
@@ -45,6 +45,30 @@ function libraryHref(params: Record<string, string | number | null | undefined>)
 
 function oneOf<T extends string>(value: string | undefined, allowed: readonly T[]) {
   return allowed.includes(value as T) ? (value as T) : undefined;
+}
+
+/** Shortcuts to the library's common views (FR-LIB-1); the current one is marked. */
+function LibraryViews({ current }: { current: "all" | "opened" | "favorites" | "unread" | null }) {
+  const views = [
+    ["all", "/", t("library.views.all")],
+    ["opened", "/?sort=opened", t("library.views.opened")],
+    ["favorites", "/?favorite=1", t("library.views.favorites")],
+    ["unread", "/?status=unread", t("library.views.unread")],
+  ] as const;
+  return (
+    <nav aria-label={t("library.views")} className="flex flex-wrap gap-1 text-sm">
+      {views.map(([key, href, text]) => (
+        <Link
+          key={key}
+          href={href}
+          aria-current={current === key ? "page" : undefined}
+          className={`rounded-full border px-3 py-1 ${current === key ? "border-primary text-primary font-medium" : "border-border text-muted-foreground hover:text-foreground"}`}
+        >
+          {text}
+        </Link>
+      ))}
+    </nav>
+  );
 }
 
 /** A filter the page cannot honour (another workspace's or a deleted tag, project or collection). */
@@ -130,6 +154,8 @@ export default async function LibraryPage({
     sourceModel: modelParam(params.model),
     from: dayParam(params.from),
     to: dayParam(params.to),
+    favorite: ["1", "true"].includes(firstParam(params.favorite) ?? "") ? true : undefined,
+    readingStatus: oneOf(firstParam(params.status), READING_STATUSES),
   };
   const sort: LibrarySort | SearchSort | undefined = q
     ? oneOf(firstParam(params.sort), SEARCH_SORTS)
@@ -143,6 +169,8 @@ export default async function LibraryPage({
     model: filters.sourceModel,
     from: filters.from,
     to: filters.to,
+    favorite: filters.favorite ? "1" : undefined,
+    status: filters.readingStatus,
     sort,
   };
   // Filters set in the form (the tag comes from chips and has its own line).
@@ -165,6 +193,10 @@ export default async function LibraryPage({
         depth: option.depth,
       }))}
       kinds={CONTENT_KINDS.map((kind) => ({ value: kind, label: label("kind", kind) }))}
+      statuses={READING_STATUSES.map((status) => ({
+        value: status,
+        label: t(`reading.status.${status}`),
+      }))}
       models={models}
       sorts={(q ? SEARCH_SORTS : LIBRARY_SORTS).map((value) => ({
         value,
@@ -272,6 +304,19 @@ export default async function LibraryPage({
     sort: sort as LibrarySort | undefined,
   });
   const anyFilter = hasFilters(filters);
+  // Which shortcut this page is exactly (none once other filters are added).
+  const only = (key: keyof LibraryFilters) =>
+    Object.entries(filters).every(([name, value]) => name === key || value === undefined);
+  const view =
+    sort === "opened" && !anyFilter
+      ? "opened"
+      : sort === undefined && filters.favorite && only("favorite")
+        ? "favorites"
+        : sort === undefined && filters.readingStatus === "unread" && only("readingStatus")
+          ? "unread"
+          : sort === undefined && !anyFilter
+            ? "all"
+            : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -286,11 +331,16 @@ export default async function LibraryPage({
             {t("library.import")}
           </Link>
         </Button>
+        <LibraryViews current={view} />
         {controls}
         {activeFilters}
       </header>
 
-      {items.length === 0 && !cursor && anyFilter ? (
+      {items.length === 0 && !cursor && sort === "opened" && !anyFilter ? (
+        <p className="text-muted-foreground text-sm" data-testid="filtered-empty">
+          {t("library.openedEmpty")}
+        </p>
+      ) : items.length === 0 && !cursor && anyFilter ? (
         <p className="text-muted-foreground text-sm" data-testid="filtered-empty">
           {tag && !hasFilters({ ...filters, tagId: undefined })
             ? t("tags.noArtifacts")
@@ -327,6 +377,8 @@ export default async function LibraryPage({
                 sourcePlatform: item.currentVersion?.sourcePlatform ?? null,
                 sourceModel: item.currentVersion?.sourceModel ?? null,
                 tags: item.tags.map((itemTag) => itemTag.name),
+                readingStatus: item.readingStatus,
+                isFavorite: item.isFavorite,
               }}
             />
           ))}

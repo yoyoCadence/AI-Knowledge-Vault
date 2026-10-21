@@ -1,11 +1,13 @@
 import { sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import type { ReadingStatus } from "@/infrastructure/database/schema";
 import { DISPLAY_TIME_ZONE } from "@/lib/format";
 
 /**
  * Library filters (FR-SRCH-3, API_CONTRACT §5 and §7), shared by the library list and search
  * so both mean the same thing. Each filter is a condition on one artifact row, given as the
  * SQL reference the calling query uses for it (`"artifacts"` or an alias). Callers pass
- * values validated by their route (ids are UUIDs, dates are YYYY-MM-DD).
+ * values validated by their route (ids are UUIDs, dates are YYYY-MM-DD). The reading filters
+ * are the actor's own: they need the actor's user id.
  */
 export interface LibraryFilters {
   tagId?: string;
@@ -20,10 +22,28 @@ export interface LibraryFilters {
   from?: string;
   /** Imported on or before this day (display time zone). */
   to?: string;
+  /** The actor marked it a favorite. */
+  favorite?: boolean;
+  /** The actor's reading status; "unread" includes artifacts they never touched. */
+  readingStatus?: ReadingStatus;
 }
 
-export function filterConditions(artifact: SQLWrapper, filters: LibraryFilters): SQL[] {
+export function filterConditions(
+  artifact: SQLWrapper,
+  filters: LibraryFilters,
+  userId?: string,
+): SQL[] {
   const conditions: SQL[] = [];
+  const state = (condition: SQL) => {
+    if (!userId) throw new Error("reading filters need the actor's user id");
+    return sql`exists (select 1 from artifact_reading_states frs where frs.artifact_id = ${artifact}.id and frs.user_id = ${userId} and ${condition})`;
+  };
+  if (filters.favorite) conditions.push(state(sql`frs.is_favorite`));
+  if (filters.readingStatus === "unread") {
+    conditions.push(sql`not ${state(sql`frs.status <> 'unread'`)}`);
+  } else if (filters.readingStatus) {
+    conditions.push(state(sql`frs.status = ${filters.readingStatus}`));
+  }
   const version = (column: SQL, value: string) =>
     sql`exists (select 1 from artifact_versions fv where fv.id = ${artifact}.current_version_id and ${column} = ${value})`;
   if (filters.tagId) {
