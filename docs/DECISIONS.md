@@ -312,8 +312,9 @@ peer dependencies). Anything not verified that way is marked _assumption_.
 - **Decision:**
   - Format v4 adds `artifact_notes.json` (without authors: restored notes belong to the
     restoring user) and `artifact_reading_states.json` with **one state per artifact merged
-    over the workspace's members**: favorite if anyone marked it, the furthest status anyone
-    reached, and the latest time anyone opened it.
+    over the workspace's current members** (a removed member's states are left out): favorite
+    if anyone marked it, the furthest status anyone reached, and the latest time anyone
+    opened it.
   - Restore gives a newly restored artifact its archived state for the restoring user; an
     artifact that already exists keeps the user's current state.
   - Notes an existing artifact lacks are added back, as versions are (tags and collection

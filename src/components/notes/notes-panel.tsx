@@ -10,7 +10,11 @@ import { normalizeLineEndings } from "@/lib/text";
 const field =
   "border-border-strong bg-surface focus-visible:ring-ring rounded-md border px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:outline-none";
 
-const messages = { invalid: t("notes.error.invalid"), gone: t("notes.error.gone") };
+const messages = {
+  invalid: t("notes.error.invalid"),
+  gone: t("notes.error.gone"),
+  conflict: t("notes.error.limit"),
+};
 
 function useAction() {
   const router = useRouter();

@@ -30,6 +30,7 @@ export interface RestoreView {
       collections?: Tally;
       /** Format v4 archives (reports of earlier runs have none). */
       notes?: Tally;
+      readingStates?: number;
     };
     warnings?: string[];
     failures?: { artifactId: string; title: string; error: string }[];
@@ -288,6 +289,9 @@ export function RestorePanel({ initial }: { initial: RestoreView | null }) {
                     copied: counts.notes.copied,
                   })}
                 </li>
+              ) : null}
+              {counts.readingStates ? (
+                <li>{t("restore.counts.readingStates", { count: counts.readingStates })}</li>
               ) : null}
               {run.report?.reextractJobs ? (
                 <li>{t("restore.reextract", { count: run.report.reextractJobs })}</li>

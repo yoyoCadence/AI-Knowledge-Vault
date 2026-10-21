@@ -127,8 +127,9 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    ids are unique, (v2) tag names are valid and distinct as the app compares them
    (NFKC, case, spacing), and (v3) collections form a tree (no cycle, at most 7 levels) whose
    names are valid and distinct among siblings, with descriptions that follow the app's text
-   rules, and (v4) every note belongs to an archived artifact and follows the note rules, with
-   at most one reading state per artifact. Values Postgres would refuse are refused here too, so a crafted archive cannot fail
+   rules, and (v4) every note belongs to an archived artifact and follows the note rules
+   (Markdown cost limits included), at most 200 per artifact, with at most one reading state
+   per artifact. Values Postgres would refuse are refused here too, so a crafted archive cannot fail
    the restore half-way: a NUL character anywhere in the metadata, dates and timestamps before
    year 1, and sort orders or positions outside 0–1,000,000,000. Problems abort before
    anything is written.

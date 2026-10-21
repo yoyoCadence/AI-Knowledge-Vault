@@ -117,6 +117,32 @@ describe("notes (FR-LIB-8, API_CONTRACT §6)", () => {
     );
   });
 
+  it("keeps at most 200 notes per artifact", async () => {
+    const crowded = await importOne(owner, "crowded.html", "筆記很多的作品");
+    for (let index = 0; index < 200; index += 1) {
+      await createNote(db, owner, crowded, `第 ${index} 則`, meta);
+    }
+    await expect(createNote(db, owner, crowded, "第 201 則", meta)).rejects.toSatisfy(
+      (error) =>
+        error instanceof AppError &&
+        error.code === "CONFLICT" &&
+        error.details?.reason === "TOO_MANY_NOTES",
+    );
+    expect(await listNotes(db, owner, crowded)).toHaveLength(200);
+  });
+
+  it("refuses Markdown that would stall the page that shows it", async () => {
+    for (const body of [">".repeat(19_999) + "a", "- ".repeat(9_999) + "a"]) {
+      await expect(createNote(db, owner, artifactId, body, meta)).rejects.toSatisfy(
+        (error) => code(error) === "VALIDATION_FAILED",
+      );
+    }
+    const note = await createNote(db, owner, artifactId, "可以編輯", meta);
+    await expect(updateNote(db, owner, note.id, "*".repeat(64) + "a", meta)).rejects.toSatisfy(
+      (error) => code(error) === "VALIDATION_FAILED",
+    );
+  });
+
   it("refuses empty, oversized and spoofed notes", async () => {
     for (const body of ["", "   \n ", "x".repeat(20_001), "a\u0000b", "a\u0007b", "abc\u202eexe"]) {
       expect(() => normalizeNoteBody(body), JSON.stringify(body.slice(0, 20))).toThrow();
@@ -369,6 +395,30 @@ describe("reading state (FR-LIB-8)", () => {
         Math.max(...opened.map((at) => at.getTime())),
       );
       expect(states).toHaveLength(3);
+
+      // A removed member's state is theirs, not the workspace's: no longer exported.
+      await db
+        .delete(workspaceMembers)
+        .where(
+          and(
+            eq(workspaceMembers.workspaceId, owner.workspaceId),
+            eq(workspaceMembers.userId, member.userId),
+          ),
+        );
+      const after = path.join(dir, "after-removal.zip");
+      await writeExport(db, getStorage(), owner.workspaceId, createWriteStream(after));
+      const again = await SafeZip.open(after, restoreLimitsFromEnv(getEnv()));
+      const remaining = new Map(
+        (
+          JSON.parse(
+            (await again.readBuffer(PATHS.readingStates, 1024 * 1024)).toString("utf8"),
+          ) as { artifactId: string; lastOpenedAt: string }[]
+        ).map((state) => [state.artifactId, state]),
+      );
+      again.close();
+      expect(new Date(remaining.get(a)!.lastOpenedAt).getTime()).toBe(
+        (await readingStateOf(db, owner, a)).lastOpenedAt!.getTime(),
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

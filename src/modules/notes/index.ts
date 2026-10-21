@@ -9,6 +9,7 @@ import {
   users,
 } from "@/infrastructure/database/schema";
 import { AppError, notFound } from "@/lib/errors";
+import { markdownProblem } from "@/lib/markdown";
 import { cleanDescription } from "@/lib/text";
 import { getArtifactForActor } from "@/modules/artifacts";
 import { recordAudit, type RequestMeta } from "@/modules/audit";
@@ -45,10 +46,19 @@ export interface ReadingState {
 
 export const UNREAD: ReadingState = { status: "unread", isFavorite: false, lastOpenedAt: null };
 
-/** Note text: up to 20,000 characters, at least one non-blank (see `cleanDescription`). */
+/** Notes per artifact: bounds the artifact page, its search document and a restore's insert. */
+export const NOTES_PER_ARTIFACT_MAX = 200;
+
+/**
+ * Note text: up to 20,000 characters, at least one non-blank (see `cleanDescription`), and
+ * Markdown that can be shown without costing the server far more than its size
+ * (`markdownProblem`: deep nesting, long runs of emphasis marks).
+ */
 export function normalizeNoteBody(input: string): string {
   const body = cleanDescription(input, NOTE_MAX_LENGTH, "Notes");
   if (!body) throw new AppError("VALIDATION_FAILED", "Notes must not be empty");
+  const problem = markdownProblem(body);
+  if (problem) throw new AppError("VALIDATION_FAILED", `This note's Markdown is ${problem}`);
   return body;
 }
 
@@ -112,6 +122,16 @@ export async function createNote(
   const bodyMarkdown = normalizeNoteBody(body);
   return db.transaction(async (tx) => {
     const artifact = await lockArtifact(tx, actor, artifactId);
+    // Counted under the artifact lock, so concurrent writes cannot pass the limit together.
+    const [{ notes } = { notes: 0 }] = await tx
+      .select({ notes: sql<number>`count(*)::int` })
+      .from(artifactNotes)
+      .where(eq(artifactNotes.artifactId, artifact.id));
+    if (notes >= NOTES_PER_ARTIFACT_MAX) {
+      throw new AppError("CONFLICT", `An artifact has at most ${NOTES_PER_ARTIFACT_MAX} notes`, {
+        details: { reason: "TOO_MANY_NOTES" },
+      });
+    }
     const [note] = await tx
       .insert(artifactNotes)
       .values({

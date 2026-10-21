@@ -34,7 +34,14 @@ const INSERT_BATCH = 200;
  * archive, say) would fail the whole index job every time. The full text stays in the
  * database; only the searchable copy is capped.
  */
-const METADATA_LIMITS = { title: 500, text: 5_000, source: 500, tags: 200, notes: 20_000 } as const;
+const METADATA_LIMITS = {
+  title: 500,
+  text: 5_000,
+  source: 500,
+  tags: 200,
+  notes: 20_000,
+  noteCount: 200,
+} as const;
 
 /** Newest first, until `budget` characters are used: the notes a search covers. */
 function noteParts(bodies: string[], budget: number): string[] {
@@ -117,11 +124,13 @@ export async function indexArtifactMetadata(tx: DbExecutor, artifactId: string) 
     .where(eq(artifactTags.artifactId, artifactId))
     .orderBy(asc(tags.normalizedName))
     .limit(METADATA_LIMITS.tags);
+  // Only what can be indexed is read: the newest notes, each cut to the whole budget.
   const noteRows = await tx
-    .select({ body: artifactNotes.bodyMarkdown })
+    .select({ body: sql<string>`left(${artifactNotes.bodyMarkdown}, ${METADATA_LIMITS.notes})` })
     .from(artifactNotes)
     .where(eq(artifactNotes.artifactId, artifactId))
-    .orderBy(desc(artifactNotes.createdAt), desc(artifactNotes.id));
+    .orderBy(desc(artifactNotes.createdAt), desc(artifactNotes.id))
+    .limit(METADATA_LIMITS.noteCount);
   const searchVector = toTsvector([
     { text: clip(row.title, METADATA_LIMITS.title), weight: "A" },
     {

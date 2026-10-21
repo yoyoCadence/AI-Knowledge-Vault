@@ -123,8 +123,10 @@ Notes (built): `GET /api/artifacts/:id/notes` → `{items: [{id, bodyMarkdown, a
 createdAt, updatedAt}]}`, newest first. `POST /api/artifacts/:id/notes {bodyMarkdown}` →
 `201 {note}`; `PATCH /api/notes/:id {bodyMarkdown}` → `{note}`; `DELETE /api/notes/:id` →
 `{deleted: true}`. Markdown of 1–20,000 characters, no control characters other than tab and
-line feed and no bidirectional controls (`400`); shown through the reading mode's allow-list
-renderer, never as HTML; searchable. Reads need `library:read`, writes `library:write`;
+line feed and no bidirectional controls, within the Markdown cost limits of SECURITY.md §5
+(`400` otherwise); at most 200 notes per artifact (`409 CONFLICT`, `details.reason:
+"TOO_MANY_NOTES"`); shown through the reading mode's allow-list renderer, never as HTML;
+searchable. Reads need `library:read`, writes `library:write`;
 another workspace's note or artifact, or a deleted artifact, is `404`.
 
 Reading state (built): `GET /api/artifacts/:id/reading-state` → `{readingState: {status,

@@ -872,6 +872,15 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
       ["note without artifact", PATHS.notes, (rows) => (rows[0]!.artifactId = crypto.randomUUID())],
       ["spoofed note", PATHS.notes, (rows) => (rows[0]!.bodyMarkdown = "abc\u202eexe")],
       ["blank note", PATHS.notes, (rows) => (rows[0]!.bodyMarkdown = "   ")],
+      ["deeply nested note", PATHS.notes, (rows) => (rows[0]!.bodyMarkdown = "- ".repeat(9_999))],
+      [
+        "too many notes",
+        PATHS.notes,
+        (rows) => {
+          for (let index = 0; index < 201; index += 1)
+            rows.push({ ...rows[0]!, id: crypto.randomUUID() });
+        },
+      ],
       ["duplicate note", PATHS.notes, (rows) => rows.push({ ...rows[0]! })],
       [
         "state without artifact",

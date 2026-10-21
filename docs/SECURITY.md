@@ -119,6 +119,14 @@ with an allow-list renderer into React elements:
 - Images in documents are shown as their alt text (`［圖片：…］`), so reading never loads
   anything from elsewhere (no tracking pixels). Image versions show our own thumbnail.
 - Plain-text extractions are shown preformatted, never interpreted as Markdown.
+- Cost is bounded too: some Markdown makes the parser's work grow quadratically and its
+  recursion overflow the stack (20 KB of `- - - …` blocks the server for about a minute).
+  Notes, the Markdown people type in, must pass `markdownProblem` (`src/lib/markdown.ts`)
+  when written and when restored: a linear scan of line nesting (8 markers), indentation (64
+  columns), emphasis runs (32) and emphasis marks or brackets per inline stretch (1,000),
+  then a parse whose tree may be at most 64 levels deep. What passes parses in about a
+  second at most. The renderer itself shows any tree deeper than 64 levels, or any text it
+  fails on, as plain text, so a page never fails because of how a text is formatted.
 
 `dangerouslySetInnerHTML` is banned everywhere (`react/no-danger`). In
 `src/components/reader/**` a second rule also bans it and `innerHTML`/`outerHTML`

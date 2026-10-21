@@ -248,6 +248,7 @@ export const zhTW = {
   "restore.counts.files": "原始檔：新存 {stored} · 已存在 {reused} · 修復 {repaired}",
   "restore.counts.tags": "標籤：新增 {restored} · 併入既有 {skipped} · 副本 {copied}",
   "restore.counts.notes": "筆記：新增 {restored} · 已存在 {skipped} · 副本 {copied}",
+  "restore.counts.readingStates": "閱讀狀態與收藏：{count} 份作品",
   "restore.counts.collections":
     "分類與集合：新增 {restored} · 併入既有 {skipped} · 副本 {copied} · 未還原 {failed}",
   "restore.reextract": "{count} 個版本正在背景重建內容",
@@ -362,7 +363,9 @@ export const zhTW = {
   "notes.deleteConfirm": "再按一次確認刪除",
   "notes.unknownAuthor": "（已移除的使用者）",
   "notes.edited": "已編輯",
-  "notes.error.invalid": "筆記需為 1 到 20000 字的文字，不能含控制字元或雙向控制字元。",
+  "notes.error.invalid":
+    "筆記需為 1 到 20000 字的文字，不能含控制字元或雙向控制字元，Markdown 也不能巢狀過深或連續太多強調符號。",
+  "notes.error.limit": "一份作品最多 200 則筆記。",
   "notes.error.gone": "這則筆記或作品已經不存在，請重新整理頁面。",
   "tags.title": "標籤",
   "tags.description":

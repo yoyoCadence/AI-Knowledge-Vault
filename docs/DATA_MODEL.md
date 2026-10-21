@@ -362,7 +362,8 @@ meanwhile) and then the artifact `FOR SHARE`, re-checking that it is not deleted
 
 **artifact_notes** (built, PR 16): `id`, `workspace_id`, `artifact_id`, `author_id? → users
 SET NULL`, `body_markdown` (Markdown, 1–20,000 characters, CHECK; the same text rules as
-descriptions), timestamps. The artifact key is composite, `(workspace_id, artifact_id) →
+descriptions, and Markdown within the cost limits of SECURITY.md §5), timestamps; at most
+200 notes per artifact (counted under the artifact lock). The artifact key is composite, `(workspace_id, artifact_id) →
 artifacts(workspace_id, id) ON DELETE CASCADE`; index `(artifact_id, created_at)`. Notes are
 shown with the reading mode's allow-list renderer, never as HTML, and are part of the
 artifact's search metadata (weight C, newest first, up to 20,000 characters in all). Every

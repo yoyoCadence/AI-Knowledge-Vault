@@ -20,6 +20,7 @@ import {
   fileAssets,
   researchProjects,
   tags,
+  workspaceMembers,
   workspaces,
 } from "@/infrastructure/database/schema";
 import type { StorageAdapter } from "@/infrastructure/storage";
@@ -211,7 +212,8 @@ async function readSnapshot(tx: DbExecutor, workspaceId: string) {
     .from(artifactNotes)
     .where(eq(artifactNotes.workspaceId, workspaceId))
     .orderBy(asc(artifactNotes.createdAt), asc(artifactNotes.id));
-  // Users are not exported: one state per artifact, merged over the workspace's members.
+  // Users are not exported: one state per artifact, merged over the workspace's current
+  // members (a removed member's favorites are theirs, not the workspace's).
   const readingStateRows = await tx
     .select({
       artifactId: artifactReadingStates.artifactId,
@@ -222,6 +224,13 @@ async function readSnapshot(tx: DbExecutor, workspaceId: string) {
       ),
     })
     .from(artifactReadingStates)
+    .innerJoin(
+      workspaceMembers,
+      and(
+        eq(workspaceMembers.workspaceId, artifactReadingStates.workspaceId),
+        eq(workspaceMembers.userId, artifactReadingStates.userId),
+      ),
+    )
     .where(eq(artifactReadingStates.workspaceId, workspaceId))
     .groupBy(artifactReadingStates.artifactId)
     .orderBy(asc(artifactReadingStates.artifactId));

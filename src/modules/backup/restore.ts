@@ -36,7 +36,7 @@ import { SafeZip, ZipRejectedError, type ZipLimits } from "@/modules/extraction"
 import { storeOriginal } from "@/modules/files/originals";
 import { deterministicId, saveExtraction } from "@/modules/imports/derive";
 import { enqueueJob } from "@/modules/jobs";
-import { normalizeNoteBody } from "@/modules/notes";
+import { normalizeNoteBody, NOTES_PER_ARTIFACT_MAX } from "@/modules/notes";
 import { enqueueVersionIndex, indexArtifactMetadata } from "@/modules/search/indexer";
 import { normalizeTagName } from "@/modules/tags";
 import {
@@ -454,13 +454,20 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
     }
     collectionLevel.set(collection.id, level);
   }
+  const notesPerArtifact = new Map<string, number>();
   for (const note of noteList) {
     if (!artifactIds.has(note.artifactId)) problems.push(`note ${note.id}: no artifact`);
+    // The app's own limits, Markdown complexity included: a restored note is shown and
+    // indexed like a written one.
     try {
       normalizeNoteBody(note.bodyMarkdown);
     } catch {
       problems.push(`note ${note.id}: invalid text`);
     }
+    const count = (notesPerArtifact.get(note.artifactId) ?? 0) + 1;
+    notesPerArtifact.set(note.artifactId, count);
+    if (count === NOTES_PER_ARTIFACT_MAX + 1)
+      problems.push(`artifact ${note.artifactId}: more than ${NOTES_PER_ARTIFACT_MAX} notes`);
   }
   const stateArtifacts = new Set<string>();
   for (const state of readingStateList) {
@@ -510,6 +517,8 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
 
 /** Postgres caps bind parameters at 65,535; id lookups are done in chunks well below that. */
 const ID_CHUNK = 10_000;
+/** Note rows per insert statement (7 parameters each). */
+const NOTE_INSERT_BATCH = 500;
 
 async function inChunks<T>(ids: string[], query: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
   const rows: T[] = [];
@@ -1100,7 +1109,7 @@ export async function restoreArchive(
      */
     const restoreItems = async (tx: DbExecutor, archivedId: string, artifactId: string) => {
       const { items, unplaced } = mappedItems(archivedId);
-      if (items.size === 0) return { written: 0, dropped: unplaced, notes: 0, states: 0 };
+      if (items.size === 0) return { written: 0, dropped: unplaced, notes: tally(), states: 0 };
       const live = new Set(
         (
           await tx
@@ -1137,7 +1146,7 @@ export async function restoreArchive(
       return {
         written: written.length,
         dropped: unplaced + items.size - rows.length,
-        notes: 0,
+        notes: tally(),
         states: 0,
       };
     };
@@ -1157,30 +1166,51 @@ export async function restoreArchive(
       artifactNotes,
       withDerived(archive.noteList.map((note) => note.id)),
     );
-    /** Inserts notes on `artifactId` under their placed ids; returns how many were new. */
+    /**
+     * Inserts notes on `artifactId` under their placed ids, a few hundred rows per statement
+     * (Postgres takes at most 65,535 parameters). Counts each written note as restored or
+     * copied, and one whose id already exists as skipped.
+     */
     const insertNotes = async (
       tx: DbExecutor,
       notes: typeof archive.noteList,
       artifactId: string,
     ) => {
-      if (notes.length === 0) return 0;
-      const written = await tx
-        .insert(artifactNotes)
-        .values(
-          notes.map((note) => ({
-            id: place(note.id, noteOwners).id,
-            workspaceId,
-            artifactId,
-            authorId: input.userId,
-            bodyMarkdown: normalizeNoteBody(note.bodyMarkdown),
-            createdAt: new Date(note.createdAt),
-            updatedAt: new Date(note.updatedAt),
-          })),
-        )
-        .onConflictDoNothing()
-        .returning({ id: artifactNotes.id });
-      for (const note of notes) remember(note.id, place(note.id, noteOwners).id);
-      return written.length;
+      const placed = notes.map((note) => ({ note, at: place(note.id, noteOwners) }));
+      const written = new Set<string>();
+      for (let start = 0; start < placed.length; start += NOTE_INSERT_BATCH) {
+        const rows = await tx
+          .insert(artifactNotes)
+          .values(
+            placed.slice(start, start + NOTE_INSERT_BATCH).map(({ note, at }) => ({
+              id: at.id,
+              workspaceId,
+              artifactId,
+              authorId: input.userId,
+              bodyMarkdown: normalizeNoteBody(note.bodyMarkdown),
+              createdAt: new Date(note.createdAt),
+              updatedAt: new Date(note.updatedAt),
+            })),
+          )
+          .onConflictDoNothing()
+          .returning({ id: artifactNotes.id });
+        for (const row of rows) written.add(row.id);
+      }
+      const counts = tally();
+      for (const { note, at } of placed) {
+        if (!written.has(at.id)) {
+          counts.skipped += 1;
+          continue;
+        }
+        counts[at.remapped ? "copied" : "restored"] += 1;
+        remember(note.id, at.id);
+      }
+      return counts;
+    };
+    const addNoteCounts = (counts: Tally) => {
+      for (const outcome of Object.keys(counts) as Outcome[]) {
+        report.counts.notes[outcome] += counts[outcome];
+      }
     };
     /**
      * An artifact that already exists gets the archived notes it lacks, as it gets the versions
@@ -1204,24 +1234,28 @@ export async function restoreArchive(
       const lacked = placedNotes.filter(({ at }) => !at.existing);
       if (lacked.length === 0) return;
       try {
-        const added = await db.transaction(async (tx) => {
-          await tx
-            .select({ id: artifacts.id })
-            .from(artifacts)
-            .where(eq(artifacts.id, artifactId))
-            .for("update");
-          const count = await insertNotes(
-            tx,
-            lacked.map(({ note }) => note),
-            artifactId,
-          );
-          await indexArtifactMetadata(tx, artifactId);
-          return count;
-        });
-        report.counts.notes[lacked[0]!.at.remapped ? "copied" : "restored"] += added;
+        addNoteCounts(
+          await db.transaction(async (tx) => {
+            await tx
+              .select({ id: artifacts.id })
+              .from(artifacts)
+              .where(eq(artifacts.id, artifactId))
+              .for("update");
+            const counts = await insertNotes(
+              tx,
+              lacked.map(({ note }) => note),
+              artifactId,
+            );
+            await indexArtifactMetadata(tx, artifactId);
+            return counts;
+          }),
+        );
       } catch (error) {
+        // The artifact itself is fine (it already existed): a warning, not a failure.
         report.counts.notes.failed += lacked.length;
-        fail(artifact, error);
+        report.warnings.push(
+          `${lacked.length} note(s) of artifact ${artifactId} were not restored: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`,
+        );
       }
     };
 
@@ -1445,7 +1479,7 @@ export async function restoreArchive(
         report.counts.artifactTagsDropped += linkedTags.dropped;
         report.counts.collectionItems += linkedTags.collected.written;
         report.counts.collectionItemsDropped += linkedTags.collected.dropped;
-        report.counts.notes[placed.remapped ? "copied" : "restored"] += linkedTags.collected.notes;
+        addNoteCounts(linkedTags.collected.notes);
         report.counts.readingStates += linkedTags.collected.states;
         report.counts.artifacts[placed.remapped ? "copied" : "restored"] += 1;
         report.counts.artifactVersions[placed.remapped ? "copied" : "restored"] += versions.length;
@@ -1453,6 +1487,7 @@ export async function restoreArchive(
       } catch (error) {
         report.counts.artifacts.failed += 1;
         report.counts.artifactVersions.failed += versions.length;
+        report.counts.notes.failed += notesByArtifact.get(artifact.id)?.length ?? 0;
         fail(artifact, error);
       }
     }

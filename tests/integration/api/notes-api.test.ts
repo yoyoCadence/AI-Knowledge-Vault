@@ -197,6 +197,7 @@ describe("notes and reading-state API (API_CONTRACT §6)", () => {
     expect((await list(viewer.cookie)).status).toBe(200);
     expect((await create({ bodyMarkdown: "檢視者" }, viewer.cookie)).status).toBe(403);
     expect((await patch(note.id, { bodyMarkdown: "檢視者" }, viewer.cookie)).status).toBe(403);
+    expect((await remove(note.id, viewer.cookie)).status).toBe(403);
     const theirs = await putState({ isFavorite: true }, viewer.cookie);
     expect(theirs.status).toBe(200);
     expect(((await theirs.json()) as { readingState: State }).readingState).toMatchObject({

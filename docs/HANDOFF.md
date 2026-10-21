@@ -551,6 +551,19 @@ conversations. Update it at the end of every PR.
     Mutation-checked: the artifact lock before a note write, note indexing, its cap and
     newest-first order, the per-user filter, the open transition, the opened cursor, the
     merged export.
+  - Codex review found, and this PR fixes, with tests that fail without the fix: a note long
+    enough to reach the tsvector's last position (16,383) made later phrases unsearchable,
+    the source fields included. Tokens past it are now left out instead of clamped, and notes
+    come last in the metadata document. (Its other finding, emoji notes refused on restore,
+    does not reproduce: zod 4.6 counts code points; a round-trip test pins it.)
+  - An independent review found, and this PR fixes, each with a test that fails without the
+    fix: a note of deeply nested Markdown stalled the server for up to a minute or crashed
+    the page (notes now pass Markdown cost limits on write and restore, and the renderer
+    falls back to plain text, SECURITY.md §5); an artifact with ~9,400 notes could not be
+    restored (one insert past Postgres' 65,535 parameters: at most 200 notes per artifact,
+    inserts in batches, the index reads only what it can use); restore note counts were
+    approximate; a slow "opened" request could override a status chosen right after opening;
+    exports included removed members' reading states.
 
 **Not done or not verified**
 

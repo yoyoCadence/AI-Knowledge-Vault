@@ -26,6 +26,9 @@ export function ReadingControls({ artifactId, initial }: { artifactId: string; i
   const [error, setError] = useState<string | null>(null);
   // Once the viewer changed something, a late answer to the "opened" request is stale.
   const changed = useRef(false);
+  // A change waits for the "opened" request, so the server applies them in the order made
+  // (otherwise a slow "opened" could turn a just-chosen "unread" back into "reading").
+  const opening = useRef<Promise<unknown>>(Promise.resolve());
 
   const put = (body: Record<string, unknown>) =>
     jsonRequest<{ readingState: State }>(`/api/artifacts/${artifactId}/reading-state`, {
@@ -39,10 +42,10 @@ export function ReadingControls({ artifactId, initial }: { artifactId: string; i
   useEffect(() => {
     let shown = true;
     // Best effort: not being able to record the visit must not disturb reading.
-    jsonRequest<{ readingState: State }>(`/api/artifacts/${artifactId}/reading-state`, {
-      method: "PUT",
-      body: { opened: true },
-    })
+    opening.current = jsonRequest<{ readingState: State }>(
+      `/api/artifacts/${artifactId}/reading-state`,
+      { method: "PUT", body: { opened: true } },
+    )
       .then(({ readingState }) => {
         if (shown && !changed.current) {
           setState({ status: readingState.status, isFavorite: readingState.isFavorite });
@@ -59,6 +62,7 @@ export function ReadingControls({ artifactId, initial }: { artifactId: string; i
     setBusy(true);
     setError(null);
     try {
+      await opening.current;
       setState(await put(body));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("edit.error.generic"));
