@@ -420,6 +420,19 @@ conversations. Update it at the end of every PR.
       bidirectional controls are refused.
     - `ensureTag` and the restore's tag lookup retry instead of failing on a row renamed or
       deleted between the insert and the select (not reproducible in tests; defensive).
+  - A second review of those fixes found, and this PR fixes, each with a test that fails
+    without the fix:
+    - Restore inserted links in archive order and could deadlock with a tag merge: it now
+      locks the target tags `FOR KEY SHARE` in id order first (deterministic test with a
+      blocking connection).
+    - A tag deleted mid-restore failed the whole artifact: its link is now dropped and
+      counted (`artifactTagsDropped`; deterministic test).
+    - Report counts: `artifactTagsKept` counts only archived links the existing artifact
+      lacks (an unchanged re-restore reports nothing); a resumed copy counts its links.
+    - Names: identity drops default-ignorable characters and blank glyphs (no look-alike
+      tags); directional marks are dropped instead of refusing Hebrew or Arabic names.
+    - `deleteTag` locks artifacts before the cascade; `setArtifactTag` re-checks the
+      artifact after locking it; `lockArtifacts` is one statement.
 
 **Not done or not verified**
 

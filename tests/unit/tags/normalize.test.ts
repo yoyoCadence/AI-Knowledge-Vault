@@ -30,6 +30,19 @@ describe("normalizeTagName (DATA_MODEL §4.4)", () => {
     ]) {
       expect(() => normalizeTagName(bad), JSON.stringify(bad)).toThrow(AppError);
     }
+    // Blank glyphs are not visible either.
+    for (const bad of ["\u2800", "\u2800\u2800\u2800", "\u{1d159}"]) {
+      expect(() => normalizeTagName(bad), JSON.stringify(bad)).toThrow(AppError);
+    }
+    // An invisible character cannot make a second tag that looks like the first.
+    for (const lookalike of ["a\u00adi", "a\u200di", "a\u034fi", "a\ufe0fi", "a\u2062i"]) {
+      expect(normalizeTagName(lookalike).normalizedName, JSON.stringify(lookalike)).toBe("ai");
+    }
+    expect(normalizeTagName("a\u3164").normalizedName).toBe("a");
+    expect(normalizeTagName("a\u2800").normalizedName).toBe("a");
+    // Directional marks from pasted right-to-left text are dropped, not refused.
+    expect(normalizeTagName("שלום\u200f").name).toBe("שלום");
+    expect(normalizeTagName("C++\u200e עברית").name).toBe("C++ עברית");
     // Joiners inside visible text are fine (emoji sequences, Indic scripts).
     expect(normalizeTagName("👩\u200d💻").name).toBe("👩\u200d💻");
     // 50 characters counted as code points, so an emoji counts once.

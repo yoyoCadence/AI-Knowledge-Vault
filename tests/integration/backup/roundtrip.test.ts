@@ -438,15 +438,41 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(report.counts.fileAssets).toEqual({ stored: 0, reused: 6, repaired: 0 });
     expect(report.counts.tags).toMatchObject({ restored: 0, skipped: 3, copied: 0 });
     expect(report.counts.artifactTags).toBe(0);
-    // The existing artifacts kept their tags; the report says the archive's links were not used.
-    expect(report.counts.artifactTagsKept).toBe(3);
-    expect(report.warnings.join("\n")).toMatch(
-      /3 tag link\(s\) belong to artifacts that already existed/,
-    );
+    // Nothing differs, so nothing is reported as kept.
+    expect(report.counts.artifactTagsKept).toBe(0);
+    expect(report.warnings.join("\n")).not.toMatch(/tag link/);
     expect(await workspaceRowCounts(target.workspaceId)).toEqual(counts);
     const again = await snapshot(target.workspaceId);
     expect(again.tags).toEqual(before.tags);
     expect(again.artifactTags).toEqual(before.artifactTags);
+
+    // A tag removed since the export stays removed, and the report says so.
+    const removed = before.artifactTags[0]!;
+    await setArtifactTag(
+      db,
+      target,
+      { artifactId: removed.artifactId, tagId: removed.tagId, present: false },
+      meta,
+    );
+    const rerun = await restoreArchive(db, restored, {
+      archivePath: archive,
+      workspaceId: target.workspaceId,
+      userId: target.userId,
+      mode: "skip_existing",
+      restoreId: crypto.randomUUID(),
+      limits: restoreLimitsFromEnv(getEnv()),
+    });
+    expect(rerun.counts.artifactTagsKept).toBe(1);
+    expect(rerun.warnings.join("\n")).toMatch(
+      /1 tag link\(s\) from the archive were not added to artifacts that already existed/,
+    );
+    expect((await snapshot(target.workspaceId)).artifactTags).toHaveLength(2);
+    await setArtifactTag(
+      db,
+      target,
+      { artifactId: removed.artifactId, tagId: removed.tagId, present: true },
+      meta,
+    );
   });
 
   it("copy mode creates new ids for the same content and reuses the stored originals", async () => {

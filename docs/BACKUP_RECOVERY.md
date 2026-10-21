@@ -160,8 +160,12 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    restored artifact, in its transaction, de-duplicated (two archived tags can map to one
    tag here: merged by name, or the same tag renamed since an older export). An artifact
    that already exists keeps its own tags: a tag removed since the export stays removed
-   (versions it lacks are still added). The archive's links for such artifacts are counted
-   (`artifactTagsKept`) and named in a warning, so nothing is dropped silently.
+   (versions it lacks are still added). Archived links such an artifact lacks are counted
+   (`artifactTagsKept`) and named in a warning, so nothing is dropped silently. Before writing
+   links, the target tags are locked `FOR KEY SHARE` in id order, as every tag operation
+   locks them, so a restore cannot deadlock with a tag merge; a tag deleted or merged while
+   the restore ran is gone, and its link is dropped and counted (`artifactTagsDropped`)
+   instead of failing the artifact.
 7. **Rebuild.** One `restore.reextract_version` job per restored version. It re-runs
    extraction and preview generation from the restored original, then indexing (Phase 1B).
    The archived `normalized/*.md` is used as a fallback extraction if re-extraction fails.

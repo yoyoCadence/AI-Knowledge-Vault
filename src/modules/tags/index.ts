@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import {
   artifacts,
@@ -28,28 +28,33 @@ export interface TagWithCount extends TagSummary {
   artifactCount: number;
 }
 
-/** Characters that render as nothing; dropped so they can't make two names look alike. */
-const INVISIBLE = /[\u200b\u2060\ufeff]/gu;
-/** Bidirectional controls: they can make a name display as something else (e.g. an RLO turning `abc\u202eexe.gpj` into `abcjpg.exe`). */
-const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
-/** Hangul fillers are letters (Lo) that render blank. */
-const FILLERS = /[\u115f\u1160\u3164\uffa0]/gu;
+/**
+ * Dropped from names: zero-width spaces and the directional marks (LRM, RLM, ALM) that pasted
+ * right-to-left text often carries. They render as nothing.
+ */
+const STRIPPED = /[\u200b\u2060\ufeff\u200e\u200f\u061c]/gu;
+/**
+ * Bidirectional embeddings, overrides and isolates are refused: they can make a name display
+ * as something else (an RLO turns `abc\u202eexe.gpj` into `abcjpg.exe`).
+ */
+const BIDI_CONTROLS = /[\u202a-\u202e\u2066-\u2069]/u;
+/** Characters that never render (soft hyphen, joiners, variation selectors, Hangul fillers …). */
+const IGNORABLE = /\p{Default_Ignorable_Code_Point}/gu;
+/** Symbols whose glyph is blank (Braille blank, musical null notehead). */
+const BLANK_GLYPHS = /[\u2800\u{1d159}]/gu;
 /** A name must have at least one character that shows: a letter, digit, punctuation or symbol. */
 const VISIBLE = /[\p{L}\p{N}\p{P}\p{S}]/u;
 
 /**
  * The display name (NFC, single spaces, trimmed) and the identity of a tag name: NFKC,
- * lower-case, collapsed whitespace. `ＡＩ` and `ai` are one tag. Names that would render as
- * nothing, or could display as something else, are refused.
+ * lower-case, collapsed whitespace, without characters that render as nothing. `ＡＩ` and
+ * `ai` are one tag, and so are two names that only differ by an invisible character. Names
+ * that would render as nothing, or could display as something else, are refused.
  */
 export function normalizeTagName(input: string): { name: string; normalizedName: string } {
-  const name = input.normalize("NFC").replace(INVISIBLE, "").replace(/\s+/gu, " ").trim();
-  if (
-    !name ||
-    /[\p{Cc}\p{Cs}]/u.test(name) ||
-    BIDI_CONTROLS.test(name) ||
-    !VISIBLE.test(name.replace(FILLERS, ""))
-  ) {
+  const name = input.normalize("NFC").replace(STRIPPED, "").replace(/\s+/gu, " ").trim();
+  const shown = name.replace(IGNORABLE, "").replace(BLANK_GLYPHS, "");
+  if (!name || /[\p{Cc}\p{Cs}]/u.test(name) || BIDI_CONTROLS.test(name) || !VISIBLE.test(shown)) {
     throw new AppError("VALIDATION_FAILED", "Tag names must be visible text");
   }
   if (Array.from(name).length > TAG_NAME_MAX_LENGTH) {
@@ -58,7 +63,13 @@ export function normalizeTagName(input: string): { name: string; normalizedName:
       `Tag names are at most ${TAG_NAME_MAX_LENGTH} characters`,
     );
   }
-  const normalizedName = name.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+  const normalizedName = name
+    .normalize("NFKC")
+    .replace(IGNORABLE, "")
+    .replace(BLANK_GLYPHS, "")
+    .toLowerCase()
+    .replace(/\s+/gu, " ")
+    .trim();
   return { name, normalizedName };
 }
 
@@ -134,9 +145,15 @@ async function taggedArtifactIds(tx: DbExecutor, tagId: string): Promise<string[
  * metadata document would deadlock. Lock order everywhere: tag rows, then artifact rows.
  */
 async function lockArtifacts(tx: DbExecutor, artifactIds: Iterable<string>) {
-  for (const id of [...new Set(artifactIds)].sort()) {
-    await tx.select({ id: artifacts.id }).from(artifacts).where(eq(artifacts.id, id)).for("update");
-  }
+  const ids = [...new Set(artifactIds)].sort();
+  if (ids.length === 0) return;
+  // One statement; rows are locked in the ORDER BY order.
+  await tx
+    .select({ id: artifacts.id })
+    .from(artifacts)
+    .where(inArray(artifacts.id, ids))
+    .orderBy(asc(artifacts.id))
+    .for("update");
 }
 
 /** Rebuilds the metadata documents of the given artifacts, in the same sorted order. */
@@ -236,6 +253,8 @@ export async function deleteTag(db: Database, actor: Actor, tagId: string, meta:
   await db.transaction(async (tx) => {
     const tag = await lockTag(tx, actor, tagId);
     const affected = await taggedArtifactIds(tx, tag.id);
+    // Artifacts before the cascade removes their links (same order as every tag operation).
+    await lockArtifacts(tx, affected);
     await tx.delete(tags).where(eq(tags.id, tag.id));
     await reindex(tx, affected);
     await recordAudit(tx, {
@@ -336,7 +355,13 @@ export async function setArtifactTag(
       .where(and(eq(tags.id, input.tagId), eq(tags.workspaceId, actor.workspaceId)))
       .for("share");
     if (!tag) throw notFound("Tag");
-    await lockArtifacts(tx, [artifact.id]);
+    // Lock the artifact before writing the link, and check it was not deleted meanwhile.
+    const [current] = await tx
+      .select({ deletedAt: artifacts.deletedAt })
+      .from(artifacts)
+      .where(eq(artifacts.id, artifact.id))
+      .for("update");
+    if (!current || current.deletedAt) throw notFound("Artifact");
     const changed = input.present
       ? await tx
           .insert(artifactTags)
