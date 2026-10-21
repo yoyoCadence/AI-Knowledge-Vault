@@ -25,6 +25,18 @@ import { TOKENIZER_VERSION, toTsvector } from "./tokenizer";
 export const SEARCH_INDEX_JOB_TYPE = "search.index_version";
 export const SEARCH_REINDEX_ALL_JOB_TYPE = "search.reindex_all";
 const INSERT_BATCH = 200;
+/**
+ * Metadata indexed per field, in characters. A tsvector holds at most 1 MB, and an unbounded
+ * description (from an edited archive, say) would fail the whole index job every time. The
+ * full text stays in the database; only the searchable copy is capped.
+ */
+const METADATA_LIMITS = { title: 500, text: 5_000, source: 500 } as const;
+
+/** The first `max` characters (code points, never half a surrogate pair). */
+function clip(text: string | null | undefined, max: number): string {
+  if (!text) return "";
+  return text.length <= max ? text : Array.from(text).slice(0, max).join("");
+}
 
 /**
  * Queues indexing of a version's newly saved extraction. Call inside the transaction that
@@ -82,10 +94,17 @@ export async function indexArtifactMetadata(tx: DbExecutor, artifactId: string) 
     .where(eq(artifacts.id, artifactId));
   if (!row) return;
   const searchVector = toTsvector([
-    { text: row.title, weight: "A" },
-    { text: [row.description, row.summary].filter(Boolean).join("\n"), weight: "B" },
+    { text: clip(row.title, METADATA_LIMITS.title), weight: "A" },
+    {
+      text: [row.description, row.summary]
+        .map((text) => clip(text, METADATA_LIMITS.text))
+        .filter(Boolean)
+        .join("\n"),
+      weight: "B",
+    },
     {
       text: [row.sourcePlatform, row.sourceModel, row.author, row.filename]
+        .map((text) => clip(text, METADATA_LIMITS.source))
         .filter(Boolean)
         .join("\n"),
       weight: "C",
@@ -108,8 +127,10 @@ export async function indexArtifactMetadata(tx: DbExecutor, artifactId: string) 
 /**
  * Job handler: replaces the version's chunks with chunks of its active extraction, records
  * what they were built from (`search_index_states`) and refreshes its artifact's metadata
- * document, in one transaction. The version row is locked, so two index jobs for the same
- * version (a quick re-extraction) never interleave.
+ * document, in one transaction. Locks, in order: the version row (two jobs for the same
+ * version never interleave), then its artifact row (jobs for different versions of one
+ * artifact take turns). Nothing locks an existing version after its artifact, so this order
+ * cannot deadlock with imports, restores or re-extraction.
  */
 export async function indexVersion(db: Database, versionId: string) {
   return db.transaction(async (tx) => {
@@ -124,6 +145,14 @@ export async function indexVersion(db: Database, versionId: string) {
       .where(eq(artifactVersions.id, versionId))
       .for("update");
     if (!version) return { skipped: "missing_version" };
+    // The artifact row next, before any chunk is written: a chunk's foreign key takes a
+    // key-share lock on the artifact, and two jobs for versions of the same artifact that each
+    // held one while waiting to lock the artifact for its metadata document would deadlock.
+    await tx
+      .select({ id: artifacts.id })
+      .from(artifacts)
+      .where(eq(artifacts.id, version.artifactId))
+      .for("update");
 
     await tx.delete(contentChunks).where(eq(contentChunks.artifactVersionId, version.id));
     let chunkCount = 0;

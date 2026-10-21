@@ -8,7 +8,7 @@ import { EmptyState } from "@/components/ui/states";
 import { getDb } from "@/infrastructure/database/client";
 import { decodeCursorOrFirstPage, encodeCursor } from "@/lib/cursor";
 import { t } from "@/lib/i18n";
-import { firstParam, type PageSearchParams } from "@/lib/search-params";
+import { firstParam, searchQueryParam, type PageSearchParams } from "@/lib/search-params";
 import { listArtifacts } from "@/modules/artifacts";
 import { searchArtifacts } from "@/modules/search";
 
@@ -80,7 +80,7 @@ export default async function LibraryPage({
   const params = await searchParams;
   const cursor = firstParam(params.cursor);
   const offset = firstParam(params.offset);
-  const q = (firstParam(params.q) ?? "").trim().slice(0, 200);
+  const q = searchQueryParam(params.q);
   if (q) {
     return (
       <div className="flex flex-col gap-6">

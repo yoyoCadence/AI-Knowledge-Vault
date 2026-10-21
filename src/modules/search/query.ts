@@ -115,7 +115,8 @@ export async function searchArtifacts(
     -- Any term: narrows rows through the GIN indexes and ranks them.
     any_term as (select ${termQueries.join(" | ")}::tsquery as query),
     chunk_rows as (
-      select c.artifact_id, c.id, c.ordinal, c.search_vector
+      select c.artifact_id, c.id, c.ordinal, c.search_vector,
+        ts_rank_cd(c.search_vector, q.query) as rank
       from content_chunks c
       join artifacts a on a.id = c.artifact_id
       cross join any_term q
@@ -125,7 +126,8 @@ export async function searchArtifacts(
         and c.search_vector @@ q.query
     ),
     meta_rows as (
-      select d.artifact_id, d.search_vector
+      select d.artifact_id, d.search_vector,
+        ts_rank_cd(d.search_vector, q.query) * 2 as rank -- metadata boost
       from artifact_search_documents d
       join artifacts a on a.id = d.artifact_id
       cross join any_term q
@@ -133,31 +135,24 @@ export async function searchArtifacts(
         and a.deleted_at is null
         and d.search_vector @@ q.query
     ),
-    matched as (
-      select hits.artifact_id
-      from (
-        select r.artifact_id, t.term_no from chunk_rows r join terms t on r.search_vector @@ t.query
-        union
-        select m.artifact_id, t.term_no from meta_rows m join terms t on m.search_vector @@ t.query
-      ) hits
-      group by hits.artifact_id
-      having count(distinct hits.term_no) = ${termQueries.length}::int
-    ),
-    best_chunk as (
-      select distinct on (r.artifact_id)
-        r.artifact_id, r.id as chunk_id, ts_rank_cd(r.search_vector, q.query) as rank
-      from chunk_rows r
-      join matched m on m.artifact_id = r.artifact_id
-      cross join any_term q
-      order by r.artifact_id, rank desc, r.ordinal
+    -- Which term matched which row. One aggregation (no joins back onto its own result: the
+    -- planner cannot estimate a HAVING, and nested loops over it grew quadratically).
+    hits as (
+      select r.artifact_id, t.term_no, r.id as chunk_id, r.ordinal, r.rank, false as meta
+      from chunk_rows r join terms t on r.search_vector @@ t.query
+      union all
+      select m.artifact_id, t.term_no, null::uuid, null::int, m.rank, true
+      from meta_rows m join terms t on m.search_vector @@ t.query
     ),
     scored as (
-      select m.artifact_id, b.chunk_id,
-        coalesce(b.rank, 0) + coalesce(ts_rank_cd(d.search_vector, q.query) * 2, 0) as score
-      from matched m
-      cross join any_term q
-      left join best_chunk b on b.artifact_id = m.artifact_id
-      left join meta_rows d on d.artifact_id = m.artifact_id
+      select artifact_id,
+        (array_agg(chunk_id order by rank desc, ordinal) filter (where not meta))[1] as chunk_id,
+        coalesce(max(rank) filter (where not meta), 0)
+          + coalesce(max(rank) filter (where meta), 0) as score
+      from hits
+      group by artifact_id
+      -- Every term matched somewhere in the artifact.
+      having count(distinct term_no) = ${termQueries.length}::int
     )
     select a.id, a.title, a.summary, v.content_kind, s.score, ch.text as chunk_text
     from scored s

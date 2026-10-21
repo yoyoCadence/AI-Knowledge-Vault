@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeDb } from "@/infrastructure/database/client";
 import {
@@ -9,7 +9,13 @@ import {
   searchIndexStates,
 } from "@/infrastructure/database/schema";
 import type { Actor } from "@/modules/auth";
-import { enqueueMissingIndexes, indexArtifactMetadata, searchArtifacts } from "@/modules/search";
+import {
+  enqueueMissingIndexes,
+  indexArtifactMetadata,
+  indexVersion,
+  searchArtifacts,
+  TOKENIZER_VERSION,
+} from "@/modules/search";
 import { htmlDocument } from "@tests/fixtures/builders";
 import { closeTestDb, testDb } from "../helpers/db";
 import { createTestActor, drainJobs, newBatch, uploadFile } from "../helpers/imports";
@@ -240,6 +246,72 @@ describe("keyword search (SEARCH_DESIGN §7)", () => {
     await indexed;
     expect(await titles(actor, "甲作者")).toEqual(["競態測試"]);
     expect(await titles(actor, "乙作者")).toEqual([]);
+  });
+
+  it("indexes an artifact whose description is far longer than a tsvector can hold", async () => {
+    // E.g. restored from an edited archive. Unbounded, the metadata vector exceeds Postgres'
+    // 1 MB tsvector limit and the whole index job (body included) fails every time.
+    const actor = await createTestActor();
+    const id = await importHtml(actor, "huge-description.html", "超長描述", "內文提到雨水花園。");
+    let seed = 2_463_534_242; // xorshift32: varied pairs, so ~every bigram is distinct
+    const huge = Array.from({ length: 150_000 }, () => {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      return String.fromCodePoint(0x4e00 + ((seed >>> 0) % 20_000));
+    }).join("");
+    await db.update(artifacts).set({ description: huge }).where(eq(artifacts.id, id));
+    await db.transaction((tx) => indexArtifactMetadata(tx, id));
+    expect(await titles(actor, "超長描述")).toEqual(["超長描述"]);
+    expect(await titles(actor, "雨水花園")).toEqual(["超長描述"]);
+  });
+
+  it("never deadlocks with an index job for another version of the same artifact", async () => {
+    const actor = await createTestActor();
+    const id = await importHtml(actor, "deadlock-check.html", "鎖順序測試", "第一版。");
+    await importHtml(actor, "deadlock-check.html", "鎖順序測試", "第二版。");
+    const [v1, v2] = await db
+      .select({ id: artifactVersions.id, extractionId: artifactVersions.activeExtractionId })
+      .from(artifactVersions)
+      .where(eq(artifactVersions.artifactId, id))
+      .orderBy(artifactVersions.versionNumber);
+
+    // "Job 2", mid-flight: its version locked and a chunk written (the chunk's foreign key
+    // takes a key-share lock on the artifact row), not committed yet.
+    let job1: Promise<unknown> | undefined;
+    await db.transaction(async (tx) => {
+      await tx
+        .select({ id: artifactVersions.id })
+        .from(artifactVersions)
+        .where(eq(artifactVersions.id, v2!.id))
+        .for("update");
+      await tx.insert(contentChunks).values({
+        workspaceId: actor.workspaceId,
+        artifactId: id,
+        artifactVersionId: v2!.id,
+        extractedDocumentId: v2!.extractionId!,
+        ordinal: 999,
+        text: "x",
+        charStart: 0,
+        charEnd: 1,
+        contentHash: "0".repeat(64),
+        tokenizerVersion: TOKENIZER_VERSION,
+        searchVector: "'x':1",
+      });
+      job1 = indexVersion(db, v1!.id);
+      job1.catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      // Job 2 now needs the artifact row for the metadata document.
+      await tx
+        .select({ id: artifacts.id })
+        .from(artifacts)
+        .where(eq(artifacts.id, id))
+        .for("update");
+      await tx
+        .delete(contentChunks)
+        .where(and(eq(contentChunks.artifactVersionId, v2!.id), eq(contentChunks.ordinal, 999)));
+    });
+    await expect(job1).resolves.toMatchObject({ versionId: v1!.id });
   });
 
   it("returns nothing for a query without searchable characters", async () => {

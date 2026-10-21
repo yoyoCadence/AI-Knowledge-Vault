@@ -333,7 +333,17 @@ conversations. Update it at the end of every PR.
   - `query.ts`: one parameterized query matches each term separately and keeps artifacts
     where every term matched in some chunk of the current version or in the metadata
     document (AND per artifact, not per chunk). Workspace-scoped, deleted excluded.
-    Snippets are `{text, highlight}` segments from the best chunk.
+    Snippets are `{text, highlight}` segments from the best chunk. The per-artifact AND is
+    a single aggregation over the hits. An earlier shape joined back onto a HAVING result;
+    the planner estimated it at one row and chose nested loops, so a very common term took
+    13 s at 60,000 chunks. Now it takes about 0.18 s at 60,000 and 0.4 s at 120,000 chunks
+    (local Postgres 16, 20 chunks per artifact, every chunk matching).
+  - Index job lock order: version row, then its artifact row, before any chunk is written.
+    A chunk's foreign key takes a key-share lock on the artifact, so two jobs for versions
+    of one artifact used to deadlock. A deterministic test reproduces the old deadlock.
+  - Metadata fields are capped before indexing (title 500, description and summary 5,000
+    each, source fields 500 characters). An unbounded description could exceed Postgres'
+    1 MB tsvector limit and fail the whole index job every day.
   - Lint: backslashes are banned in `sql` templates (the tag drops them, which had silently
     turned the old backfill regex `'\S'` into `'S'`).
   - Pages read repeated search parameters (`?q=a&q=b`) by their first value
@@ -368,6 +378,10 @@ conversations. Update it at the end of every PR.
 
 - Search filters (project, collection, tag, source model, kind, dates), sorting and
   totals: they need P1B-ORG's tables. No Simplified↔Traditional folding (SEARCH_DESIGN §9).
+- Search has no `statement_timeout`. A one-character query over a very large library holds
+  a connection for its whole run (0.4 s at 120,000 matching chunks today).
+- Development databases that applied an earlier draft of `0006_search_index` (before PR 12
+  merged) must be reset: the migration was regenerated with a new timestamp.
 
 - Reading mode shows document images as alt text only. Serving derived images of imported
   documents through an authorized route is not built.
