@@ -12,6 +12,8 @@ import {
   artifacts,
   artifactTags,
   artifactVersions,
+  collectionItems,
+  collections,
   extractedDocuments,
   fileAssets,
   researchProjects,
@@ -35,24 +37,26 @@ import {
   type ArtifactTagV2,
   type ArtifactV1,
   type ChecksumEntry,
+  type CollectionItemV3,
+  type CollectionV3,
   type FileAssetV1,
-  type ManifestV2,
+  type ManifestV3,
   type ProjectV1,
   type TagV2,
   type VersionV1,
 } from "./format";
 
 /**
- * Portable export writer (docs/BACKUP_RECOVERY.md §2–3). Streams one workspace into a format v1
- * ZIP: metadata JSON, normalized Markdown, and every original byte-for-byte. Originals are
- * re-hashed while streaming; if storage returns bytes that do not match the recorded SHA-256 the
- * export fails (ORIGINAL_CORRUPT) instead of producing an archive whose checksums would lie.
- * Read-only on the database; safe to run concurrently with normal use.
+ * Portable export writer (docs/BACKUP_RECOVERY.md §2–3). Streams one workspace into a ZIP of
+ * the latest format version: metadata JSON, normalized Markdown, and every original
+ * byte-for-byte. Originals are re-hashed while streaming; if storage returns bytes that do not
+ * match the recorded SHA-256 the export fails (ORIGINAL_CORRUPT) instead of producing an archive
+ * whose checksums would lie. Read-only on the database; safe to run concurrently with normal use.
  */
 
 export interface ExportSummary {
   filename: string;
-  manifest: ManifestV2;
+  manifest: ManifestV3;
 }
 
 const iso = (value: Date | null) => (value ? value.toISOString() : null);
@@ -188,12 +192,24 @@ async function readSnapshot(tx: DbExecutor, workspaceId: string) {
     .from(artifactTags)
     .where(eq(artifactTags.workspaceId, workspaceId))
     .orderBy(asc(artifactTags.artifactId), asc(artifactTags.tagId));
+  const collectionRows = await tx
+    .select()
+    .from(collections)
+    .where(eq(collections.workspaceId, workspaceId))
+    .orderBy(asc(collections.createdAt), asc(collections.id));
+  const collectionItemRows = await tx
+    .select()
+    .from(collectionItems)
+    .where(eq(collectionItems.workspaceId, workspaceId))
+    .orderBy(asc(collectionItems.collectionId), asc(collectionItems.artifactId));
   return {
     workspace,
     projectRows,
     artifactRows,
     tagRows,
     artifactTagRows,
+    collectionRows,
+    collectionItemRows,
     versionRows,
     assetRows,
     linkRows,
@@ -229,6 +245,8 @@ export async function writeExport(
     linkRows,
     tagRows,
     artifactTagRows,
+    collectionRows,
+    collectionItemRows,
     documents,
     dbMigration,
   } = await Promise.race([reading, outputFailed]);
@@ -310,6 +328,22 @@ export async function writeExport(
     tagId: row.tagId,
     createdAt: row.createdAt.toISOString(),
   }));
+  const collectionJson: CollectionV3[] = collectionRows.map((row) => ({
+    id: row.id,
+    parentId: row.parentId,
+    kind: row.kind,
+    name: row.name,
+    description: row.description,
+    sortOrder: row.sortOrder,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  }));
+  const collectionItemJson: CollectionItemV3[] = collectionItemRows.map((row) => ({
+    collectionId: row.collectionId,
+    artifactId: row.artifactId,
+    position: row.position,
+    addedAt: row.addedAt.toISOString(),
+  }));
 
   // Buffers whose bytes (and so hashes) are known up front.
   const buffers = new Map<string, Buffer>();
@@ -327,6 +361,8 @@ export async function writeExport(
   buffers.set(PATHS.artifactFiles, json(links));
   buffers.set(PATHS.tags, json(tagJson));
   buffers.set(PATHS.artifactTags, json(artifactTagJson));
+  buffers.set(PATHS.collections, json(collectionJson));
+  buffers.set(PATHS.collectionItems, json(collectionItemJson));
   let normalizedCount = 0;
   for (const version of versionRows) {
     const document = version.activeExtractionId
@@ -362,7 +398,7 @@ export async function writeExport(
     ...assets.map((asset) => ({ path: asset.archivePath, sha256: asset.sha256 })),
   ];
   const checksums = Buffer.from(formatChecksums(checksumEntries), "utf8");
-  const manifest: ManifestV2 = {
+  const manifest: ManifestV3 = {
     format: EXPORT_FORMAT,
     formatVersion: EXPORT_FORMAT_VERSION,
     createdAt: now.toISOString(),
@@ -379,6 +415,8 @@ export async function writeExport(
       normalizedDocuments: normalizedCount,
       tags: tagJson.length,
       artifactTags: artifactTagJson.length,
+      collections: collectionJson.length,
+      collectionItems: collectionItemJson.length,
     },
     checksumsSha256: sha256OfBuffer(checksums),
   };

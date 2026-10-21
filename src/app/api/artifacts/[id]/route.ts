@@ -2,6 +2,7 @@ import { notFound } from "@/lib/errors";
 import { isUuid } from "@/lib/ids";
 import { z } from "zod";
 import { getArtifactDetail, tagsByArtifact, updateArtifact } from "@/modules/artifacts";
+import { collectionsOf } from "@/modules/collections";
 import { findProject } from "@/modules/projects";
 import { json, parseJsonBody } from "../../_lib/http";
 import { authedRoute } from "../../_lib/route";
@@ -14,6 +15,7 @@ export const GET = authedRoute<{ id: string }>(
     if (!isUuid(params.id)) throw notFound("Artifact");
     const { artifact, versions } = await getArtifactDetail(services.db(), actor, params.id);
     const tags = await tagsByArtifact(services.db(), actor.workspaceId, [artifact.id]);
+    const collections = await collectionsOf(services.db(), actor.workspaceId, artifact.id);
     // A deleted project reads as none here too.
     const project = artifact.projectId
       ? await findProject(services.db(), actor, artifact.projectId)
@@ -32,6 +34,7 @@ export const GET = authedRoute<{ id: string }>(
         createdAt: artifact.createdAt,
         updatedAt: artifact.updatedAt,
         tags: tags.get(artifact.id) ?? [],
+        collections,
       },
       versions,
     });

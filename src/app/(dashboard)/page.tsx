@@ -1,4 +1,4 @@
-import { FolderKanban, Library, Tag, Upload, X } from "lucide-react";
+import { FolderKanban, FolderTree, Library, Tag, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { requirePageActor } from "@/app/_lib/session";
 import { ArtifactCard, label } from "@/components/library/artifact-card";
@@ -26,6 +26,7 @@ import {
   type LibraryFilters,
   type LibrarySort,
 } from "@/modules/artifacts";
+import { collectionOptions, findCollection } from "@/modules/collections";
 import { findProject, listProjects } from "@/modules/projects";
 import { SEARCH_SORTS, searchArtifacts, type SearchSort } from "@/modules/search";
 import { findTag } from "@/modules/tags";
@@ -46,7 +47,7 @@ function oneOf<T extends string>(value: string | undefined, allowed: readonly T[
   return allowed.includes(value as T) ? (value as T) : undefined;
 }
 
-/** A filter the page cannot honour (another workspace's or a deleted tag or project). */
+/** A filter the page cannot honour (another workspace's or a deleted tag, project or collection). */
 function UnknownFilter({ title, clearLabel }: { title: string; clearLabel: string }) {
   return (
     <EmptyState
@@ -61,7 +62,7 @@ function UnknownFilter({ title, clearLabel }: { title: string; clearLabel: strin
   );
 }
 
-/** An active tag or project filter, with a link that removes just that filter. */
+/** An active tag, project or collection filter, with a link that removes just that filter. */
 function ActiveFilter({
   icon: Icon,
   text,
@@ -112,10 +113,19 @@ export default async function LibraryPage({
   if (projectParam && !project) {
     return <UnknownFilter title={t("projects.unknown")} clearLabel={t("filters.clear")} />;
   }
+  const collectionParam = firstParam(params.collection);
+  const collection =
+    collectionParam && isUuid(collectionParam)
+      ? await findCollection(db, actor, collectionParam)
+      : null;
+  if (collectionParam && !collection) {
+    return <UnknownFilter title={t("collections.unknown")} clearLabel={t("filters.clear")} />;
+  }
 
   const filters: LibraryFilters = {
     tagId: tag?.id,
     projectId: project?.id,
+    collectionId: collection?.id,
     kind: oneOf(firstParam(params.kind), CONTENT_KINDS),
     sourceModel: modelParam(params.model),
     from: dayParam(params.from),
@@ -128,6 +138,7 @@ export default async function LibraryPage({
     q,
     tag: filters.tagId,
     project: filters.projectId,
+    collection: filters.collectionId,
     kind: filters.kind,
     model: filters.sourceModel,
     from: filters.from,
@@ -137,8 +148,9 @@ export default async function LibraryPage({
   // Filters set in the form (the tag comes from chips and has its own line).
   const filtered = hasFilters({ ...filters, tagId: undefined }) || sort !== undefined;
 
-  const [projects, models] = await Promise.all([
+  const [projects, collections, models] = await Promise.all([
     listProjects(db, actor),
+    collectionOptions(db, actor),
     listSourceModels(db, actor),
   ]);
   const controls = (
@@ -147,6 +159,11 @@ export default async function LibraryPage({
       projects={projects
         .filter((option) => option.status === "active" || option.id === project?.id)
         .map((option) => ({ value: option.id, label: option.title }))}
+      collections={collections.map((option) => ({
+        value: option.id,
+        label: option.name,
+        depth: option.depth,
+      }))}
       kinds={CONTENT_KINDS.map((kind) => ({ value: kind, label: label("kind", kind) }))}
       models={models}
       sorts={(q ? SEARCH_SORTS : LIBRARY_SORTS).map((value) => ({
@@ -175,6 +192,15 @@ export default async function LibraryPage({
           clearHref={libraryHref({ ...state, project: undefined })}
           clearLabel={t("projects.clearFilter")}
           testId="project-filter"
+        />
+      ) : null}
+      {collection ? (
+        <ActiveFilter
+          icon={FolderTree}
+          text={t("collections.filtered", { name: collection.name })}
+          clearHref={libraryHref({ ...state, collection: undefined })}
+          clearLabel={t("collections.clearFilter")}
+          testId="collection-filter"
         />
       ) : null}
     </>

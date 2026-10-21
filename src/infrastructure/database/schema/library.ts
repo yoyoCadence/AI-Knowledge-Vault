@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { createdAt, idColumn, oneOf, updatedAt } from "./_shared";
 import { users } from "./auth";
+import { collections } from "./organization";
 import { workspaces } from "./workspaces";
 
 /**
@@ -376,8 +377,9 @@ export const importBatches = pgTable(
     targetProjectId: uuid("target_project_id").references(() => researchProjects.id, {
       onDelete: "set null",
     }),
-    // FK to collections is added when collections land (Phase 1B).
-    targetCollectionId: uuid("target_collection_id"),
+    targetCollectionId: uuid("target_collection_id").references(() => collections.id, {
+      onDelete: "set null",
+    }),
     options: jsonb("options").$type<ImportBatchOptions>().notNull().default({}),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

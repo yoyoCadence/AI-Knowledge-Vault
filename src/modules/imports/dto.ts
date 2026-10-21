@@ -36,6 +36,7 @@ export function toBatchDto(batch: typeof importBatches.$inferSelect) {
     id: batch.id,
     status: batch.status,
     targetProjectId: batch.targetProjectId,
+    targetCollectionId: batch.targetCollectionId,
     options: batch.options,
     createdAt: batch.createdAt,
     completedAt: batch.completedAt,

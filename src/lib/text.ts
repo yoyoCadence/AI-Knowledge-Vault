@@ -67,3 +67,11 @@ export function cleanDescription(
 export function normalizeLineEndings(text: string): string {
   return text.replace(/\r\n?/g, "\n");
 }
+
+/**
+ * The identity form of a name, for uniqueness: NFKC, without characters that never render,
+ * lower-case, single spaces. `ＡＩ 模型` and `ai  模型` compare equal.
+ */
+export function identityOf(name: string): string {
+  return name.normalize("NFKC").replace(INVISIBLE, "").toLowerCase().replace(/\s+/gu, " ").trim();
+}

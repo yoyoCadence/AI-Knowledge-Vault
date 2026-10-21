@@ -13,6 +13,7 @@ import {
 import { StorageObjectNotFoundError } from "@/infrastructure/storage";
 import { AppError } from "@/lib/errors";
 import { identityKeyFor, isDistinctiveKey } from "@/modules/artifacts";
+import { addImportedArtifact } from "@/modules/collections";
 import {
   contentHash,
   fileExtension,
@@ -330,6 +331,11 @@ export async function processImportItem(
           identityKey,
           createdBy: batch.createdBy,
         });
+        // Like the project, the batch's collection applies to new artifacts only: a new
+        // version keeps the artifact where the owner put it.
+        if (batch.targetCollectionId) {
+          await addImportedArtifact(tx, item.workspaceId, batch.targetCollectionId, artifactId);
+        }
       }
 
       await tx.insert(artifactVersions).values({

@@ -25,7 +25,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/", labelKey: "nav.library", icon: BookOpen },
   { href: "/tags", labelKey: "nav.tags", icon: Tags },
   { href: "/projects", labelKey: "nav.projects", icon: FolderKanban },
-  { href: "/collections", labelKey: "nav.collections", icon: FolderTree, future: true },
+  { href: "/collections", labelKey: "nav.collections", icon: FolderTree },
   { href: "/knowledge-map", labelKey: "nav.knowledgeMap", icon: Network, future: true },
   { href: "/ai-research", labelKey: "nav.aiResearch", icon: Sparkles, future: true },
   { href: "/showcase", labelKey: "nav.publicShowcase", icon: Globe, future: true },

@@ -10,6 +10,8 @@ import { DISPLAY_TIME_ZONE } from "@/lib/format";
 export interface LibraryFilters {
   tagId?: string;
   projectId?: string;
+  /** In this collection or any of its subcollections. */
+  collectionId?: string;
   /** Content kind of the current version. */
   kind?: string;
   /** Source model of the current version, exactly as recorded. */
@@ -27,6 +29,13 @@ export function filterConditions(artifact: SQLWrapper, filters: LibraryFilters):
   if (filters.tagId) {
     conditions.push(
       sql`exists (select 1 from artifact_tags ft where ft.artifact_id = ${artifact}.id and ft.tag_id = ${filters.tagId})`,
+    );
+  }
+  if (filters.collectionId) {
+    conditions.push(
+      // Uncorrelated, so Postgres computes the subtree's artifacts once. `union` (not `union
+      // all`) ends the recursion even if the tree ever held a cycle.
+      sql`${artifact}.id in (select fci.artifact_id from collection_items fci where fci.collection_id in (with recursive sub(id) as (select ${filters.collectionId}::uuid union select fc.id from collections fc join sub on fc.parent_id = sub.id) select id from sub))`,
     );
   }
   if (filters.projectId) {

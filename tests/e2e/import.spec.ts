@@ -154,6 +154,36 @@ test.describe("import → library → artifact (Scenario A)", () => {
     await expect(page.getByRole("heading", { name: "端對端測試筆記" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "端對端 Claude Design 報告" })).toHaveCount(0);
 
+    // Collections: a category with a subcollection; the artifact goes in the subcollection, and
+    // filtering by the category includes it.
+    await page.goto("/collections");
+    const createCollection = page.getByTestId("collection-create");
+    await createCollection.getByRole("textbox", { name: "分類或集合名稱" }).fill("城市氣候");
+    await createCollection.getByRole("button", { name: "建立" }).click();
+    await expect(page.getByTestId("collection-row")).toContainText("城市氣候");
+    await createCollection.getByRole("textbox", { name: "分類或集合名稱" }).fill("熱島效應");
+    await createCollection.getByRole("combobox", { name: "種類" }).selectOption("collection");
+    const parentOption = createCollection.locator("option", { hasText: "城市氣候" });
+    await createCollection
+      .getByRole("combobox", { name: "放在哪一層" })
+      .selectOption((await parentOption.getAttribute("value"))!);
+    await createCollection.getByRole("button", { name: "建立" }).click();
+    await expect(page.getByTestId("collection-row")).toHaveCount(2);
+    await page.goto("/");
+    await page.getByRole("heading", { name: "端對端 Claude Design 報告" }).click();
+    const picker = page.getByTestId("collection-picker");
+    const childOption = picker.locator("option", { hasText: "熱島效應" });
+    await picker
+      .getByRole("combobox", { name: "選擇分類或集合" })
+      .selectOption((await childOption.getAttribute("value"))!);
+    await picker.getByRole("button", { name: "加入" }).click();
+    await expect(picker.getByRole("link", { name: "城市氣候 / 熱島效應" })).toBeVisible();
+    await page.goto("/collections");
+    await page.getByRole("link", { name: "城市氣候", exact: true }).click();
+    await expect(page.getByTestId("collection-filter")).toContainText("城市氣候");
+    await expect(page.getByRole("heading", { name: "端對端 Claude Design 報告" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "端對端測試筆記" })).toHaveCount(0);
+
     // Portable export of the library (same session: sign-in is rate limited).
     await page.goto("/import");
     await page.getByTestId("export-create").click();
