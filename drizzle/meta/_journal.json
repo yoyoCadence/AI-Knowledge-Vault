@@ -71,6 +71,13 @@
       "when": 1792575935163,
       "tag": "0009_notes_reading_state",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792592166220,
+      "tag": "0010_share_links",
+      "breakpoints": true
     }
   ]
 }
