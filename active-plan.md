@@ -4,13 +4,11 @@ _Last updated: 2026-10-20 by the implementing agent._
 
 ## Current focus
 
-**PR 13 (this branch): P1B-TAGS.** Tags end to end: schema with workspace-scoped composite
-foreign keys, API, the detail-page tag editor, the `/tags` page (rename, merge, delete), tag
-filters for the library and search, tag names in search metadata, and export format v2 with
-tags (restore reads v1 and v2).
+**PR 14 (this branch): P1B-PROJECTS and the filter bar.** Research projects (API, `/projects`
+page, soft delete), editing an artifact's title, description and project, and the library
+and search filter bar (project, kind, source model, import days, sort, search total).
 
-**Next: P1B-ORG (PR 14): projects and collections.** The exact steps are in
-`docs/HANDOFF.md` §4.
+**Next: P1B-ORG (PR 15): collections.** The exact steps are in `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.

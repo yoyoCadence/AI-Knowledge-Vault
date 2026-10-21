@@ -6,6 +6,7 @@ import { requirePageActor } from "@/app/_lib/session";
 import { label } from "@/components/library/artifact-card";
 import { KindIcon } from "@/components/library/kind-icon";
 import { PreviewFrame } from "@/components/preview/preview-frame";
+import { ArtifactMetaEditor } from "@/components/artifacts/artifact-meta-editor";
 import { ReadingBody } from "@/components/reader/reading-body";
 import { TagEditor } from "@/components/tags/tag-editor";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,7 @@ import {
 } from "@/modules/artifacts";
 import { roleAllows } from "@/modules/auth";
 import { issuePreviewUrl } from "@/modules/preview";
+import { findProject, listProjects } from "@/modules/projects";
 import { listTags } from "@/modules/tags";
 
 type View = "read" | "preview";
@@ -48,7 +50,27 @@ async function load(id: string, requested?: string) {
     const tags = (await tagsByArtifact(getDb(), actor.workspaceId, [id])).get(id) ?? [];
     const canEdit = roleAllows(actor.role, "library:write");
     const allTags = canEdit ? await listTags(getDb(), actor) : [];
-    return { ...detail, overview, preview, view, content, tags, allTags, canEdit };
+    // A deleted project (or one that no longer exists) shows as none.
+    const project = detail.artifact.projectId
+      ? await findProject(getDb(), actor, detail.artifact.projectId)
+      : null;
+    const projects = canEdit
+      ? (await listProjects(getDb(), actor)).filter(
+          (option) => option.status === "active" || option.id === project?.id,
+        )
+      : [];
+    return {
+      ...detail,
+      overview,
+      preview,
+      view,
+      content,
+      tags,
+      allTags,
+      canEdit,
+      project,
+      projects,
+    };
   } catch (error) {
     if (isAppError(error) && error.code === "NOT_FOUND") notFound();
     throw error;
@@ -114,8 +136,19 @@ export default async function ArtifactPage({
 }) {
   const { id } = await params;
   const requested = firstParam((await searchParams).view);
-  const { artifact, versions, overview, preview, view, content, tags, allTags, canEdit } =
-    await load(id, requested);
+  const {
+    artifact,
+    versions,
+    overview,
+    preview,
+    view,
+    content,
+    tags,
+    allTags,
+    canEdit,
+    project,
+    projects,
+  } = await load(id, requested);
   const version = overview?.version;
   const unknown = <span className="text-muted-foreground">{t("artifact.unknown")}</span>;
   const warnings = [...(overview?.extraction?.warnings ?? [])];
@@ -304,6 +337,22 @@ export default async function ArtifactPage({
               </CardContent>
             </Card>
           ) : null}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{t("edit.section")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ArtifactMetaEditor
+                artifactId={artifact.id}
+                title={artifact.title}
+                description={artifact.description}
+                project={project ? { id: project.id, title: project.title } : null}
+                projects={projects.map((option) => ({ id: option.id, title: option.title }))}
+                canEdit={canEdit}
+              />
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>

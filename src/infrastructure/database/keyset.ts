@@ -1,4 +1,4 @@
-import { and, eq, lt, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { and, eq, gt, lt, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { KeysetCursor } from "@/lib/cursor";
 
 /**
@@ -18,4 +18,15 @@ export function beforeCursor(
   if (!cursor) return undefined;
   const at = sql`${cursor.createdAt}::timestamptz`;
   return or(lt(createdAt, at), and(eq(createdAt, at), lt(id, cursor.id)));
+}
+
+/** The same position for oldest-first lists (`ORDER BY created_at ASC, id ASC`). */
+export function afterCursor(
+  createdAt: AnyColumn,
+  id: AnyColumn,
+  cursor: KeysetCursor | undefined,
+): SQL | undefined {
+  if (!cursor) return undefined;
+  const at = sql`${cursor.createdAt}::timestamptz`;
+  return or(gt(createdAt, at), and(eq(createdAt, at), gt(id, cursor.id)));
 }

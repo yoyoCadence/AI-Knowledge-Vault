@@ -38,13 +38,14 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 
 ## Phase 1B — Usable Library
 
-| ID          | Task                                                               | Status                                                                                              |
-| ----------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| P1B-LIBRARY | Library grid with thumbnails, kinds, source, pagination            | 🚧 grid + cursor paging done (PR 5); recent/favorites/categories/stats pending                      |
-| P1B-DETAIL  | Artifact detail: metadata, outline, references, versions, download | 🚧 read-only detail done (PR 5); metadata editing pending                                           |
-| P1B-PREVIEW | Preview origin route, preview token API, sandboxed iframe          | ✅ (PR 10)                                                                                          |
-| P1B-READER  | Reading mode: allow-list renderer, content API, TOC, read/preview  | ✅ (PR 11)                                                                                          |
-| P1B-SEARCH  | CJK keyword search: tokenizer, chunks, index jobs, API, library UI | 🚧 search, snippets, backfill done (PR 12); tag filter (PR 13); other filters and sort with P1B-ORG |
-| P1B-TAGS    | Tags: schema, API, detail editor, /tags page, filters, export v2   | ✅ (PR 13)                                                                                          |
-| P1B-ORG     | Projects and collections (API, UI), remaining filters and sort     | 📝 next (PR 14)                                                                                     |
-| others      | see `docs/ROADMAP.md`                                              | 📝                                                                                                  |
+| ID           | Task                                                               | Status                                                                                                          |
+| ------------ | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| P1B-LIBRARY  | Library grid with thumbnails, kinds, source, pagination            | 🚧 grid + cursor paging done (PR 5); recent/favorites/categories/stats pending                                  |
+| P1B-DETAIL   | Artifact detail: metadata, outline, references, versions, download | 🚧 title, description and project editable (PR 14); source metadata and visibility editing pending              |
+| P1B-PREVIEW  | Preview origin route, preview token API, sandboxed iframe          | ✅ (PR 10)                                                                                                      |
+| P1B-READER   | Reading mode: allow-list renderer, content API, TOC, read/preview  | ✅ (PR 11)                                                                                                      |
+| P1B-SEARCH   | CJK keyword search: tokenizer, chunks, index jobs, API, library UI | ✅ search, snippets, backfill (PR 12); tag filter (PR 13); project/kind/model/date filters, sort, total (PR 14) |
+| P1B-TAGS     | Tags: schema, API, detail editor, /tags page, filters, export v2   | ✅ (PR 13)                                                                                                      |
+| P1B-PROJECTS | Research projects: API, /projects page, detail editor, filter bar  | ✅ (PR 14)                                                                                                      |
+| P1B-ORG      | Collections (hierarchy), export format v3                          | 📝 next (PR 15)                                                                                                 |
+| others       | see `docs/ROADMAP.md`                                              | 📝                                                                                                              |

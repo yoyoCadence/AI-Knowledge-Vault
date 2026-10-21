@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { DbExecutor } from "@/infrastructure/database/client";
+import { filterConditions, type LibraryFilters } from "@/modules/artifacts/filters";
 import type { Actor } from "@/modules/auth";
 import { normalizeForSearch, parseQuery, type QueryTerm, termTsqueries } from "./tokenizer";
 
@@ -92,23 +93,44 @@ type Row = {
   content_kind: string | null;
   score: number | string;
   chunk_text: string | null;
+  total: number | string;
 };
+
+export const SEARCH_SORTS = ["relevance", "newest", "title"] as const;
+export type SearchSort = (typeof SEARCH_SORTS)[number];
 
 export async function searchArtifacts(
   db: DbExecutor,
   actor: Actor,
-  input: { q: string; offset?: number; limit?: number; tagId?: string },
-): Promise<{ items: SearchHit[]; nextOffset: number | null; terms: QueryTerm[] }> {
+  input: {
+    q: string;
+    offset?: number;
+    limit?: number;
+    filters?: LibraryFilters;
+    sort?: SearchSort;
+  },
+): Promise<{
+  items: SearchHit[];
+  nextOffset: number | null;
+  /** Matching artifacts in all pages; null for a page past the last result. */
+  total: number | null;
+  terms: QueryTerm[];
+}> {
   const terms = parseQuery(input.q);
   const termQueries = termTsqueries(terms);
-  if (termQueries.length === 0) return { items: [], nextOffset: null, terms };
+  if (termQueries.length === 0) return { items: [], nextOffset: null, total: 0, terms };
   const limit = Math.min(Math.max(input.limit ?? SEARCH_PAGE_SIZE, 1), 50);
   const offset = Math.min(Math.max(input.offset ?? 0, 0), MAX_OFFSET);
   const workspaceId = actor.workspaceId;
   // Filters apply where candidates are chosen, in the same scoped query (never afterwards).
-  const tagFilter = input.tagId
-    ? sql`and exists (select 1 from artifact_tags f where f.artifact_id = a.id and f.tag_id = ${input.tagId})`
-    : sql``;
+  const conditions = filterConditions(sql.identifier("a"), input.filters ?? {});
+  const filter = conditions.length > 0 ? sql`and ${sql.join(conditions, sql` and `)}` : sql``;
+  const order =
+    input.sort === "newest"
+      ? sql`a.created_at desc, a.id desc`
+      : input.sort === "title"
+        ? sql`a.title, a.id`
+        : sql`s.score desc, a.created_at desc, a.id`;
   const termRows = sql.join(
     termQueries.map((query, index) => sql`(${index + 1}::int, ${query}::tsquery)`),
     sql`, `,
@@ -128,7 +150,7 @@ export async function searchArtifacts(
         and a.deleted_at is null
         and c.artifact_version_id = a.current_version_id
         and c.search_vector @@ q.query
-        ${tagFilter}
+        ${filter}
     ),
     meta_rows as (
       select d.artifact_id, d.search_vector,
@@ -139,7 +161,7 @@ export async function searchArtifacts(
       where d.workspace_id = ${workspaceId} and a.workspace_id = ${workspaceId}
         and a.deleted_at is null
         and d.search_vector @@ q.query
-        ${tagFilter}
+        ${filter}
     ),
     -- Which term matched which row. One aggregation (no joins back onto its own result: the
     -- planner cannot estimate a HAVING, and nested loops over it grew quadratically).
@@ -160,12 +182,13 @@ export async function searchArtifacts(
       -- Every term matched somewhere in the artifact.
       having count(distinct term_no) = ${termQueries.length}::int
     )
-    select a.id, a.title, a.summary, v.content_kind, s.score, ch.text as chunk_text
+    select a.id, a.title, a.summary, v.content_kind, s.score, ch.text as chunk_text,
+      count(*) over () as total
     from scored s
     join artifacts a on a.id = s.artifact_id
     left join artifact_versions v on v.id = a.current_version_id
     left join content_chunks ch on ch.id = s.chunk_id
-    order by s.score desc, a.created_at desc, a.id
+    order by ${order}
     limit ${limit + 1} offset ${offset}
   `);
   const rows = result.rows.slice(0, limit);
@@ -181,5 +204,7 @@ export async function searchArtifacts(
     };
   });
   const more = result.rows.length > limit && offset + limit <= MAX_OFFSET;
-  return { items, nextOffset: more ? offset + limit : null, terms };
+  // A page past the last hit has no rows to carry the count.
+  const total = result.rows[0] ? Number(result.rows[0].total) : offset > 0 ? null : 0;
+  return { items, nextOffset: more ? offset + limit : null, total, terms };
 }

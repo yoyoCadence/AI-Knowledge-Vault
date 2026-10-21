@@ -1,12 +1,13 @@
 /** Display formatting shared by server and client components (zh-TW, Asia/Taipei). */
+export const DISPLAY_TIME_ZONE = "Asia/Taipei";
 const dateFormatter = new Intl.DateTimeFormat("zh-TW", {
   dateStyle: "medium",
-  timeZone: "Asia/Taipei",
+  timeZone: DISPLAY_TIME_ZONE,
 });
 const dateTimeFormatter = new Intl.DateTimeFormat("zh-TW", {
   dateStyle: "medium",
   timeStyle: "short",
-  timeZone: "Asia/Taipei",
+  timeZone: DISPLAY_TIME_ZONE,
 });
 
 export function formatDate(value: Date | string): string {
