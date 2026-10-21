@@ -11,6 +11,8 @@ import { getEnv } from "@/infrastructure/config/env";
 import { closeDb } from "@/infrastructure/database/client";
 import {
   artifactFiles,
+  artifactNotes,
+  artifactReadingStates,
   artifacts,
   artifactVersions,
   collectionItems,
@@ -37,6 +39,7 @@ import {
 import { formatChecksums } from "@/modules/backup/format";
 import type { Actor } from "@/modules/auth";
 import { createCollection, setCollectionItem } from "@/modules/collections";
+import { createNote, deleteNote, setReadingState } from "@/modules/notes";
 import { SEARCH_INDEX_JOB_TYPE, searchArtifacts, TOKENIZER_VERSION } from "@/modules/search";
 import { ensureTag, setArtifactTag } from "@/modules/tags";
 import { SafeZip } from "@/modules/extraction";
@@ -118,7 +121,30 @@ async function snapshot(workspaceId: string) {
     .from(collectionItems)
     .where(eq(collectionItems.workspaceId, workspaceId))
     .orderBy(asc(collectionItems.collectionId), asc(collectionItems.artifactId));
+  const noteRows = await db
+    .select()
+    .from(artifactNotes)
+    .where(eq(artifactNotes.workspaceId, workspaceId))
+    .orderBy(asc(artifactNotes.id));
+  const stateRows = await db
+    .select()
+    .from(artifactReadingStates)
+    .where(eq(artifactReadingStates.workspaceId, workspaceId))
+    .orderBy(asc(artifactReadingStates.artifactId));
   return {
+    notes: noteRows.map((row) => ({
+      id: row.id,
+      artifactId: row.artifactId,
+      bodyMarkdown: row.bodyMarkdown,
+      createdAt: row.createdAt.toISOString(),
+    })),
+    // Whose state it is differs between workspaces (the restoring user's), so not compared.
+    readingStates: stateRows.map((row) => ({
+      artifactId: row.artifactId,
+      status: row.status,
+      isFavorite: row.isFavorite,
+      lastOpenedAt: row.lastOpenedAt?.toISOString() ?? null,
+    })),
     collections: collectionRows.map((row) => ({
       id: row.id,
       parentId: row.parentId,
@@ -293,7 +319,17 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
       await setCollectionItem(db, source, { collectionId, artifactId, present: true }, meta);
     }
 
+    // Notes and reading state (format v4).
+    await createNote(db, source, seeded[0]!.id, "第一則筆記：**熱島**觀測", meta);
+    await createNote(db, source, seeded[0]!.id, "第二則筆記", meta);
+    await createNote(db, source, seeded[1]!.id, "只有筆記裡有的詞：鯨豚擱淺", meta);
+    await setReadingState(db, source, seeded[0]!.id, { isFavorite: true });
+    await setReadingState(db, source, seeded[1]!.id, { status: "read" });
+    await setReadingState(db, source, seeded[2]!.id, { opened: true });
+
     before = await snapshot(source.workspaceId);
+    expect(before.notes).toHaveLength(3);
+    expect(before.readingStates).toHaveLength(3);
     expect(before.collections).toHaveLength(3);
     expect(before.collectionItems).toHaveLength(2);
     expect(before.tags).toHaveLength(3);
@@ -314,8 +350,10 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     archive = path.join(dir, "export.zip");
     const { manifest, filename } = await exportTo(source.workspaceId, archive);
     expect(filename).toMatch(/^knowledge-vault-export-.+-\d{8}T\d{6}Z\.zip$/);
-    expect(manifest.formatVersion).toBe(3);
+    expect(manifest.formatVersion).toBe(4);
     expect(manifest.counts).toMatchObject({
+      notes: 3,
+      readingStates: 3,
       collections: 3,
       collectionItems: 2,
       artifacts: 5,
@@ -379,8 +417,12 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(report.counts.artifactTags).toBe(3);
     expect(report.counts.collections).toEqual({ restored: 3, skipped: 0, copied: 0, failed: 0 });
     expect(report.counts.collectionItems).toBe(2);
+    expect(report.counts.notes).toEqual({ restored: 3, skipped: 0, copied: 0, failed: 0 });
+    expect(report.counts.readingStates).toBe(3);
 
     const after = await snapshot(target.workspaceId);
+    expect(after.notes).toEqual(before.notes);
+    expect(after.readingStates).toEqual(before.readingStates);
     expect(after.collections).toEqual(before.collections);
     expect(after.collectionItems).toEqual(before.collectionItems);
     expect(after.artifacts).toEqual(before.artifacts);
@@ -495,6 +537,8 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(report.counts.artifactTags).toBe(0);
     expect(report.counts.collections).toEqual({ restored: 0, skipped: 3, copied: 0, failed: 0 });
     expect(report.counts.collectionItems).toBe(0);
+    expect(report.counts.notes).toEqual({ restored: 0, skipped: 3, copied: 0, failed: 0 });
+    expect(report.counts.readingStates).toBe(0);
     // Nothing differs, so nothing is reported as kept.
     expect(report.counts.artifactTagsKept).toBe(0);
     expect(report.counts.collectionItemsKept).toBe(0);
@@ -559,6 +603,24 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
       { collectionId: item.collectionId, artifactId: item.artifactId, present: true },
       meta,
     );
+
+    // A note lost since the export comes back (like a version), and search finds it again.
+    const lost = before.notes.find((note) => note.bodyMarkdown.includes("鯨豚擱淺"))!;
+    await deleteNote(db, target, lost.id, meta);
+    expect((await searchArtifacts(db, target, { q: "鯨豚擱淺" })).items).toEqual([]);
+    const fourth = await restoreArchive(db, restored, {
+      archivePath: archive,
+      workspaceId: target.workspaceId,
+      userId: target.userId,
+      mode: "skip_existing",
+      restoreId: crypto.randomUUID(),
+      limits: restoreLimitsFromEnv(getEnv()),
+    });
+    expect(fourth.counts.notes).toEqual({ restored: 1, skipped: 2, copied: 0, failed: 0 });
+    expect((await snapshot(target.workspaceId)).notes).toEqual(before.notes);
+    expect(
+      (await searchArtifacts(db, target, { q: "鯨豚擱淺" })).items.map((hit) => hit.id),
+    ).toEqual([lost.artifactId]);
   });
 
   it("copy mode creates new ids for the same content and reuses the stored originals", async () => {
@@ -585,6 +647,9 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(afterCopy.artifactTags).toHaveLength(6);
     expect(afterCopy.collections).toEqual(before.collections);
     expect(afterCopy.collectionItems).toHaveLength(4);
+    expect(report.counts.notes).toEqual({ restored: 0, skipped: 0, copied: 3, failed: 0 });
+    expect(report.counts.readingStates).toBe(3);
+    expect(afterCopy.notes).toHaveLength(6);
     const now = await workspaceRowCounts(target.workspaceId);
     expect(now).toEqual({
       artifacts: counts.artifacts + 5,
@@ -632,6 +697,7 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(retry.counts.researchProjects).toEqual(first.counts.researchProjects);
     expect(retry.counts.collections).toEqual(first.counts.collections);
     expect(retry.counts.collectionItems).toEqual(first.counts.collectionItems);
+    expect(retry.counts.notes).toEqual(first.counts.notes);
     expect(retry.idMap).toEqual(first.idMap);
   });
 
@@ -759,10 +825,114 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(configs).toEqual([{ isolationLevel: "repeatable read", accessMode: "read only" }]);
   });
 
+  it("still restores a format v3 archive (no notes or reading states)", async () => {
+    const v3 = path.join(dir, "format-v3.zip");
+    await rewriteArchive(archive, v3, (entries) => {
+      for (const name of [PATHS.notes, PATHS.readingStates]) {
+        entries.splice(
+          entries.findIndex((entry) => entry.name === name),
+          1,
+        );
+      }
+      for (const name of [PATHS.manifest, PATHS.schemaVersion]) {
+        const entry = entries.find((candidate) => candidate.name === name)!;
+        const json = JSON.parse(Buffer.from(entry.data as Buffer).toString("utf8")) as {
+          formatVersion: number;
+          counts?: Record<string, number>;
+        };
+        json.formatVersion = 3;
+        delete json.counts?.notes;
+        delete json.counts?.readingStates;
+        entry.data = Buffer.from(JSON.stringify(json));
+      }
+      reseal(entries);
+    });
+    const fresh = await createTestActor();
+    const report = await restoreArchive(db, freshStorage("format-v3"), {
+      archivePath: v3,
+      workspaceId: fresh.workspaceId,
+      userId: fresh.userId,
+      mode: "copy",
+      restoreId: crypto.randomUUID(),
+      limits: restoreLimitsFromEnv(getEnv()),
+    });
+    expect(report.source.formatVersion).toBe(3);
+    expect(report.failures).toEqual([]);
+    expect(report.counts.artifacts.copied).toBe(5);
+    expect(report.counts.collections.copied).toBe(3);
+    expect(report.counts.notes).toEqual({ restored: 0, skipped: 0, copied: 0, failed: 0 });
+    const restoredHere = await snapshot(fresh.workspaceId);
+    expect(restoredHere.notes).toEqual([]);
+    expect(restoredHere.readingStates).toEqual([]);
+  });
+
+  it("refuses inconsistent note and reading-state metadata before anything is written", async () => {
+    type Json = Record<string, unknown>[];
+    const cases: [string, string, (rows: Json) => void][] = [
+      ["note without artifact", PATHS.notes, (rows) => (rows[0]!.artifactId = crypto.randomUUID())],
+      ["spoofed note", PATHS.notes, (rows) => (rows[0]!.bodyMarkdown = "abc\u202eexe")],
+      ["blank note", PATHS.notes, (rows) => (rows[0]!.bodyMarkdown = "   ")],
+      ["deeply nested note", PATHS.notes, (rows) => (rows[0]!.bodyMarkdown = "- ".repeat(9_999))],
+      [
+        "too many notes",
+        PATHS.notes,
+        (rows) => {
+          for (let index = 0; index < 201; index += 1)
+            rows.push({ ...rows[0]!, id: crypto.randomUUID() });
+        },
+      ],
+      ["duplicate note", PATHS.notes, (rows) => rows.push({ ...rows[0]! })],
+      [
+        "state without artifact",
+        PATHS.readingStates,
+        (rows) => (rows[0]!.artifactId = crypto.randomUUID()),
+      ],
+      ["duplicate state", PATHS.readingStates, (rows) => rows.push({ ...rows[0]! })],
+      ["unknown status", PATHS.readingStates, (rows) => (rows[0]!.status = "skimmed")],
+    ];
+    for (const [label, entryPath, mutate] of cases) {
+      const broken = path.join(dir, `notes-${label.replaceAll(" ", "-")}.zip`);
+      await rewriteArchive(archive, broken, (entries) => {
+        const entry = entries.find((candidate) => candidate.name === entryPath)!;
+        const rows = JSON.parse(Buffer.from(entry.data as Buffer).toString("utf8")) as Json;
+        mutate(rows);
+        entry.data = Buffer.from(JSON.stringify(rows));
+        reseal(entries);
+      });
+      const fresh = await createTestActor();
+      await expect(
+        restoreArchive(db, freshStorage(`notes-${label}`), {
+          archivePath: broken,
+          workspaceId: fresh.workspaceId,
+          userId: fresh.userId,
+          mode: "skip_existing",
+          restoreId: crypto.randomUUID(),
+          limits: restoreLimitsFromEnv(getEnv()),
+        }),
+        label,
+      ).rejects.toSatisfy(
+        (error: unknown) =>
+          error instanceof AppError &&
+          error.code === "UNSUPPORTED_EXPORT_FORMAT" &&
+          error.details?.nothingWritten === true,
+      );
+      expect(await workspaceRowCounts(fresh.workspaceId), label).toEqual({
+        artifacts: 0,
+        versions: 0,
+        fileAssets: 0,
+      });
+    }
+  });
+
   it("still restores a format v2 archive (no collections)", async () => {
     const v2 = path.join(dir, "format-v2.zip");
     await rewriteArchive(archive, v2, (entries) => {
-      for (const name of [PATHS.collections, PATHS.collectionItems]) {
+      for (const name of [
+        PATHS.collections,
+        PATHS.collectionItems,
+        PATHS.notes,
+        PATHS.readingStates,
+      ]) {
         entries.splice(
           entries.findIndex((entry) => entry.name === name),
           1,
@@ -775,8 +945,8 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
           counts?: Record<string, number>;
         };
         json.formatVersion = 2;
-        delete json.counts?.collections;
-        delete json.counts?.collectionItems;
+        for (const key of ["collections", "collectionItems", "notes", "readingStates"])
+          delete json.counts?.[key];
         entry.data = Buffer.from(JSON.stringify(json));
       }
       reseal(entries);
@@ -806,6 +976,8 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
         PATHS.artifactTags,
         PATHS.collections,
         PATHS.collectionItems,
+        PATHS.notes,
+        PATHS.readingStates,
       ]) {
         entries.splice(
           entries.findIndex((entry) => entry.name === name),
@@ -819,7 +991,14 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
           counts?: Record<string, number>;
         };
         json.formatVersion = 1;
-        for (const key of ["tags", "artifactTags", "collections", "collectionItems"])
+        for (const key of [
+          "tags",
+          "artifactTags",
+          "collections",
+          "collectionItems",
+          "notes",
+          "readingStates",
+        ])
           delete json.counts?.[key];
         entry.data = Buffer.from(JSON.stringify(json));
       }

@@ -40,7 +40,7 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 
 | ID           | Task                                                               | Status                                                                                                                                     |
 | ------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| P1B-LIBRARY  | Library grid with thumbnails, kinds, source, pagination            | 🚧 grid + cursor paging done (PR 5); recent/favorites/categories/stats pending                                                             |
+| P1B-LIBRARY  | Library grid with thumbnails, kinds, source, pagination            | 🚧 grid + cursor paging (PR 5); categories (PR 15); recent, favorites, reading status (PR 16); stats pending                               |
 | P1B-DETAIL   | Artifact detail: metadata, outline, references, versions, download | 🚧 title, description and project editable (PR 14); source metadata and visibility editing pending                                         |
 | P1B-PREVIEW  | Preview origin route, preview token API, sandboxed iframe          | ✅ (PR 10)                                                                                                                                 |
 | P1B-READER   | Reading mode: allow-list renderer, content API, TOC, read/preview  | ✅ (PR 11)                                                                                                                                 |
@@ -48,5 +48,6 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 | P1B-TAGS     | Tags: schema, API, detail editor, /tags page, filters, export v2   | ✅ (PR 13)                                                                                                                                 |
 | P1B-PROJECTS | Research projects: API, /projects page, detail editor, filter bar  | ✅ (PR 14)                                                                                                                                 |
 | P1B-ORG      | Collections (hierarchy), export format v3                          | ✅ (PR 15)                                                                                                                                 |
-| P1B-NOTES    | Notes and reading state (recent, favorites), export format v4      | 📝 next (PR 16)                                                                                                                            |
+| P1B-NOTES    | Notes and reading state (recent, favorites), export format v4      | ✅ (PR 16)                                                                                                                                 |
+| P1B-SHARE    | Share links: check, create, list, revoke, public reader            | 📝 next (PR 17)                                                                                                                            |
 | others       | see `docs/ROADMAP.md`                                              | 📝                                                                                                                                         |

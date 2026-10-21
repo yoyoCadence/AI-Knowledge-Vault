@@ -1,9 +1,7 @@
-import type { Nodes, Root, TableCell, TableRow } from "mdast";
-import { fromMarkdown } from "mdast-util-from-markdown";
-import { gfmFromMarkdown } from "mdast-util-gfm";
-import { gfm } from "micromark-extension-gfm";
+import type { Nodes, TableCell, TableRow } from "mdast";
 import type { ReactNode } from "react";
 import { t } from "@/lib/i18n";
+import { MARKDOWN_MAX_DEPTH, markdownDepth, parseMarkdown } from "@/lib/markdown";
 
 /**
  * Reading mode (docs/SECURITY.md §5 "Reading mode", FR-LIB-4): renders our own normalized
@@ -14,9 +12,7 @@ import { t } from "@/lib/i18n";
  * banned in this folder by lint.
  */
 
-export function parseMarkdown(markdown: string): Root {
-  return fromMarkdown(markdown, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
-}
+export { parseMarkdown };
 
 /**
  * Anchors for `MarkdownView`: the stored sections that are headings (level > 0; a preamble is
@@ -254,17 +250,35 @@ function render(node: Nodes, ctx: RenderContext, key: number, root: boolean): Re
   }
 }
 
-/** Renders normalized Markdown; root-level headings receive `anchors` as their ids, in order. */
+/** The Markdown's elements, or null when it is too deep to render (or does not parse). */
+function renderMarkdown(markdown: string, anchors: string[]): ReactNode | null {
+  try {
+    const tree = parseMarkdown(markdown);
+    // `render` and `collectDefinitions` recurse once per level: a deeper tree could overflow
+    // the stack.
+    if (markdownDepth(tree) > MARKDOWN_MAX_DEPTH) return null;
+    const ctx: RenderContext = {
+      anchors,
+      nextAnchor: 0,
+      definitions: collectDefinitions(tree, new Map()),
+    };
+    return render(tree, ctx, 0, true);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Renders normalized Markdown; root-level headings receive `anchors` as their ids, in order.
+ * Text that cannot be rendered safely is shown as written: reading never fails because of
+ * how a text is formatted.
+ */
 export function MarkdownView({ markdown, anchors }: { markdown: string; anchors: string[] }) {
-  const tree = parseMarkdown(markdown);
-  const ctx: RenderContext = {
-    anchors,
-    nextAnchor: 0,
-    definitions: collectDefinitions(tree, new Map()),
-  };
+  const content = renderMarkdown(markdown, anchors);
+  if (content === null) return <PlainTextView text={markdown} />;
   return (
     <div className="text-foreground max-w-[72ch] text-[15px] break-words sm:text-base">
-      {render(tree, ctx, 0, true)}
+      {content}
     </div>
   );
 }

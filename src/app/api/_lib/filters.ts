@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CONTENT_KINDS } from "@/infrastructure/database/schema";
+import { CONTENT_KINDS, READING_STATUSES } from "@/infrastructure/database/schema";
 import type { LibraryFilters } from "@/modules/artifacts/filters";
 
 /** A real day Postgres accepts: zod's ISO date allows year 0000, which Postgres refuses. */
@@ -20,6 +20,10 @@ export const FilterParams = {
     .optional(),
   from: day.optional(),
   to: day.optional(),
+  /** `favorite=1` (or `true`): the actor's favorites. */
+  favorite: z.enum(["1", "true"]).optional(),
+  /** The actor's reading status; `unread` includes artifacts never opened. */
+  status: z.enum(READING_STATUSES).optional(),
 };
 
 export function toFilters(query: {
@@ -30,6 +34,8 @@ export function toFilters(query: {
   model?: string;
   from?: string;
   to?: string;
+  favorite?: string;
+  status?: (typeof READING_STATUSES)[number];
 }): LibraryFilters {
   return {
     tagId: query.tag,
@@ -39,5 +45,7 @@ export function toFilters(query: {
     sourceModel: query.model,
     from: query.from,
     to: query.to,
+    favorite: query.favorite ? true : undefined,
+    readingStatus: query.status,
   };
 }

@@ -12,6 +12,8 @@ export interface LibraryControlValues {
   model?: string;
   from?: string;
   to?: string;
+  favorite?: string;
+  status?: string;
   sort?: string;
 }
 
@@ -40,6 +42,7 @@ export function LibraryControls({
   projects,
   collections,
   kinds,
+  statuses,
   models,
   sorts,
   filtered,
@@ -48,6 +51,7 @@ export function LibraryControls({
   values: LibraryControlValues;
   projects: Option[];
   collections: TreeOption[];
+  statuses: Option[];
   kinds: Option[];
   models: string[];
   sorts: Option[];
@@ -137,6 +141,27 @@ export function LibraryControls({
           <label className="flex flex-col gap-1">
             <span className="text-muted-foreground text-xs">{t("filters.to")}</span>
             <input type="date" name="to" defaultValue={values.to ?? ""} className={field} />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-muted-foreground text-xs">{t("filters.status")}</span>
+            <select name="status" defaultValue={values.status ?? ""} className={field}>
+              <option value="">{t("filters.anyStatus")}</option>
+              {statuses.map((status) => (
+                <option key={status.value} value={status.value}>
+                  {status.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex h-9 items-center gap-2">
+            <input
+              type="checkbox"
+              name="favorite"
+              value="1"
+              defaultChecked={values.favorite === "1"}
+              className="accent-primary size-4"
+            />
+            <span>{t("filters.favorite")}</span>
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-muted-foreground text-xs">{t("filters.sort")}</span>

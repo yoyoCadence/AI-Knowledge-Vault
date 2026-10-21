@@ -14,8 +14,10 @@ const Query = z.object({
 });
 
 /**
- * GET /api/artifacts — library cards (with tags), newest or oldest first, cursor-paginated,
- * filtered by `tag`, `project`, `kind`, `model` (source model), `from`/`to` (YYYY-MM-DD).
+ * GET /api/artifacts — library cards (with tags and the actor's reading state), newest or
+ * oldest first or by when the actor last opened them (`sort=opened`), cursor-paginated,
+ * filtered by `tag`, `project`, `collection`, `kind`, `model` (source model), `from`/`to`
+ * (YYYY-MM-DD), `favorite` and `status`.
  */
 export const GET = authedRoute({ permission: "library:read" }, async ({ request, actor }) => {
   const query = parseQuery(request, Query);

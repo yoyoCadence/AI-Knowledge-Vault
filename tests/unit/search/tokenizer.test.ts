@@ -11,6 +11,27 @@ import {
 const query = (text: string) => toTsquery(parseQuery(text));
 
 describe("search tokenizer (SEARCH_DESIGN §2)", () => {
+  it("leaves out tokens past the last tsvector position instead of piling them up there", () => {
+    let seed = 2_463_534_242; // xorshift32: distinct characters, ~one position each
+    const long = Array.from({ length: 17_000 }, () => {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      return String.fromCodePoint(0x4e00 + ((seed >>> 0) % 20_000));
+    }).join("");
+    const vector = toTsvector([
+      { text: long, weight: "C" },
+      { text: "城市熱島", weight: "A" },
+    ]);
+    const positions = [...vector.matchAll(/(\d+)[ABCD]/g)].map((match) => Number(match[1]));
+    expect(Math.max(...positions)).toBeLessThanOrEqual(16_383);
+    // Postgres would clamp later positions to 16,383, where no phrase can match: at most the
+    // tokens of one character sit there, never the tail of the text.
+    expect(positions.filter((position) => position === 16_383).length).toBeLessThanOrEqual(2);
+    // A part that starts past the end is not indexed at all.
+    expect(vector).not.toMatch(/\d+A/);
+  });
+
   it("normalizes full-width and case", () => {
     expect(normalizeForSearch("ＡＩ　Ｍｏｄｅｌ")).toBe("ai model");
   });

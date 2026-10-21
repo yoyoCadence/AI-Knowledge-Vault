@@ -18,14 +18,14 @@ verified.** `tests/integration/backup-roundtrip.test.ts` proves this on every CI
 | Users, password hashes, sessions, auth accounts | **never**                                             | —               | the admin is re-created with `admin:create` |
 | Audit logs                                      | optional (`--include-audit`)                          | P2              | no, but not needed for restore              |
 
-## 2. Portable export format (current: v3)
+## 2. Portable export format (current: v4)
 
 File name: `knowledge-vault-export-{workspaceSlug}-{YYYYMMDDTHHmmssZ}.zip`
 
 ```
 README.txt                     # human-readable explanation of this format (no app needed)
 manifest.json                  # format, versions, counts, created_at, source app version, encryption: "none"
-schema-version.json            # {"format":"ai-knowledge-vault-export","formatVersion":3,"dbMigration":"0008_…"}
+schema-version.json            # {"format":"ai-knowledge-vault-export","formatVersion":4,"dbMigration":"0009_…"}
 metadata/
   workspace.json               # {id, name, slug}
   research_projects.json
@@ -37,8 +37,8 @@ metadata/
   artifact_tags.json           # v2+: [{artifactId, tagId, createdAt}]
   collections.json             # v3+: [{id, parentId, kind, name, description, sortOrder, createdAt, updatedAt}]
   collection_items.json        # v3+: [{collectionId, artifactId, position, addedAt}]
-  artifact_notes.json
-  artifact_reading_states.json # user ids replaced by "owner"
+  artifact_notes.json          # v4+: [{id, artifactId, bodyMarkdown, createdAt, updatedAt}] (no author)
+  artifact_reading_states.json # v4+: [{artifactId, status, isFavorite, lastOpenedAt}], one per artifact, merged over members (ADR-019)
   share_links.json             # without token_hash
 originals/{sha256[0:2]}/{sha256}/{sanitized_original_filename}
 normalized/{artifact_version_id}.md       # active extraction, with YAML front matter (title, artifact, version, language, extraction method/version)
@@ -54,13 +54,14 @@ Properties:
 3. **Versioned.** `formatVersion` (integer) plus the DB migration tag. Every format change
    that adds data bumps the version (ADR-018): v1 = the original layout; v2 adds
    `tags.json` and `artifact_tags.json`; v3 adds `collections.json` and
-   `collection_items.json`. Exports are always written in the latest version.
+   `collection_items.json`; v4 adds `artifact_notes.json` and `artifact_reading_states.json`.
+   Exports are always written in the latest version.
 4. **Integrity.** `checksums.sha256` covers every entry except itself and `manifest.json`.
    `manifest.json` carries the SHA-256 of `checksums.sha256`, so the manifest is the root of
    trust and the two files together cover the whole archive. (Listing the manifest in the
    checksums would be circular.)
-5. **Migratable.** Restore reads every supported `formatVersion` (today v1–v3; a v1
-   archive simply has no tags, a v2 archive no collections). An app that does not know a version refuses the archive
+5. **Migratable.** Restore reads every supported `formatVersion` (today v1–v4; a v1
+   archive simply has no tags, a v2 archive no collections, a v3 archive no notes). An app that does not know a version refuses the archive
    with `UNSUPPORTED_EXPORT_FORMAT` instead of silently dropping data it cannot read.
 6. **Re-importable.** Import & Backup → 從備份還原 (`POST /api/restores`), or `pnpm backup:restore <file>`.
 7. **No secrets.** See §1.
@@ -126,7 +127,9 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    ids are unique, (v2) tag names are valid and distinct as the app compares them
    (NFKC, case, spacing), and (v3) collections form a tree (no cycle, at most 7 levels) whose
    names are valid and distinct among siblings, with descriptions that follow the app's text
-   rules. Values Postgres would refuse are refused here too, so a crafted archive cannot fail
+   rules, and (v4) every note belongs to an archived artifact and follows the note rules
+   (Markdown cost limits included), at most 200 per artifact, with at most one reading state
+   per artifact. Values Postgres would refuse are refused here too, so a crafted archive cannot fail
    the restore half-way: a NUL character anywhere in the metadata, dates and timestamps before
    year 1, and sort orders or positions outside 0–1,000,000,000. Problems abort before
    anything is written.
@@ -185,7 +188,11 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    new artifact (target collections locked `FOR KEY SHARE` in id order, before its tags),
    left alone on an artifact that already exists (`collectionItemsKept`), and dropped and
    counted when their collection was not restored or was deleted meanwhile
-   (`collectionItemsDropped`).
+   (`collectionItemsDropped`). Notes (v4) are written with each new artifact, and an artifact
+   that already exists gets the archived notes it lacks (like versions, unlike tags; ADR-019),
+   locked and re-indexed as every note write is; restored notes belong to the restoring user.
+   A newly restored artifact gets the archived reading state for the restoring user
+   (`readingStates`); an existing artifact keeps the user's current state.
 7. **Rebuild.** One `restore.reextract_version` job per restored version. It re-runs
    extraction and preview generation from the restored original, then indexing (Phase 1B).
    The archived `normalized/*.md` is used as a fallback extraction if re-extraction fails.

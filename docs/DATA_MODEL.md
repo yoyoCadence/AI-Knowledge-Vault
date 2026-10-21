@@ -360,11 +360,23 @@ or removing an item locks the collection `FOR NO KEY UPDATE` (adds to one collec
 serialized, so positions are never handed out twice, and the collection cannot be deleted
 meanwhile) and then the artifact `FOR SHARE`, re-checking that it is not deleted.
 
-**artifact_notes**: `id`, `workspace_id`, `artifact_id → CASCADE`,
-`artifact_version_id? → SET NULL`, `author_id? → users SET NULL`, `body_markdown`, timestamps.
+**artifact_notes** (built, PR 16): `id`, `workspace_id`, `artifact_id`, `author_id? → users
+SET NULL`, `body_markdown` (Markdown, 1–20,000 characters, CHECK; the same text rules as
+descriptions, and Markdown within the cost limits of SECURITY.md §5), timestamps; at most
+200 notes per artifact (counted under the artifact lock). The artifact key is composite, `(workspace_id, artifact_id) →
+artifacts(workspace_id, id) ON DELETE CASCADE`; index `(artifact_id, created_at)`. Notes are
+shown with the reading mode's allow-list renderer, never as HTML, and are part of the
+artifact's search metadata (weight C, newest first, up to 20,000 characters in all). Every
+note write locks the artifact `FOR UPDATE` first, then writes and re-indexes it in the same
+transaction (two writes on one artifact would otherwise deadlock on the foreign key's
+key-share lock). A per-version link (`artifact_version_id`) is left out until a UI uses it.
 
-**artifact_reading_states**: `pk(user_id, artifact_id)`, `status ∈ {unread, reading, read}`,
-`is_favorite bool`, `last_opened_at?`, `updated_at`.
+**artifact_reading_states** (built, PR 16): `pk(user_id, artifact_id)`, `user_id → users
+CASCADE`, `workspace_id`, `artifact_id` (composite key to the artifact, CASCADE),
+`status ∈ {unread, reading, read}`, `is_favorite bool`, `last_opened_at?`, `updated_at`. No
+row means unread, not a favorite, never opened. Opening the detail page (recorded from the
+browser, so a link prefetch never counts) sets `last_opened_at` and moves unread to reading.
+Index `(user_id, last_opened_at, artifact_id)` for "recently opened".
 
 ### 4.5 Data protection (P1A)
 

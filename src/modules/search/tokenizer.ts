@@ -102,15 +102,21 @@ export function indexTokens(text: string, startPosition = 1): Token[] {
  * out one after another, `PART_GAP` positions apart, so a phrase never spans two parts.
  * Postgres keeps at most 256 positions per lexeme; later repeats of a very frequent lexeme
  * still match single-token queries but not phrases (docs/SEARCH_DESIGN.md §9).
+ *
+ * Positions end at 16,383. Postgres would clamp later ones all to that value, where no phrase
+ * could match, so tokens past it are left out instead: callers put the parts that matter most
+ * first, and everything indexed keeps its true position.
  */
 export function toTsvector(parts: { text: string; weight: Weight }[]): string {
   const positions = new Map<string, string[]>();
   let start = 1;
   for (const part of parts) {
+    if (start > MAX_POSITION) break;
     const tokens = indexTokens(part.text, start);
     for (const token of tokens) {
+      if (token.position > MAX_POSITION) continue;
       const list = positions.get(token.lexeme) ?? [];
-      list.push(`${Math.min(token.position, MAX_POSITION)}${part.weight}`);
+      list.push(`${token.position}${part.weight}`);
       positions.set(token.lexeme, list);
     }
     start = (tokens.at(-1)?.position ?? start) + PART_GAP;
