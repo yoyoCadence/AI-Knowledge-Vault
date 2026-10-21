@@ -374,14 +374,50 @@ conversations. Update it at the end of every PR.
       lock, state backfill, no-extraction metadata, restore enqueue, surrogate-safe cuts,
       word truncation).
 
+- **PR 13, P1B-TAGS** (`src/modules/tags`, DATA_MODEL §4.4, API_CONTRACT §6, ADR-018):
+  - Migration `0007_tags`: `tags` (display `name`, `normalized_name` unique per workspace,
+    1–50 characters) and `artifact_tags`. Its foreign keys are composite
+    (`(workspace_id, artifact_id)`, `(workspace_id, tag_id)`), so the database refuses a
+    cross-workspace link. The generated SQL had to be reordered by hand: the
+    `artifacts(workspace_id, id)` unique constraint must exist before the foreign key that
+    references it.
+  - `src/modules/tags`: `normalizeTagName` (NFKC, case, spacing, zero-width characters),
+    `ensureTag` (create or reuse by normalized name), `renameTag` (409 with the other tag's
+    id on a taken name), `mergeTag`, `deleteTag`, `setArtifactTag`, `listTags` (counts
+    exclude deleted artifacts). Every change re-indexes the affected artifacts' metadata in
+    the same transaction, in id order. Audit events carry ids only.
+  - Search: tag names are metadata (weight B, one field per tag); `tag` filter in
+    `searchArtifacts` and `/api/search`; `listArtifacts` and `/api/artifacts` take `tag` and
+    return each card's `tags`; `/api/artifacts/:id` returns `tags`.
+  - API: `/api/tags` (GET, POST), `/api/tags/:id` (PATCH, DELETE), `/api/tags/:id/merge`,
+    `/api/artifacts/:id/tags/:tagId` (PUT, DELETE).
+  - UI: tag editor on the detail page (add by name with suggestions, remove, chips link to
+    `/?tag=`), tags on library cards, library tag filter (also inside search), `/tags` page
+    (rename, merge, delete with a second-click confirm), nav item. Viewers see tags
+    read-only.
+  - Export format v2 (`tags.json`, `artifact_tags.json`; ADR-018). Restore reads v1 and v2,
+    validates tag names and links, merges tags by name, and writes tag links only with
+    newly restored artifacts. The restore panel shows tag counts.
+  - Tests: unit (`normalizeTagName`); integration `tests/integration/tags/tags.test.ts`
+    (normalization, idempotent add/remove, workspace isolation including the database
+    guard, rename/merge/delete with search following, counts, filters, audit without
+    names); `tests/integration/api/tags-api.test.ts` (status codes, 409 details, viewer 403,
+    CSRF); round trip with tags (clean restore, skip_existing, copy merges, v1 archive still
+    restores, inconsistent tag metadata refused, unknown version refused); E2E tags an
+    artifact, follows the tag, searches by it, checks `/tags`, and sees the tag merged on
+    restore. Re-indexing, merge conflict handling, the search filter, tag metadata and
+    restore links/merging were mutation-checked.
+
 **Not done or not verified**
 
-- Search filters (project, collection, tag, source model, kind, dates), sorting and
-  totals: they need P1B-ORG's tables. No Simplified↔Traditional folding (SEARCH_DESIGN §9).
+- Search filters other than tag (project, collection, source model, kind, dates), sorting
+  and totals: P1B-ORG. No Simplified↔Traditional folding (SEARCH_DESIGN §9).
 - Search has no `statement_timeout`. A one-character query over a very large library holds
   a connection for its whole run (0.4 s at 120,000 matching chunks today).
 - Development databases that applied an earlier draft of `0006_search_index` (before PR 12
   merged) must be reset: the migration was regenerated with a new timestamp.
+- Tag operations re-index every affected artifact synchronously. Fine for a personal
+  library; a tag on many thousands of artifacts would make a rename slow.
 
 - Reading mode shows document images as alt text only. Serving derived images of imported
   documents through an authorized route is not built.
@@ -435,23 +471,23 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 - P1A-ENC: built-in `age` encryption for exports.
 - Verify the S3 adapter against real R2. This needs the owner's credentials.
 
-**PR 13: P1B-ORG** (DATA_MODEL §4.4, API_CONTRACT §6):
+**PR 14: P1B-ORG, projects and collections** (DATA_MODEL §4.4, API_CONTRACT §6). Follow
+the tags slice (PR 13) as the pattern:
 
-1. Schema (one migration): `tags` and `artifact_tags`, `collections` (hierarchy, `kind` of
-   category or collection) and `collection_items`. Research projects already exist; add
-   their API.
-2. APIs: CRUD for projects, collections and tags; assign or unassign artifacts. Tag names
-   are normalized (NFKC, trimmed, lower-case, collapsed whitespace), unique per workspace,
-   and can be merged. Everything is workspace-scoped and out-of-scope is 404.
-3. Re-index the artifact metadata document on tag changes (`indexArtifactMetadata`, tags
-   weighted B), and add the search filters (project, collection, tag, kind, source model,
-   dates) and sort (relevance, newest, title) to `searchArtifacts` and `/api/search`.
-4. UI: tags and project on the detail page; collections and a filter bar on the library.
-5. Include the new tables in export format v1 (or bump to v2 with a migration note) and in
-   restore. The round-trip test must keep passing.
-6. Tests: integration tests for CRUD, scoping, tag normalization and merge, filters, and
-   export/restore round trip with tags; an E2E step that tags an artifact and filters by
-   that tag.
+1. Schema: `collections` (hierarchy via `parent_id`, `kind` of category or collection,
+   `unique(workspace_id, parent_id, name)` NULLS NOT DISTINCT, no cycles) and
+   `collection_items` with workspace-scoped composite foreign keys like `artifact_tags`.
+   Research projects already exist (and are exported); add their API.
+2. APIs: CRUD for projects and collections; put an artifact in a project
+   (`PATCH /api/artifacts/:id {projectId}`) or collection. Workspace-scoped; out-of-scope
+   is 404.
+3. Search and library filters: project, collection, kind, source model, dates; sort
+   (relevance, newest, title); `total`. Project and collection names in metadata if useful.
+4. UI: project and collections on the detail page; a filter bar on the library;
+   collections page (replace the `FutureFeature` placeholder at `/collections`).
+5. Export format v3 with `collections.json` and `collection_items.json` (ADR-018); restore
+   reads v1–v3. Extend the round trip.
+6. Tests in the same shape as PR 13 (unit, integration, API, round trip, E2E step).
 
 **Then Phase 1B:**
 

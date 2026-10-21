@@ -10,10 +10,12 @@ import { MIGRATIONS_FOLDER } from "@/infrastructure/database/migrate";
 import {
   artifactFiles,
   artifacts,
+  artifactTags,
   artifactVersions,
   extractedDocuments,
   fileAssets,
   researchProjects,
+  tags,
   workspaces,
 } from "@/infrastructure/database/schema";
 import type { StorageAdapter } from "@/infrastructure/storage";
@@ -30,11 +32,13 @@ import {
   PATHS,
   README_TEXT,
   type ArtifactFileV1,
+  type ArtifactTagV2,
   type ArtifactV1,
   type ChecksumEntry,
   type FileAssetV1,
-  type ManifestV1,
+  type ManifestV2,
   type ProjectV1,
+  type TagV2,
   type VersionV1,
 } from "./format";
 
@@ -48,7 +52,7 @@ import {
 
 export interface ExportSummary {
   filename: string;
-  manifest: ManifestV1;
+  manifest: ManifestV2;
 }
 
 const iso = (value: Date | null) => (value ? value.toISOString() : null);
@@ -174,10 +178,22 @@ async function readSnapshot(tx: DbExecutor, workspaceId: string) {
       ),
     )
     .then((rows) => rows.map((row) => row.document));
+  const tagRows = await tx
+    .select()
+    .from(tags)
+    .where(eq(tags.workspaceId, workspaceId))
+    .orderBy(asc(tags.createdAt), asc(tags.id));
+  const artifactTagRows = await tx
+    .select()
+    .from(artifactTags)
+    .where(eq(artifactTags.workspaceId, workspaceId))
+    .orderBy(asc(artifactTags.artifactId), asc(artifactTags.tagId));
   return {
     workspace,
     projectRows,
     artifactRows,
+    tagRows,
+    artifactTagRows,
     versionRows,
     assetRows,
     linkRows,
@@ -211,6 +227,8 @@ export async function writeExport(
     versionRows,
     assetRows,
     linkRows,
+    tagRows,
+    artifactTagRows,
     documents,
     dbMigration,
   } = await Promise.race([reading, outputFailed]);
@@ -281,6 +299,18 @@ export async function writeExport(
     createdAt: row.createdAt.toISOString(),
   }));
 
+  const tagJson: TagV2[] = tagRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  }));
+  const artifactTagJson: ArtifactTagV2[] = artifactTagRows.map((row) => ({
+    artifactId: row.artifactId,
+    tagId: row.tagId,
+    createdAt: row.createdAt.toISOString(),
+  }));
+
   // Buffers whose bytes (and so hashes) are known up front.
   const buffers = new Map<string, Buffer>();
   const json = (value: unknown) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -295,6 +325,8 @@ export async function writeExport(
   buffers.set(PATHS.versions, json(versions));
   buffers.set(PATHS.fileAssets, json(assets));
   buffers.set(PATHS.artifactFiles, json(links));
+  buffers.set(PATHS.tags, json(tagJson));
+  buffers.set(PATHS.artifactTags, json(artifactTagJson));
   let normalizedCount = 0;
   for (const version of versionRows) {
     const document = version.activeExtractionId
@@ -330,7 +362,7 @@ export async function writeExport(
     ...assets.map((asset) => ({ path: asset.archivePath, sha256: asset.sha256 })),
   ];
   const checksums = Buffer.from(formatChecksums(checksumEntries), "utf8");
-  const manifest: ManifestV1 = {
+  const manifest: ManifestV2 = {
     format: EXPORT_FORMAT,
     formatVersion: EXPORT_FORMAT_VERSION,
     createdAt: now.toISOString(),
@@ -345,6 +377,8 @@ export async function writeExport(
       fileAssets: assets.length,
       artifactFiles: links.length,
       normalizedDocuments: normalizedCount,
+      tags: tagJson.length,
+      artifactTags: artifactTagJson.length,
     },
     checksumsSha256: sha256OfBuffer(checksums),
   };

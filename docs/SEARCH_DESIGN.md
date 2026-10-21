@@ -100,9 +100,10 @@ where a highlight can differ from the index). Words match only at a word start (
 search); CJK runs match anywhere. It returns `segments: [{text, highlight: boolean}]`. The UI
 renders segments as text nodes and `<mark>` elements, with no HTML injection.
 
-**Built so far (PR 12):** `q` and `offset` (20 per page, offsets up to 1,000). Filters
-(project, collection, tag, source model, kind, dates), sorting and totals come with
-P1B-ORG, which adds the tables they filter on.
+**Built so far:** `q` and `offset` (PR 12; 20 per page, offsets up to 1,000) and `tag`
+(PR 13: an `exists` on `artifact_tags`, applied where chunk and metadata candidates are
+chosen). The other filters (project, collection, source model, kind, dates), sorting and
+totals come with the rest of P1B-ORG.
 
 ## 5. Permission filtering
 
@@ -122,13 +123,16 @@ future public showcase search would use a separate query restricted to
 - The job (`indexVersion`) locks the version row, replaces its `content_chunks` with chunks
   of the active extraction, records what they were built from in `search_index_states`
   (extraction, tokenizer version, chunk count; also when the text is empty), and rebuilds
-  the artifact's `artifact_search_documents` row (title A; description and summary B;
-  source platform, model, author and original filename C), all in one transaction.
+  the artifact's `artifact_search_documents` row (title A; description, summary and tag
+  names B, each tag its own field so a phrase never runs from one tag into the next; source
+  platform, model, author and original filename C), all in one transaction.
   Rebuilding the metadata document locks the artifact row first, so a job for an older
   version can never overwrite the document of a version that became current meanwhile.
 - Chunk boundaries never split a surrogate pair (emoji, CJK Extension B characters).
-- Metadata edits will call `indexArtifactMetadata(artifactId)` synchronously once metadata
-  editing exists (P1B-DETAIL); today metadata only changes with a new version.
+- Tag changes (add, remove, rename, merge, delete) call `indexArtifactMetadata` for every
+  affected artifact in the same transaction, in artifact-id order (no deadlock between two
+  tag operations). Other metadata edits will do the same once metadata editing exists
+  (P1B-DETAIL).
 - `search.reindex_all` runs daily from the maintenance scheduler. It queues index jobs only
   for current versions without a `search_index_states` row for their active extraction and
   the current tokenizer, and for artifacts without a current metadata document (keyed per

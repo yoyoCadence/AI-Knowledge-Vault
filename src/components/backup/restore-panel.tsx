@@ -24,6 +24,8 @@ export interface RestoreView {
       artifactVersions: Tally;
       researchProjects: Tally;
       fileAssets: { stored: number; reused: number; repaired: number };
+      /** Format v2 archives (reports of earlier runs have none). */
+      tags?: Tally;
     };
     warnings?: string[];
     failures?: { artifactId: string; title: string; error: string }[];
@@ -248,6 +250,16 @@ export function RestorePanel({ initial }: { initial: RestoreView | null }) {
                   repaired: counts.fileAssets.repaired,
                 })}
               </li>
+              {counts.tags &&
+              counts.tags.restored + counts.tags.skipped + counts.tags.copied > 0 ? (
+                <li>
+                  {t("restore.counts.tags", {
+                    restored: counts.tags.restored,
+                    skipped: counts.tags.skipped,
+                    copied: counts.tags.copied,
+                  })}
+                </li>
+              ) : null}
               {run.report?.reextractJobs ? (
                 <li>{t("restore.reextract", { count: run.report.reextractJobs })}</li>
               ) : null}

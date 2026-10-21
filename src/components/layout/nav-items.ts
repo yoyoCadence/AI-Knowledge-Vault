@@ -6,6 +6,7 @@ import {
   Network,
   Settings,
   Sparkles,
+  Tags,
   type LucideIcon,
 } from "lucide-react";
 import type { MessageKey } from "@/lib/i18n";
@@ -21,6 +22,7 @@ export interface NavItem {
 /** Main navigation (Master Spec §9.1). */
 export const NAV_ITEMS: NavItem[] = [
   { href: "/", labelKey: "nav.library", icon: BookOpen },
+  { href: "/tags", labelKey: "nav.tags", icon: Tags },
   { href: "/collections", labelKey: "nav.collections", icon: FolderTree, future: true },
   { href: "/knowledge-map", labelKey: "nav.knowledgeMap", icon: Network, future: true },
   { href: "/ai-research", labelKey: "nav.aiResearch", icon: Sparkles, future: true },

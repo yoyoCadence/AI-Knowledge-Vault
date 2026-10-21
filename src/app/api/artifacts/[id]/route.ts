@@ -1,6 +1,6 @@
 import { notFound } from "@/lib/errors";
 import { isUuid } from "@/lib/ids";
-import { getArtifactDetail } from "@/modules/artifacts";
+import { getArtifactDetail, tagsByArtifact } from "@/modules/artifacts";
 import { json } from "../../_lib/http";
 import { authedRoute } from "../../_lib/route";
 import { services } from "../../_lib/services";
@@ -11,6 +11,7 @@ export const GET = authedRoute<{ id: string }>(
   async ({ actor, params }) => {
     if (!isUuid(params.id)) throw notFound("Artifact");
     const { artifact, versions } = await getArtifactDetail(services.db(), actor, params.id);
+    const tags = await tagsByArtifact(services.db(), actor.workspaceId, [artifact.id]);
     return json({
       artifact: {
         id: artifact.id,
@@ -24,6 +25,7 @@ export const GET = authedRoute<{ id: string }>(
         currentVersionId: artifact.currentVersionId,
         createdAt: artifact.createdAt,
         updatedAt: artifact.updatedAt,
+        tags: tags.get(artifact.id) ?? [],
       },
       versions,
     });

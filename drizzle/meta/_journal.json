@@ -50,6 +50,13 @@
       "when": 1792539926554,
       "tag": "0006_search_index",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792554450059,
+      "tag": "0007_tags",
+      "breakpoints": true
     }
   ]
 }

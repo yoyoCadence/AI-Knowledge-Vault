@@ -10,13 +10,20 @@ import {
 } from "@/infrastructure/database/schema";
 
 /**
- * Portable export format v1 (docs/BACKUP_RECOVERY.md §2). Pure definitions shared by export
- * and restore: entry paths, Zod schemas for every JSON file, and the `checksums.sha256` codec
+ * Portable export format (docs/BACKUP_RECOVERY.md §2). Pure definitions shared by export and
+ * restore: entry paths, Zod schemas for every JSON file, and the `checksums.sha256` codec
  * (GNU coreutils format, so `sha256sum -c checksums.sha256` verifies an archive without the app).
+ *
+ * Versions: v1 is the original layout; v2 adds `metadata/tags.json` and
+ * `metadata/artifact_tags.json`. Exports are written as the latest version; restore reads every
+ * supported one. An app that only knows v1 refuses a v2 archive instead of silently dropping
+ * its tags.
  */
 
 export const EXPORT_FORMAT = "ai-knowledge-vault-export";
-export const EXPORT_FORMAT_VERSION = 1;
+export const EXPORT_FORMAT_VERSION = 2;
+export const SUPPORTED_FORMAT_VERSIONS = [1, 2] as const;
+export type FormatVersion = (typeof SUPPORTED_FORMAT_VERSIONS)[number];
 
 export const PATHS = {
   readme: "README.txt",
@@ -29,6 +36,10 @@ export const PATHS = {
   versions: "metadata/artifact_versions.json",
   fileAssets: "metadata/file_assets.json",
   artifactFiles: "metadata/artifact_files.json",
+  /** v2+ */
+  tags: "metadata/tags.json",
+  /** v2+ */
+  artifactTags: "metadata/artifact_tags.json",
 } as const;
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -74,32 +85,44 @@ export function exportFilename(workspaceSlug: string, createdAt: Date): string {
   return `knowledge-vault-export-${workspaceSlug}-${stamp}.zip`;
 }
 
-// ---------- JSON schemas (v1) ----------
+// ---------- JSON schemas ----------
+
+const count = z.number().int().nonnegative();
 
 export const ManifestV1 = z.object({
   format: z.literal(EXPORT_FORMAT),
-  formatVersion: z.literal(EXPORT_FORMAT_VERSION),
+  formatVersion: z.literal(1),
   createdAt: timestamp,
   appVersion: z.string().max(50),
   dbMigration: z.string().max(200),
   encryption: z.literal("none"),
   workspace: z.object({ id, name: z.string(), slug: z.string() }),
   counts: z.object({
-    researchProjects: z.number().int().nonnegative(),
-    artifacts: z.number().int().nonnegative(),
-    artifactVersions: z.number().int().nonnegative(),
-    fileAssets: z.number().int().nonnegative(),
-    artifactFiles: z.number().int().nonnegative(),
-    normalizedDocuments: z.number().int().nonnegative(),
+    researchProjects: count,
+    artifacts: count,
+    artifactVersions: count,
+    fileAssets: count,
+    artifactFiles: count,
+    normalizedDocuments: count,
   }),
   /** SHA-256 of `checksums.sha256`, which in turn covers every other entry. */
   checksumsSha256: sha256,
 });
 export type ManifestV1 = z.infer<typeof ManifestV1>;
 
-export const SchemaVersionV1 = z.object({
+export const ManifestV2 = ManifestV1.extend({
+  formatVersion: z.literal(2),
+  counts: ManifestV1.shape.counts.extend({ tags: count, artifactTags: count }),
+});
+export type ManifestV2 = z.infer<typeof ManifestV2>;
+
+/** The manifest of any supported version, told apart by `formatVersion`. */
+export const Manifest = z.discriminatedUnion("formatVersion", [ManifestV1, ManifestV2]);
+export type Manifest = z.infer<typeof Manifest>;
+
+export const SchemaVersion = z.object({
   format: z.literal(EXPORT_FORMAT),
-  formatVersion: z.literal(EXPORT_FORMAT_VERSION),
+  formatVersion: z.union([z.literal(1), z.literal(2)]),
   dbMigration: z.string().max(200),
 });
 
@@ -184,6 +207,17 @@ export const ArtifactFileV1 = z.object({
 });
 export type ArtifactFileV1 = z.infer<typeof ArtifactFileV1>;
 
+export const TagV2 = z.object({
+  id,
+  name: z.string().min(1).max(200),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+export type TagV2 = z.infer<typeof TagV2>;
+
+export const ArtifactTagV2 = z.object({ artifactId: id, tagId: id, createdAt: timestamp });
+export type ArtifactTagV2 = z.infer<typeof ArtifactTagV2>;
+
 // ---------- checksums.sha256 ----------
 
 export interface ChecksumEntry {
@@ -252,6 +286,8 @@ This archive is readable without the application.
     artifact_versions.json    versions (source platform/model/url, research date, references, …)
     file_assets.json          originals: sha256, size, MIME type, original filename, archivePath
     artifact_files.json       which original belongs to which version
+    tags.json                 tags {id, name}
+    artifact_tags.json        which artifact carries which tag {artifactId, tagId}
   originals/<aa>/<sha256>/<filename>
                          the untouched original files; <sha256> is the hash of the bytes
   normalized/<version-id>.md

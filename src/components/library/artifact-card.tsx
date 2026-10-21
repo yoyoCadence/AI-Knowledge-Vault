@@ -15,7 +15,11 @@ export interface ArtifactCardData {
   contentKind: string | null;
   sourcePlatform: string | null;
   sourceModel: string | null;
+  /** Tag names, by name. */
+  tags: string[];
 }
+
+const SHOWN_TAGS = 3;
 
 export const label = (prefix: string, value: string) => tOptional(`${prefix}.${value}`) ?? value;
 
@@ -61,6 +65,16 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactCardData }) {
             </Badge>
           ) : null}
         </div>
+        {artifact.tags.length > 0 ? (
+          <p className="text-muted-foreground flex flex-wrap gap-x-2 gap-y-0.5 text-[11px]">
+            {artifact.tags.slice(0, SHOWN_TAGS).map((name) => (
+              <span key={name}>#{name}</span>
+            ))}
+            {artifact.tags.length > SHOWN_TAGS ? (
+              <span>{t("tags.more", { count: artifact.tags.length - SHOWN_TAGS })}</span>
+            ) : null}
+          </p>
+        ) : null}
         <p className="text-muted-foreground text-[11px]">
           {formatDate(artifact.createdAt)} · {label("visibility", artifact.visibility)}
         </p>

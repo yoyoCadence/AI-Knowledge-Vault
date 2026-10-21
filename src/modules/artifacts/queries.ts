@@ -1,13 +1,15 @@
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { DbExecutor } from "@/infrastructure/database/client";
 import { beforeCursor, cursorTimestamp } from "@/infrastructure/database/keyset";
 import {
   artifacts,
+  artifactTags,
   artifactVersions,
   derivedAssets,
   documentSections,
   extractedDocuments,
   fileAssets,
+  tags,
 } from "@/infrastructure/database/schema";
 import type { KeysetCursor } from "@/lib/cursor";
 import { notFound } from "@/lib/errors";
@@ -17,6 +19,11 @@ import type { Actor } from "@/modules/auth";
  * Read models for artifacts. Every query is workspace-scoped and hides soft-deleted artifacts
  * (SECURITY.md §7): objects outside the actor's workspace are indistinguishable from missing ones.
  */
+export interface TagSummary {
+  id: string;
+  name: string;
+}
+
 export interface ArtifactCard {
   id: string;
   title: string;
@@ -36,12 +43,37 @@ export interface ArtifactCard {
   } | null;
   versionCount: number;
   hasThumbnail: boolean;
+  tags: TagSummary[];
+}
+
+/** Tags of many artifacts at once, keyed by artifact id. Callers pass ids they may see. */
+export async function tagsByArtifact(
+  db: DbExecutor,
+  workspaceId: string,
+  artifactIds: string[],
+): Promise<Map<string, TagSummary[]>> {
+  const result = new Map<string, TagSummary[]>();
+  if (artifactIds.length === 0) return result;
+  const rows = await db
+    .select({ artifactId: artifactTags.artifactId, id: tags.id, name: tags.name })
+    .from(artifactTags)
+    .innerJoin(tags, eq(tags.id, artifactTags.tagId))
+    .where(
+      and(eq(artifactTags.workspaceId, workspaceId), inArray(artifactTags.artifactId, artifactIds)),
+    )
+    .orderBy(asc(tags.normalizedName));
+  for (const row of rows) {
+    const list = result.get(row.artifactId) ?? [];
+    list.push({ id: row.id, name: row.name });
+    result.set(row.artifactId, list);
+  }
+  return result;
 }
 
 export async function listArtifacts(
   db: DbExecutor,
   actor: Actor,
-  options: { limit: number; cursor?: KeysetCursor },
+  options: { limit: number; cursor?: KeysetCursor; tagId?: string },
 ): Promise<{ items: ArtifactCard[]; nextCursor: KeysetCursor | null }> {
   const rows = await db
     .select({
@@ -72,12 +104,20 @@ export async function listArtifacts(
         eq(artifacts.workspaceId, actor.workspaceId),
         isNull(artifacts.deletedAt),
         beforeCursor(artifacts.createdAt, artifacts.id, options.cursor),
+        options.tagId
+          ? sql`exists (select 1 from ${artifactTags} f where f.artifact_id = ${artifacts}.id and f.tag_id = ${options.tagId})`
+          : undefined,
       ),
     )
     .orderBy(desc(artifacts.createdAt), desc(artifacts.id))
     .limit(options.limit + 1);
 
   const page = rows.slice(0, options.limit);
+  const tagMap = await tagsByArtifact(
+    db,
+    actor.workspaceId,
+    page.map((row) => row.id),
+  );
   const items: ArtifactCard[] = page.map((row) => ({
     id: row.id,
     title: row.title,
@@ -99,6 +139,7 @@ export async function listArtifacts(
       : null,
     versionCount: row.versionCount,
     hasThumbnail: row.hasThumbnail,
+    tags: tagMap.get(row.id) ?? [],
   }));
   const last = page.at(-1);
   return {
