@@ -630,7 +630,51 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 - P1A-ENC: built-in `age` encryption for exports.
 - Verify the S3 adapter against real R2. This needs the owner's credentials.
 
-**PR 17: P1B-SHARE, share links** (DATA_MODEL §4.1 `share_links`, API_CONTRACT §8,
+**PR 17: P1B-SHARE, share links — IN PROGRESS (draft PR, do not merge yet).** Work in the
+branch `claude/cool-gates-ycsprt` (draft PR). Paused mid-slice when the session ran out of
+budget.
+
+Done (format, lint, typecheck and the preview unit tests pass; **nothing below has its own tests yet**):
+
+- `schema/sharing.ts` + `drizzle/0010_share_links.sql`: `share_links` (only `token_hash`,
+  composite FK to the artifact, CHECKs for some permission and label length) and
+  `rate_limit_buckets`.
+- `src/modules/sharing/index.ts`: `createShare` (private → unlisted with an audit row;
+  restricted → 409), `listShares`, `revokeShare`, `setVisibility` (private revokes every
+  live link), `checkShare` (advisory scan, masked samples), `resolveShare` (format check, then
+  hash lookup with the `live()` condition: not revoked, not expired, not deleted, not
+  private, not restricted), `recordShareAccess`, `shareAllowsPreview`, `shareVersion`,
+  `shareContent`, `shareThumbnail`, `issueSharePreviewUrl` (TTL ≤ 1 h and ≤ link expiry),
+  `withinRateLimit` (fixed window, one atomic upsert) and the hourly
+  `maintenance.cleanup_rate_limits` job (registered in `src/worker`).
+- `src/modules/preview`: preview tokens gain the `share` scope (`s: "share"`, `l: linkId`);
+  `src/app/p/[token]/[...path]/route.ts` calls `shareAllowsPreview` on every request for it.
+- APIs (no tests yet): `POST /api/artifacts/:id/share-check`, `GET/POST
+/api/artifacts/:id/shares` (`acknowledgeFindings: true` required; URL returned once),
+  `DELETE /api/shares/:id`, `PUT /api/artifacts/:id/visibility`.
+
+Remaining, in order:
+
+1. Public side: `src/app/s/_lib/access.ts` (rate limit `share:<ip>` with `SHARE_RATE_LIMIT`,
+   then `resolveShare`), `src/app/s/[token]/page.tsx` (React `cache()` so metadata and page
+   resolve once; `recordShareAccess`; reading via `ReadingBody` with a `thumbnailSrc` prop
+   replacing `artifactId`; preview via `PreviewFrame` with a `mintUrl` prop replacing
+   `artifactId`/`versionId`; download button only if allowed; no workspace data),
+   `s/[token]/download` (302 signed URL, audit `share.original.downloaded`, actor null),
+   `s/[token]/thumbnail` (add `mimeType` to `shareThumbnail`), `s/[token]/preview-token`
+   (POST → `issueSharePreviewUrl`). `/s/` is already a public prefix in `proxy.ts`.
+2. `next.config.ts`: a later rule for `/s/:path*` with `Referrer-Policy: no-referrer` and
+   `X-Robots-Tag: noindex, nofollow` (later rules override earlier keys).
+3. Share panel UI on the detail page + visibility control + i18n.
+4. Tests: unit (token/hash, scan patterns, `verifyPreviewToken` share scope — update the
+   existing test that expects `s: "share"` to be refused: it still must be refused **without**
+   `l`), integration (valid / revoked / expired / private / deleted / restricted / download
+   flag / cross-workspace / token not stored / rate limit / preview route share scope / the
+   cleanup job), API tests, E2E (create → fresh context → revoke → 404).
+5. Docs: DATA_MODEL, API_CONTRACT §8 status, SECURITY §5/§7, README, ROADMAP, task.md.
+6. Gates, mark the PR ready, Codex + independent review, fixes, merge.
+
+Original plan (DATA_MODEL §4.1 `share_links`, API_CONTRACT §8,
 SECURITY.md §5 and §7, TEST_PLAN §4). Security-sensitive: read SECURITY.md first.
 
 1. Schema: `share_links` as in DATA_MODEL (only `token_hash` stored; the token is shown once).

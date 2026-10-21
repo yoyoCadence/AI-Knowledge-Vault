@@ -4,12 +4,10 @@ _Last updated: 2026-10-21 by the implementing agent._
 
 ## Current focus
 
-**PR 16 (this branch): P1B-NOTES, notes and reading state.** Markdown notes on artifacts
-(searchable, rendered by the allow-list renderer), per-user reading status, favorites and
-recently opened, the library shortcuts and filters, and export format v4 with restore of
-v1–v4.
-
-**Next: P1B-SHARE (PR 17): share links.** The exact steps are in `docs/HANDOFF.md` §4.
+**PR 17 (this branch, draft): P1B-SHARE, share links — in progress.** Backend done
+(schema, module, preview share scope, management APIs); public `/s/:token` page, UI, tests
+and docs remain. Exact status and next steps: `docs/HANDOFF.md` §4. Do not merge until the
+remaining steps, tests and reviews are done.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.

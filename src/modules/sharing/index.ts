@@ -17,6 +17,7 @@ import { cleanTitle } from "@/lib/text";
 import { getArtifactForActor } from "@/modules/artifacts";
 import { recordAudit, type RequestMeta } from "@/modules/audit";
 import type { Actor } from "@/modules/auth";
+import type { JobDefinition } from "@/modules/jobs";
 import { createPreviewToken, findPreviewFile, SITE_PREVIEW_KINDS } from "@/modules/preview";
 
 /**
@@ -633,6 +634,12 @@ export async function issueSharePreviewUrl(
 
 // ---------- rate limiting for anonymous routes ----------
 
+/** Requests one client address may make to share links (pages, thumbnails, downloads). */
+export const SHARE_RATE_LIMIT = { limit: 120, windowSeconds: 60 };
+/** Windows longer than this would be cut short by the cleanup job. */
+const RATE_LIMIT_MAX_WINDOW_SECONDS = 60 * 60;
+export const RATE_LIMIT_CLEANUP_JOB_TYPE = "maintenance.cleanup_rate_limits";
+
 /**
  * Counts one request against `key` in a fixed window; false once the window holds more than
  * `limit` requests. One atomic upsert per request, so concurrent requests count exactly.
@@ -643,7 +650,10 @@ export async function withinRateLimit(
   limit: number,
   windowSeconds: number,
 ): Promise<boolean> {
-  const expired = sql`${rateLimitBuckets.windowStart} < now() - make_interval(secs => ${windowSeconds})`;
+  if (windowSeconds <= 0 || windowSeconds > RATE_LIMIT_MAX_WINDOW_SECONDS) {
+    throw new Error(`Rate-limit windows are 1–${RATE_LIMIT_MAX_WINDOW_SECONDS} seconds`);
+  }
+  const expired = sql`${rateLimitBuckets.windowStart} <= now() - make_interval(secs => ${windowSeconds})`;
   const [bucket] = await db
     .insert(rateLimitBuckets)
     .values({ key, windowStart: sql`now()`, count: 1 })
@@ -656,4 +666,26 @@ export async function withinRateLimit(
     })
     .returning({ count: rateLimitBuckets.count });
   return (bucket?.count ?? 0) <= limit;
+}
+
+/** Deletes counters whose window ended long ago (one row per client address otherwise stays). */
+export async function deleteStaleRateLimits(db: DbExecutor): Promise<number> {
+  const result = await db
+    .delete(rateLimitBuckets)
+    .where(
+      sql`${rateLimitBuckets.windowStart} < now() - make_interval(secs => ${RATE_LIMIT_MAX_WINDOW_SECONDS})`,
+    );
+  return result.rowCount ?? 0;
+}
+
+/**
+ * Hourly cleanup of rate-limit counters. Idempotent: it only deletes windows that ended over an
+ * hour ago, which no request counts against any more, so running it twice changes nothing.
+ */
+export function rateLimitCleanupJobDefinition(): JobDefinition {
+  return {
+    type: RATE_LIMIT_CLEANUP_JOB_TYPE,
+    timeoutMs: 60 * 1000,
+    handler: async ({ db }) => ({ deleted: await deleteStaleRateLimits(db) }),
+  };
 }
