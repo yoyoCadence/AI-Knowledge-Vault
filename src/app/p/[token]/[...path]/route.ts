@@ -9,6 +9,7 @@ import {
   previewHeaders,
   verifyPreviewToken,
 } from "@/modules/preview";
+import { shareAllowsPreview } from "@/modules/sharing";
 import { services } from "../../../api/_lib/services";
 
 /**
@@ -16,8 +17,8 @@ import { services } from "../../../api/_lib/services";
  * token binds (docs/SECURITY.md §5). proxy.ts already confines `/p/*` to the preview host; the
  * host is re-checked here so a routing mistake can never serve untrusted HTML on the app origin.
  *
- * Every refusal (wrong host, bad or expired token, unsafe path, unknown file) is the same bare
- * 404, so a probe learns nothing about which part failed.
+ * Every refusal (wrong host, bad or expired token, a share link no longer live, unsafe path,
+ * unknown file) is the same bare 404, so a probe learns nothing about which part failed.
  */
 const REFUSAL_HEADERS = {
   "content-type": "text/plain; charset=utf-8",
@@ -42,6 +43,18 @@ async function serve(request: Request, withBody: boolean): Promise<Response> {
   if (!claims || path === null) return notFound();
 
   try {
+    // A share link's preview stops the moment the link does: revoked, expired, its artifact
+    // made private, restricted or deleted, its preview turned off, or a newer version current.
+    if (
+      claims.s === "share" &&
+      !(await shareAllowsPreview(services.db(), {
+        linkId: claims.l!,
+        versionId: claims.v,
+        workspaceId: claims.w,
+      }))
+    ) {
+      return notFound();
+    }
     const asset = await findPreviewFile(
       services.db(),
       { versionId: claims.v, workspaceId: claims.w },

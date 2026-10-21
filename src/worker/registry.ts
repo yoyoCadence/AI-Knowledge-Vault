@@ -15,6 +15,7 @@ import {
 } from "@/modules/imports";
 import { JobRegistry } from "@/modules/jobs";
 import { searchIndexJobDefinition, searchReindexAllJobDefinition } from "@/modules/search";
+import { rateLimitCleanupJobDefinition } from "@/modules/sharing";
 
 /**
  * All job types the worker executes. Each handler module documents why it is idempotent.
@@ -36,5 +37,6 @@ export function buildJobRegistry(env: Env): JobRegistry {
     )
     .register(integrityScheduleJobDefinition())
     .register(searchIndexJobDefinition())
-    .register(searchReindexAllJobDefinition());
+    .register(searchReindexAllJobDefinition())
+    .register(rateLimitCleanupJobDefinition());
 }

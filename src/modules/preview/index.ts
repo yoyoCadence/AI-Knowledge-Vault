@@ -20,17 +20,19 @@ export const OWNER_PREVIEW_TTL_SECONDS = 15 * 60;
  * Preview kinds this origin renders as a site. PDFs, images and text get their view in reading
  * mode instead: a `sandbox=""` frame cannot show a PDF, so a ZIP holding one PDF is not a site.
  */
-const SITE_PREVIEW_KINDS = new Set(["static_html", "static_site"]);
+export const SITE_PREVIEW_KINDS = new Set(["static_html", "static_site"]);
 
 export interface PreviewClaims extends SignedTokenClaims {
   v: string; // artifact version id
   w: string; // workspace id
-  s: "owner";
+  /** "owner": issued to a member; "share": issued to the holder of share link `l`. */
+  s: "owner" | "share";
+  l?: string; // share link id, for "share" only
 }
 
 export function createPreviewToken(
   secret: string,
-  input: { versionId: string; workspaceId: string },
+  input: { versionId: string; workspaceId: string; shareLinkId?: string },
   now = new Date(),
   ttlSeconds = OWNER_PREVIEW_TTL_SECONDS,
 ): { token: string; expiresAt: Date } {
@@ -40,20 +42,24 @@ export function createPreviewToken(
     exp,
     v: input.versionId,
     w: input.workspaceId,
-    s: "owner",
+    ...(input.shareLinkId ? { s: "share", l: input.shareLinkId } : { s: "owner" }),
   };
   return { token: signToken(secret, claims), expiresAt: new Date(exp * 1000) };
 }
 
-/** Returns the claims of a valid token, or null for anything else (callers answer 404). */
+/**
+ * Returns the claims of a valid token, or null for anything else (callers answer 404). A
+ * "share" token is only valid in form here: its link must still be live, which the preview
+ * route checks on every request (`shareAllowsPreview`).
+ */
 export function verifyPreviewToken(secret: string, token: string, now = new Date()) {
   const result = verifyToken<PreviewClaims>(secret, token, PREVIEW_TOKEN_PURPOSE, now);
   if (!result.ok) return null;
-  const { v, w, s } = result.claims;
-  // Share-link scopes (Phase 1B sharing) will add their own checks; until then only "owner".
-  return typeof v === "string" && isUuid(v) && typeof w === "string" && isUuid(w) && s === "owner"
-    ? result.claims
-    : null;
+  const { v, w, s, l } = result.claims;
+  if (typeof v !== "string" || !isUuid(v) || typeof w !== "string" || !isUuid(w)) return null;
+  if (s === "owner") return l === undefined ? result.claims : null;
+  if (s === "share") return typeof l === "string" && isUuid(l) ? result.claims : null;
+  return null;
 }
 
 /**
