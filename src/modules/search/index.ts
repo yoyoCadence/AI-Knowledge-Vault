@@ -22,8 +22,10 @@ export {
 } from "./indexer";
 export {
   SEARCH_PAGE_SIZE,
+  SEARCH_SORTS,
   buildSnippet,
   searchArtifacts,
   type SearchHit,
+  type SearchSort,
   type SnippetSegment,
 } from "./query";

@@ -100,10 +100,11 @@ where a highlight can differ from the index). Words match only at a word start (
 search); CJK runs match anywhere. It returns `segments: [{text, highlight: boolean}]`. The UI
 renders segments as text nodes and `<mark>` elements, with no HTML injection.
 
-**Built so far:** `q` and `offset` (PR 12; 20 per page, offsets up to 1,000) and `tag`
-(PR 13: an `exists` on `artifact_tags`, applied where chunk and metadata candidates are
-chosen). The other filters (project, collection, source model, kind, dates), sorting and
-totals come with the rest of P1B-ORG.
+**Built so far:** `q` and `offset` (PR 12; 20 per page, offsets up to 1,000), `tag` (PR 13),
+and project, kind, source model and import-day range, sort (relevance, newest, title) and
+`total` (PR 14). The filters are one builder (`src/modules/artifacts/filters.ts`) shared
+with the library list, applied where chunk and metadata candidates are chosen. `total` is a
+window count over the matched artifacts. Collections come with their own slice.
 
 ## 5. Permission filtering
 

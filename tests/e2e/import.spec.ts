@@ -127,6 +127,33 @@ test.describe("import → library → artifact (Scenario A)", () => {
     await expect(page.getByTestId("tag-row")).toContainText("#熱島專題");
     await expect(page.getByTestId("tag-row")).toContainText("1 份作品");
 
+    // Research project: create it, put the artifact in it, follow it to the filtered library.
+    await page.goto("/projects");
+    await page.getByRole("textbox", { name: "新專案名稱" }).fill("熱島研究計畫");
+    await page.getByRole("button", { name: "建立專案" }).click();
+    await expect(page.getByTestId("project-row")).toContainText("熱島研究計畫");
+    await page.goto("/");
+    await page.getByRole("heading", { name: "端對端 Claude Design 報告" }).click();
+    await page.getByTestId("artifact-meta").getByRole("button", { name: "編輯" }).click();
+    const editor = page.getByTestId("meta-editor");
+    await editor
+      .getByRole("combobox", { name: "研究專案" })
+      .selectOption({ label: "熱島研究計畫" });
+    await editor.getByRole("button", { name: "儲存" }).click();
+    await page.getByTestId("artifact-meta").getByRole("link", { name: "熱島研究計畫" }).click();
+    await expect(page.getByTestId("project-filter")).toContainText("熱島研究計畫");
+    await expect(page.getByRole("heading", { name: "端對端 Claude Design 報告" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "端對端測試筆記" })).toHaveCount(0);
+
+    // The filter bar is a plain form: filter by kind.
+    await page.goto("/");
+    await page.getByTestId("library-filters").locator("summary").click();
+    await page.getByRole("combobox", { name: "類型" }).selectOption("html_document");
+    await page.getByTestId("filters-apply").click();
+    await expect(page).toHaveURL(/kind=html_document/);
+    await expect(page.getByRole("heading", { name: "端對端測試筆記" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "端對端 Claude Design 報告" })).toHaveCount(0);
+
     // Portable export of the library (same session: sign-in is rate limited).
     await page.goto("/import");
     await page.getByTestId("export-create").click();

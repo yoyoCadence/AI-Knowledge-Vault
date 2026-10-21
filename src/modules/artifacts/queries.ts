@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { DbExecutor } from "@/infrastructure/database/client";
-import { beforeCursor, cursorTimestamp } from "@/infrastructure/database/keyset";
+import { afterCursor, beforeCursor, cursorTimestamp } from "@/infrastructure/database/keyset";
 import {
   artifacts,
   artifactTags,
@@ -14,11 +14,15 @@ import {
 import type { KeysetCursor } from "@/lib/cursor";
 import { notFound } from "@/lib/errors";
 import type { Actor } from "@/modules/auth";
+import { filterConditions, type LibraryFilters } from "./filters";
 
 /**
  * Read models for artifacts. Every query is workspace-scoped and hides soft-deleted artifacts
  * (SECURITY.md §7): objects outside the actor's workspace are indistinguishable from missing ones.
  */
+export const LIBRARY_SORTS = ["newest", "oldest"] as const;
+export type LibrarySort = (typeof LIBRARY_SORTS)[number];
+
 export interface TagSummary {
   id: string;
   name: string;
@@ -44,6 +48,24 @@ export interface ArtifactCard {
   versionCount: number;
   hasThumbnail: boolean;
   tags: TagSummary[];
+}
+
+/** Source models recorded on current versions of the actor's artifacts, for the filter. */
+export async function listSourceModels(db: DbExecutor, actor: Actor): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ model: artifactVersions.sourceModel })
+    .from(artifacts)
+    .innerJoin(artifactVersions, eq(artifactVersions.id, artifacts.currentVersionId))
+    .where(
+      and(
+        eq(artifacts.workspaceId, actor.workspaceId),
+        isNull(artifacts.deletedAt),
+        sql`${artifactVersions.sourceModel} is not null`,
+      ),
+    )
+    .orderBy(asc(artifactVersions.sourceModel))
+    .limit(200);
+  return rows.map((row) => row.model!);
 }
 
 /** Tags of many artifacts at once, keyed by artifact id. Callers pass ids they may see. */
@@ -73,8 +95,15 @@ export async function tagsByArtifact(
 export async function listArtifacts(
   db: DbExecutor,
   actor: Actor,
-  options: { limit: number; cursor?: KeysetCursor; tagId?: string },
+  options: {
+    limit: number;
+    cursor?: KeysetCursor;
+    filters?: LibraryFilters;
+    /** newest (default) or oldest first; the cursor continues in that order. */
+    sort?: LibrarySort;
+  },
 ): Promise<{ items: ArtifactCard[]; nextCursor: KeysetCursor | null }> {
+  const oldest = options.sort === "oldest";
   const rows = await db
     .select({
       id: artifacts.id,
@@ -103,13 +132,17 @@ export async function listArtifacts(
       and(
         eq(artifacts.workspaceId, actor.workspaceId),
         isNull(artifacts.deletedAt),
-        beforeCursor(artifacts.createdAt, artifacts.id, options.cursor),
-        options.tagId
-          ? sql`exists (select 1 from ${artifactTags} f where f.artifact_id = ${artifacts}.id and f.tag_id = ${options.tagId})`
-          : undefined,
+        oldest
+          ? afterCursor(artifacts.createdAt, artifacts.id, options.cursor)
+          : beforeCursor(artifacts.createdAt, artifacts.id, options.cursor),
+        ...filterConditions(sql.identifier("artifacts"), options.filters ?? {}),
       ),
     )
-    .orderBy(desc(artifacts.createdAt), desc(artifacts.id))
+    .orderBy(
+      ...(oldest
+        ? [asc(artifacts.createdAt), asc(artifacts.id)]
+        : [desc(artifacts.createdAt), desc(artifacts.id)]),
+    )
     .limit(options.limit + 1);
 
   const page = rows.slice(0, options.limit);

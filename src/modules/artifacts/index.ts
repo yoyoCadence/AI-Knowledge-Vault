@@ -7,9 +7,19 @@ export {
   getVersionOverview,
   getVersionContent,
   tagsByArtifact,
+  listSourceModels,
+  LIBRARY_SORTS,
+  type LibrarySort,
   type ArtifactCard,
   type TagSummary,
   type VersionContent,
 } from "./queries";
 export { createOriginalDownload, ORIGINAL_DOWNLOAD_TTL_SECONDS } from "./download";
 export { getThumbnailForActor } from "./thumbnail";
+export {
+  updateArtifact,
+  ARTIFACT_TITLE_MAX,
+  ARTIFACT_DESCRIPTION_MAX,
+  type ArtifactEdit,
+} from "./edit";
+export { filterConditions, hasFilters, type LibraryFilters } from "./filters";

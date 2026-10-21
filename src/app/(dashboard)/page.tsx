@@ -1,18 +1,34 @@
-import { Library, Search, Tag, Upload, X } from "lucide-react";
+import { FolderKanban, Library, Tag, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { requirePageActor } from "@/app/_lib/session";
-import { ArtifactCard } from "@/components/library/artifact-card";
+import { ArtifactCard, label } from "@/components/library/artifact-card";
+import { LibraryControls } from "@/components/library/library-controls";
 import { SearchResults } from "@/components/library/search-results";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/states";
 import { getDb } from "@/infrastructure/database/client";
+import { CONTENT_KINDS } from "@/infrastructure/database/schema";
 import { decodeCursorOrFirstPage, encodeCursor } from "@/lib/cursor";
 import { t } from "@/lib/i18n";
 import { isUuid } from "@/lib/ids";
-import { firstParam, searchQueryParam, type PageSearchParams } from "@/lib/search-params";
-import { listArtifacts } from "@/modules/artifacts";
-import { searchArtifacts } from "@/modules/search";
-import { findTag, type TagSummary } from "@/modules/tags";
+import {
+  dayParam,
+  firstParam,
+  modelParam,
+  searchQueryParam,
+  type PageSearchParams,
+} from "@/lib/search-params";
+import {
+  hasFilters,
+  LIBRARY_SORTS,
+  listArtifacts,
+  listSourceModels,
+  type LibraryFilters,
+  type LibrarySort,
+} from "@/modules/artifacts";
+import { findProject, listProjects } from "@/modules/projects";
+import { SEARCH_SORTS, searchArtifacts, type SearchSort } from "@/modules/search";
+import { findTag } from "@/modules/tags";
 
 const PAGE_SIZE = 48;
 
@@ -26,93 +42,51 @@ function libraryHref(params: Record<string, string | number | null | undefined>)
   return text ? `/?${text}` : "/";
 }
 
-function SearchForm({ q, tag }: { q: string; tag: TagSummary | null }) {
-  // A plain GET form: search works without client JavaScript and the URL is shareable.
+function oneOf<T extends string>(value: string | undefined, allowed: readonly T[]) {
+  return allowed.includes(value as T) ? (value as T) : undefined;
+}
+
+/** A filter the page cannot honour (another workspace's or a deleted tag or project). */
+function UnknownFilter({ title, clearLabel }: { title: string; clearLabel: string }) {
   return (
-    <form action="/" method="get" role="search" className="flex w-full max-w-xl gap-2">
-      {tag ? <input type="hidden" name="tag" value={tag.id} /> : null}
-      <label className="sr-only" htmlFor="library-search">
-        {t("search.label")}
-      </label>
-      <input
-        id="library-search"
-        name="q"
-        type="search"
-        defaultValue={q}
-        maxLength={200}
-        placeholder={t("search.placeholder")}
-        className="border-border-strong bg-surface focus-visible:ring-ring h-9 min-w-0 flex-1 rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:outline-none"
-      />
-      <Button type="submit" variant="outline">
-        <Search />
-        {t("search.submit")}
-      </Button>
-    </form>
+    <EmptyState
+      icon={Tag}
+      title={title}
+      action={
+        <Button asChild variant="outline">
+          <Link href="/">{clearLabel}</Link>
+        </Button>
+      }
+    />
   );
 }
 
-/** The active tag filter, with a link that removes it (and keeps the search). */
-function TagFilter({ tag, q }: { tag: TagSummary; q: string }) {
+/** An active tag or project filter, with a link that removes just that filter. */
+function ActiveFilter({
+  icon: Icon,
+  text,
+  clearHref,
+  clearLabel,
+  testId,
+}: {
+  icon: typeof Tag;
+  text: string;
+  clearHref: string;
+  clearLabel: string;
+  testId: string;
+}) {
   return (
-    <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="tag-filter">
-      <Tag className="text-muted-foreground size-4" aria-hidden />
-      {t("tags.filtered", { name: tag.name })}
+    <p className="flex flex-wrap items-center gap-2 text-sm" data-testid={testId}>
+      <Icon className="text-muted-foreground size-4" aria-hidden />
+      {text}
       <Link
-        href={libraryHref({ q })}
+        href={clearHref}
         className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
       >
         <X className="size-3.5" aria-hidden />
-        {t("tags.clearFilter")}
+        {clearLabel}
       </Link>
     </p>
-  );
-}
-
-async function SearchView({
-  q,
-  offset,
-  tag,
-}: {
-  q: string;
-  offset: number;
-  tag: TagSummary | null;
-}) {
-  const actor = await requirePageActor();
-  const { items, nextOffset, terms } = await searchArtifacts(getDb(), actor, {
-    q,
-    offset,
-    tagId: tag?.id,
-  });
-  return (
-    <section aria-label={t("search.results", { q })} className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">{t("search.results", { q })}</h2>
-        <Link
-          href={libraryHref({ tag: tag?.id })}
-          className="text-muted-foreground hover:text-foreground text-sm"
-        >
-          {t("search.clear")}
-        </Link>
-      </div>
-      {terms.length === 0 ? (
-        <p className="text-muted-foreground text-sm">{t("search.invalid")}</p>
-      ) : items.length === 0 ? (
-        <p className="text-muted-foreground text-sm" data-testid="search-none">
-          {t("search.none", { q })}
-        </p>
-      ) : (
-        <SearchResults items={items} />
-      )}
-      {nextOffset !== null ? (
-        <div className="flex justify-center">
-          <Button asChild variant="outline">
-            <Link href={libraryHref({ q, tag: tag?.id, offset: nextOffset })}>
-              {t("library.loadMore")}
-            </Link>
-          </Button>
-        </div>
-      ) : null}
-    </section>
   );
 }
 
@@ -122,43 +96,156 @@ export default async function LibraryPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const actor = await requirePageActor();
+  const db = getDb();
   const params = await searchParams;
-  const cursor = firstParam(params.cursor);
-  const offset = firstParam(params.offset);
   const q = searchQueryParam(params.q);
+
+  // Another workspace's (or a deleted) tag or project is indistinguishable from a missing one.
   const tagParam = firstParam(params.tag);
-  // Another workspace's tag is indistinguishable from a missing one.
-  const tag = tagParam && isUuid(tagParam) ? await findTag(getDb(), actor, tagParam) : null;
+  const tag = tagParam && isUuid(tagParam) ? await findTag(db, actor, tagParam) : null;
   if (tagParam && !tag) {
-    return (
-      <EmptyState
-        icon={Tag}
-        title={t("tags.unknown")}
-        action={
-          <Button asChild variant="outline">
-            <Link href="/">{t("tags.clearFilter")}</Link>
-          </Button>
-        }
-      />
-    );
+    return <UnknownFilter title={t("tags.unknown")} clearLabel={t("tags.clearFilter")} />;
   }
+  const projectParam = firstParam(params.project);
+  const project =
+    projectParam && isUuid(projectParam) ? await findProject(db, actor, projectParam) : null;
+  if (projectParam && !project) {
+    return <UnknownFilter title={t("projects.unknown")} clearLabel={t("filters.clear")} />;
+  }
+
+  const filters: LibraryFilters = {
+    tagId: tag?.id,
+    projectId: project?.id,
+    kind: oneOf(firstParam(params.kind), CONTENT_KINDS),
+    sourceModel: modelParam(params.model),
+    from: dayParam(params.from),
+    to: dayParam(params.to),
+  };
+  const sort: LibrarySort | SearchSort | undefined = q
+    ? oneOf(firstParam(params.sort), SEARCH_SORTS)
+    : oneOf(firstParam(params.sort), LIBRARY_SORTS);
+  const state = {
+    q,
+    tag: filters.tagId,
+    project: filters.projectId,
+    kind: filters.kind,
+    model: filters.sourceModel,
+    from: filters.from,
+    to: filters.to,
+    sort,
+  };
+  // Filters set in the form (the tag comes from chips and has its own line).
+  const filtered = hasFilters({ ...filters, tagId: undefined }) || sort !== undefined;
+
+  const [projects, models] = await Promise.all([
+    listProjects(db, actor),
+    listSourceModels(db, actor),
+  ]);
+  const controls = (
+    <LibraryControls
+      values={state}
+      projects={projects
+        .filter((option) => option.status === "active" || option.id === project?.id)
+        .map((option) => ({ value: option.id, label: option.title }))}
+      kinds={CONTENT_KINDS.map((kind) => ({ value: kind, label: label("kind", kind) }))}
+      models={models}
+      sorts={(q ? SEARCH_SORTS : LIBRARY_SORTS).map((value) => ({
+        value,
+        label: t(`sort.${value}`),
+      }))}
+      filtered={filtered}
+      clearHref={libraryHref({ q, tag: state.tag })}
+    />
+  );
+  const activeFilters = (
+    <>
+      {tag ? (
+        <ActiveFilter
+          icon={Tag}
+          text={t("tags.filtered", { name: tag.name })}
+          clearHref={libraryHref({ ...state, tag: undefined })}
+          clearLabel={t("tags.clearFilter")}
+          testId="tag-filter"
+        />
+      ) : null}
+      {project ? (
+        <ActiveFilter
+          icon={FolderKanban}
+          text={t("projects.filtered", { title: project.title })}
+          clearHref={libraryHref({ ...state, project: undefined })}
+          clearLabel={t("projects.clearFilter")}
+          testId="project-filter"
+        />
+      ) : null}
+    </>
+  );
+
   if (q) {
+    const offset = Math.max(0, Number.parseInt(firstParam(params.offset) ?? "0", 10) || 0);
+    const { items, nextOffset, total, terms } = await searchArtifacts(db, actor, {
+      q,
+      offset,
+      filters,
+      sort: sort as SearchSort | undefined,
+    });
     return (
       <div className="flex flex-col gap-6">
         <header className="flex flex-col gap-4">
           <h1 className="text-2xl font-semibold tracking-tight">{t("library.title")}</h1>
-          <SearchForm q={q} tag={tag} />
-          {tag ? <TagFilter tag={tag} q={q} /> : null}
+          {controls}
+          {activeFilters}
         </header>
-        <SearchView q={q} tag={tag} offset={Math.max(0, Number.parseInt(offset ?? "0", 10) || 0)} />
+        <section aria-label={t("search.results", { q })} className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-semibold">
+              {t("search.results", { q })}
+              {total ? (
+                <span
+                  className="text-muted-foreground ml-2 text-sm font-normal"
+                  data-testid="search-total"
+                >
+                  {t("search.total", { count: total })}
+                </span>
+              ) : null}
+            </h2>
+            <Link
+              href={libraryHref({ ...state, q: undefined, sort: undefined })}
+              className="text-muted-foreground hover:text-foreground text-sm"
+            >
+              {t("search.clear")}
+            </Link>
+          </div>
+          {terms.length === 0 ? (
+            <p className="text-muted-foreground text-sm">{t("search.invalid")}</p>
+          ) : items.length === 0 ? (
+            <p className="text-muted-foreground text-sm" data-testid="search-none">
+              {t("search.none", { q })}
+            </p>
+          ) : (
+            <SearchResults items={items} />
+          )}
+          {nextOffset !== null ? (
+            <div className="flex justify-center">
+              <Button asChild variant="outline">
+                <Link href={libraryHref({ ...state, offset: nextOffset })}>
+                  {t("library.loadMore")}
+                </Link>
+              </Button>
+            </div>
+          ) : null}
+        </section>
       </div>
     );
   }
-  const { items, nextCursor } = await listArtifacts(getDb(), actor, {
+
+  const cursor = firstParam(params.cursor);
+  const { items, nextCursor } = await listArtifacts(db, actor, {
     limit: PAGE_SIZE,
     cursor: decodeCursorOrFirstPage(cursor),
-    tagId: tag?.id,
+    filters,
+    sort: sort as LibrarySort | undefined,
   });
+  const anyFilter = hasFilters(filters);
 
   return (
     <div className="flex flex-col gap-6">
@@ -173,13 +260,15 @@ export default async function LibraryPage({
             {t("library.import")}
           </Link>
         </Button>
-        <SearchForm q="" tag={tag} />
-        {tag ? <TagFilter tag={tag} q="" /> : null}
+        {controls}
+        {activeFilters}
       </header>
 
-      {items.length === 0 && !cursor && tag ? (
-        <p className="text-muted-foreground text-sm" data-testid="tag-empty">
-          {t("tags.noArtifacts")}
+      {items.length === 0 && !cursor && anyFilter ? (
+        <p className="text-muted-foreground text-sm" data-testid="filtered-empty">
+          {tag && !hasFilters({ ...filters, tagId: undefined })
+            ? t("tags.noArtifacts")
+            : t("filters.none")}
         </p>
       ) : items.length === 0 && !cursor ? (
         <EmptyState
@@ -221,7 +310,7 @@ export default async function LibraryPage({
       {nextCursor ? (
         <div className="flex justify-center">
           <Button asChild variant="outline">
-            <Link href={libraryHref({ tag: tag?.id, cursor: encodeCursor(nextCursor) })}>
+            <Link href={libraryHref({ ...state, cursor: encodeCursor(nextCursor) })}>
               {t("library.loadMore")}
             </Link>
           </Button>

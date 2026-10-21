@@ -434,6 +434,35 @@ conversations. Update it at the end of every PR.
     - `deleteTag` locks artifacts before the cascade; `setArtifactTag` re-checks the
       artifact after locking it; `lockArtifacts` is one statement.
 
+- **PR 14, P1B-PROJECTS and the filter bar** (`src/modules/projects`,
+  `src/modules/artifacts/{edit,filters}.ts`, API_CONTRACT §5–§7):
+  - Projects: list with artifact counts, create, rename, describe, archive or unarchive,
+    soft delete (artifacts keep their reference and show no project; a deleted project
+    filters to nothing). `/api/projects`, `/api/projects/:id`; `/projects` page; nav item.
+  - `PATCH /api/artifacts/:id {title?, description?, projectId?}`: workspace-scoped, the
+    artifact row locked, the project checked live and in the workspace, search metadata
+    re-indexed in the same transaction, audited by field name only. Detail page: an
+    "作品資訊" card shows the project (a link to the filtered library) and the description,
+    and lets editors change title, description and project.
+  - Filters, one builder for the library list and search: tag, project, kind, source model
+    (the current version's), import day range (Asia/Taipei days). Library sort newest or
+    oldest (keyset cursor in both directions); search sort relevance, newest or title, and
+    `total`. The library page has one GET form (search box plus a "篩選與排序" panel), so
+    every view works without client JavaScript and has a shareable URL.
+  - Independent review (Codex out of credits) found, and this PR fixes, each with a test that
+    fails without the fix: year-0000 dates and a NUL in `model` were 500s (now 400 from the
+    API, ignored by the page); project descriptions were not validated (titles and
+    descriptions now share `src/lib/text.ts`, which also refuses invisible or bidi-spoofed
+    titles and C0/C1 controls); the source-model filter trimmed while stored values keep
+    spaces (now exact); a deleted project's id still showed on artifacts (now null); the
+    editor re-sent an untouched description with CRLF line endings; project errors quoted
+    the artifact limits.
+  - Tests: `tests/integration/projects/projects.test.ts` (CRUD, scoping, soft delete, counts,
+    project assignment and filters, edit with re-index, every filter, both sorts with the
+    cursor, search filters, sort and total), `tests/integration/api/projects-api.test.ts`
+    (status codes, validation, unknown fields, viewer 403, other workspace 404); E2E creates
+    a project, assigns the artifact on its page, follows the project, and filters by kind.
+
 **Not done or not verified**
 
 - Search filters other than tag (project, collection, source model, kind, dates), sorting
@@ -497,23 +526,23 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 - P1A-ENC: built-in `age` encryption for exports.
 - Verify the S3 adapter against real R2. This needs the owner's credentials.
 
-**PR 14: P1B-ORG, projects and collections** (DATA_MODEL §4.4, API_CONTRACT §6). Follow
-the tags slice (PR 13) as the pattern:
+**PR 15: P1B-ORG, collections** (DATA_MODEL §4.4, API_CONTRACT §6). Follow the tags slice
+(PR 13) as the pattern:
 
 1. Schema: `collections` (hierarchy via `parent_id`, `kind` of category or collection,
    `unique(workspace_id, parent_id, name)` NULLS NOT DISTINCT, no cycles) and
    `collection_items` with workspace-scoped composite foreign keys like `artifact_tags`.
-   Research projects already exist (and are exported); add their API.
-2. APIs: CRUD for projects and collections; put an artifact in a project
-   (`PATCH /api/artifacts/:id {projectId}`) or collection. Workspace-scoped; out-of-scope
-   is 404.
-3. Search and library filters: project, collection, kind, source model, dates; sort
-   (relevance, newest, title); `total`. Project and collection names in metadata if useful.
-4. UI: project and collections on the detail page; a filter bar on the library;
-   collections page (replace the `FutureFeature` placeholder at `/collections`).
+   Lock order like tags: collection rows, then artifact rows by id, before writing items.
+2. APIs: CRUD for collections (tree), put an artifact in or out of a collection, reorder.
+   Workspace-scoped; out-of-scope is 404.
+3. Filter: `collection` in `src/modules/artifacts/filters.ts` (library and search share it);
+   add it to the filter bar.
+4. UI: collections on the detail page; a collections page replacing the `FutureFeature`
+   placeholder at `/collections`.
 5. Export format v3 with `collections.json` and `collection_items.json` (ADR-018); restore
-   reads v1–v3. Extend the round trip.
-6. Tests in the same shape as PR 13 (unit, integration, API, round trip, E2E step).
+   reads v1–v3 and de-duplicates links like tags. Extend the round trip.
+6. Tests in the same shape as PR 13 (unit, integration, API, round trip incl. older
+   versions, E2E step), and an independent review before merging while Codex is out.
 
 **Then Phase 1B:**
 

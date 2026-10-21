@@ -132,7 +132,10 @@ Append-only: the application never updates or deletes these rows.
 
 **research_projects** (P1A): `id`, `workspace_id`, `title`, `description?`,
 `status ∈ {active, archived} (active)`, `created_by?`, timestamps, `deleted_at?`.
-Index: `(workspace_id, title)`.
+Index: `(workspace_id, title)`. Managed since PR 14 (`src/modules/projects`): titles are 1–200
+characters, descriptions up to 2,000. Archived projects stay listed but leave the pickers.
+Deleting is soft: the project disappears from lists, pickers and filters, while artifacts
+keep `project_id` (nothing is lost; an undo stays possible) and show no project.
 
 **artifacts** (P1A)
 

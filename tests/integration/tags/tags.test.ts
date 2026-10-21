@@ -41,7 +41,9 @@ async function importHtml(actor: Actor, filename: string, title: string) {
 }
 
 const titles = async (actor: Actor, q: string, tagId?: string) =>
-  (await searchArtifacts(db, actor, { q, tagId })).items.map((item) => item.title).sort();
+  (await searchArtifacts(db, actor, { q, filters: { tagId } })).items
+    .map((item) => item.title)
+    .sort();
 
 const code = (error: unknown) => (error instanceof AppError ? error.code : String(error));
 
@@ -197,11 +199,13 @@ describe("tags (DATA_MODEL §4.4, API_CONTRACT §6)", () => {
     expect(await titles(owner, "標籤測試")).toEqual(["標籤測試乙", "標籤測試甲"]);
     expect(await titles(owner, "標籤測試", tag.id)).toEqual(["標籤測試乙"]);
 
-    const listed = await listArtifacts(db, owner, { limit: 50, tagId: tag.id });
+    const listed = await listArtifacts(db, owner, { limit: 50, filters: { tagId: tag.id } });
     expect(listed.items.map((item) => item.id)).toEqual([second]);
     expect(listed.items[0]!.tags.map((itemTag) => itemTag.name)).toContain("篩選");
     // Another workspace's tag id filters to nothing, never to someone else's artifacts.
-    expect((await listArtifacts(db, stranger, { limit: 50, tagId: tag.id })).items).toEqual([]);
+    expect(
+      (await listArtifacts(db, stranger, { limit: 50, filters: { tagId: tag.id } })).items,
+    ).toEqual([]);
     expect(await titles(stranger, "標籤測試", tag.id)).toEqual([]);
   });
 
