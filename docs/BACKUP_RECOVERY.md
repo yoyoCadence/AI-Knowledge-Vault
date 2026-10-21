@@ -157,8 +157,11 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    failure affects only that artifact, which is reported: projects → collections → tags →
    artifacts → versions → artifact_files → tags/collections links → notes → reading states.
    `current_version_id` is set after versions exist. Tag links are written with each newly
-   restored artifact, in its transaction. An artifact that already exists keeps its own
-   tags: a tag removed since the export stays removed (versions it lacks are still added).
+   restored artifact, in its transaction, de-duplicated (two archived tags can map to one
+   tag here: merged by name, or the same tag renamed since an older export). An artifact
+   that already exists keeps its own tags: a tag removed since the export stays removed
+   (versions it lacks are still added). The archive's links for such artifacts are counted
+   (`artifactTagsKept`) and named in a warning, so nothing is dropped silently.
 7. **Rebuild.** One `restore.reextract_version` job per restored version. It re-runs
    extraction and preview generation from the restored original, then indexing (Phase 1B).
    The archived `normalized/*.md` is used as a fallback extraction if re-extraction fails.

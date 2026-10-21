@@ -106,6 +106,11 @@ export interface RestoreReport {
     tags: Tally;
     /** Tag links written for newly restored artifacts. */
     artifactTags: number;
+    /**
+     * Archived tag links of artifacts that already existed and kept their current tags (a tag
+     * removed since the export stays removed; one added to the archive's copy is not added).
+     */
+    artifactTagsKept: number;
   };
   /** Old → new ids for everything restored under a new id (capped). */
   idMap: Record<string, string>;
@@ -435,6 +440,7 @@ export async function restoreArchive(
         fileAssets: { stored: 0, reused: 0, repaired: 0 },
         tags: tally(),
         artifactTags: 0,
+        artifactTagsKept: 0,
       },
       idMap: {},
       failures: [],
@@ -646,22 +652,34 @@ export async function restoreArchive(
       if (placed.existing) {
         tagIdMap.set(tag.id, placed.id);
         remember(tag.id, placed.id);
-        report.counts.tags.skipped += 1;
+        report.counts.tags[placed.resumed ? "copied" : "skipped"] += 1;
         continue;
       }
-      const [inserted] = await db
-        .insert(tags)
-        .values({
-          id: placed.id,
-          workspaceId,
-          name,
-          normalizedName,
-          createdAt: new Date(tag.createdAt),
-          updatedAt: new Date(tag.updatedAt),
-        })
-        .onConflictDoNothing({ target: [tags.workspaceId, tags.normalizedName] })
-        .returning({ id: tags.id });
-      const finalId = inserted?.id ?? (await byName())!.id;
+      let finalId: string | undefined;
+      let inserted = false;
+      // The same-name tag can be renamed or deleted between the insert and the lookup: try
+      // again a few times, then fail clearly rather than guess.
+      for (let attempt = 0; attempt < 3 && !finalId; attempt += 1) {
+        const [row] = await db
+          .insert(tags)
+          .values({
+            id: placed.id,
+            workspaceId,
+            name,
+            normalizedName,
+            createdAt: new Date(tag.createdAt),
+            updatedAt: new Date(tag.updatedAt),
+          })
+          .onConflictDoNothing({ target: [tags.workspaceId, tags.normalizedName] })
+          .returning({ id: tags.id });
+        inserted = row !== undefined;
+        finalId = row?.id ?? (await byName())?.id;
+      }
+      if (!finalId) {
+        throw new AppError("CONFLICT", `tag ${tag.id} changed while it was being restored`, {
+          retryable: true,
+        });
+      }
       tagIdMap.set(tag.id, finalId);
       remember(tag.id, finalId);
       report.counts.tags[inserted ? (placed.remapped ? "copied" : "restored") : "skipped"] += 1;
@@ -809,6 +827,8 @@ export async function restoreArchive(
       }
 
       if (placed.existing) {
+        const keptLinks = tagLinksByArtifact.get(artifact.id)?.length ?? 0;
+        if (keptLinks > 0 && !placed.resumed) report.counts.artifactTagsKept += keptLinks;
         // skip_existing keeps the artifact as it is, but versions it lacks (e.g. newer ones in
         // the archive than in a database restored to an earlier point) are added to it. A copy
         // resumed from an earlier attempt of this run counts as copied, as it was then.
@@ -910,20 +930,25 @@ export async function restoreArchive(
               .set({ currentVersionId: versionIdMap.get(artifact.currentVersionId)! })
               .where(eq(artifacts.id, placed.id));
           }
-          // Tags come back with the artifact, in its transaction. An artifact that already
-          // exists keeps its own tags: a tag removed since the export stays removed.
-          const tagLinks = tagLinksByArtifact.get(artifact.id) ?? [];
-          if (tagLinks.length > 0) {
-            await tx.insert(artifactTags).values(
-              tagLinks.map((link) => ({
-                workspaceId,
-                artifactId: placed.id,
-                tagId: tagIdMap.get(link.tagId)!,
-                createdAt: new Date(link.createdAt),
-              })),
-            );
+          // Tags come back with the artifact, in its transaction. Two archived tags can map
+          // to one tag here (merged by name, or the same tag renamed since an older export),
+          // so the links are de-duplicated. An artifact that already exists keeps its own
+          // tags (reported below).
+          const linkRows = new Map<string, { tagId: string; createdAt: Date }>();
+          for (const link of tagLinksByArtifact.get(artifact.id) ?? []) {
+            const tagId = tagIdMap.get(link.tagId)!;
+            if (!linkRows.has(tagId))
+              linkRows.set(tagId, { tagId, createdAt: new Date(link.createdAt) });
           }
-          return tagLinks.length;
+          if (linkRows.size === 0) return 0;
+          const written = await tx
+            .insert(artifactTags)
+            .values(
+              [...linkRows.values()].map((row) => ({ workspaceId, artifactId: placed.id, ...row })),
+            )
+            .onConflictDoNothing()
+            .returning({ tagId: artifactTags.tagId });
+          return written.length;
         });
         report.reextractJobs += versions.length;
         report.counts.artifactTags += linkedTags;
@@ -938,6 +963,11 @@ export async function restoreArchive(
     }
 
     signal?.throwIfAborted();
+    if (report.counts.artifactTagsKept > 0) {
+      report.warnings.push(
+        `${report.counts.artifactTagsKept} tag link(s) belong to artifacts that already existed; those artifacts kept their current tags`,
+      );
+    }
     report.durationMs = Date.now() - startedAt;
     return report;
   } finally {

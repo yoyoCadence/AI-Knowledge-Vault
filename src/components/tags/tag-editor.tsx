@@ -108,7 +108,7 @@ export function TagEditor({
             value={name}
             onChange={(event) => setName(event.target.value)}
             list="tag-suggestions"
-            maxLength={50}
+            maxLength={100}
             placeholder={t("tags.placeholder")}
             className="border-border-strong bg-surface focus-visible:ring-ring h-8 min-w-0 flex-1 rounded-md border px-2 text-sm focus-visible:ring-2 focus-visible:outline-none"
           />

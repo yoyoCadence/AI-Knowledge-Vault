@@ -217,6 +217,33 @@ describe("tags (DATA_MODEL §4.4, API_CONTRACT §6)", () => {
     expect(JSON.stringify(events)).not.toContain("稽核用的名字");
   });
 
+  it("never deadlocks when tag writes touch the same artifacts at once", async () => {
+    // A link's foreign key takes a key-share lock on the artifact before the metadata
+    // re-index locks it for update: two such writes at once used to deadlock (40P01).
+    const tagged = async (name: string) => (await ensureTag(db, owner, name, meta)).tag;
+    for (let round = 0; round < 8; round += 1) {
+      const [x, y] = [await tagged(`並行甲${round}`), await tagged(`並行乙${round}`)];
+      const results = await Promise.allSettled([
+        setArtifactTag(db, owner, { artifactId: first, tagId: x.id, present: true }, meta),
+        setArtifactTag(db, owner, { artifactId: first, tagId: y.id, present: true }, meta),
+      ]);
+      expect(results.filter((result) => result.status === "rejected")).toEqual([]);
+    }
+    for (let round = 0; round < 4; round += 1) {
+      const [a, b, c, d] = await Promise.all(
+        ["合併A", "合併B", "合併C", "合併D"].map((name) => tagged(`${name}${round}`)),
+      );
+      for (const artifactId of [first, second])
+        for (const source of [a!, c!])
+          await setArtifactTag(db, owner, { artifactId, tagId: source.id, present: true }, meta);
+      const results = await Promise.allSettled([
+        mergeTag(db, owner, a!.id, b!.id, meta),
+        mergeTag(db, owner, c!.id, d!.id, meta),
+      ]);
+      expect(results.filter((result) => result.status === "rejected")).toEqual([]);
+    }
+  });
+
   it("refuses invalid names", async () => {
     for (const bad of ["", "   ", "x".repeat(51)]) {
       await expect(ensureTag(db, owner, bad, meta), bad).rejects.toSatisfy(

@@ -29,15 +29,27 @@ export interface TagWithCount extends TagSummary {
 }
 
 /** Characters that render as nothing; dropped so they can't make two names look alike. */
-const INVISIBLE = /[​⁠﻿]/gu;
+const INVISIBLE = /[\u200b\u2060\ufeff]/gu;
+/** Bidirectional controls: they can make a name display as something else (e.g. an RLO turning `abc\u202eexe.gpj` into `abcjpg.exe`). */
+const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+/** Hangul fillers are letters (Lo) that render blank. */
+const FILLERS = /[\u115f\u1160\u3164\uffa0]/gu;
+/** A name must have at least one character that shows: a letter, digit, punctuation or symbol. */
+const VISIBLE = /[\p{L}\p{N}\p{P}\p{S}]/u;
 
 /**
  * The display name (NFC, single spaces, trimmed) and the identity of a tag name: NFKC,
- * lower-case, collapsed whitespace. `ＡＩ` and `ai` are one tag.
+ * lower-case, collapsed whitespace. `ＡＩ` and `ai` are one tag. Names that would render as
+ * nothing, or could display as something else, are refused.
  */
 export function normalizeTagName(input: string): { name: string; normalizedName: string } {
   const name = input.normalize("NFC").replace(INVISIBLE, "").replace(/\s+/gu, " ").trim();
-  if (!name || /[\p{Cc}\p{Cs}]/u.test(name)) {
+  if (
+    !name ||
+    /[\p{Cc}\p{Cs}]/u.test(name) ||
+    BIDI_CONTROLS.test(name) ||
+    !VISIBLE.test(name.replace(FILLERS, ""))
+  ) {
     throw new AppError("VALIDATION_FAILED", "Tag names must be visible text");
   }
   if (Array.from(name).length > TAG_NAME_MAX_LENGTH) {
@@ -116,9 +128,18 @@ async function taggedArtifactIds(tx: DbExecutor, tagId: string): Promise<string[
 }
 
 /**
- * Rebuilds the metadata documents of the given artifacts. Sorted, so two transactions that
- * touch overlapping sets lock the artifact rows in the same order and cannot deadlock.
+ * Locks artifact rows for update, sorted by id. Every tag operation locks the artifacts it
+ * touches *before* writing `artifact_tags`: a link's foreign key takes a key-share lock on the
+ * artifact, and two transactions that each held one while waiting to lock the artifact for its
+ * metadata document would deadlock. Lock order everywhere: tag rows, then artifact rows.
  */
+async function lockArtifacts(tx: DbExecutor, artifactIds: Iterable<string>) {
+  for (const id of [...new Set(artifactIds)].sort()) {
+    await tx.select({ id: artifacts.id }).from(artifacts).where(eq(artifacts.id, id)).for("update");
+  }
+}
+
+/** Rebuilds the metadata documents of the given artifacts, in the same sorted order. */
 async function reindex(tx: DbExecutor, artifactIds: Iterable<string>) {
   for (const id of [...new Set(artifactIds)].sort()) await indexArtifactMetadata(tx, id);
 }
@@ -134,28 +155,38 @@ export async function ensureTag(
   meta: RequestMeta,
 ): Promise<{ tag: TagSummary; created: boolean }> {
   const { name, normalizedName } = normalizeTagName(rawName);
-  return db.transaction(async (tx) => {
-    const [inserted] = await tx
-      .insert(tags)
-      .values({ workspaceId: actor.workspaceId, name, normalizedName })
-      .onConflictDoNothing({ target: [tags.workspaceId, tags.normalizedName] })
-      .returning({ id: tags.id, name: tags.name });
-    if (inserted) {
-      await recordAudit(tx, {
-        action: "tag.created",
-        workspaceId: actor.workspaceId,
-        actorUserId: actor.userId,
-        targetType: "tag",
-        targetId: inserted.id,
-        ...meta,
-      });
-      return { tag: inserted, created: true };
-    }
-    const [existing] = await tx
-      .select({ id: tags.id, name: tags.name })
-      .from(tags)
-      .where(and(eq(tags.workspaceId, actor.workspaceId), eq(tags.normalizedName, normalizedName)));
-    return { tag: existing!, created: false };
+  // The conflicting tag can be renamed or deleted between the insert and the select (each
+  // statement sees its own snapshot), so try again a few times rather than return nothing.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(tags)
+        .values({ workspaceId: actor.workspaceId, name, normalizedName })
+        .onConflictDoNothing({ target: [tags.workspaceId, tags.normalizedName] })
+        .returning({ id: tags.id, name: tags.name });
+      if (inserted) {
+        await recordAudit(tx, {
+          action: "tag.created",
+          workspaceId: actor.workspaceId,
+          actorUserId: actor.userId,
+          targetType: "tag",
+          targetId: inserted.id,
+          ...meta,
+        });
+        return { tag: inserted, created: true };
+      }
+      const [existing] = await tx
+        .select({ id: tags.id, name: tags.name })
+        .from(tags)
+        .where(
+          and(eq(tags.workspaceId, actor.workspaceId), eq(tags.normalizedName, normalizedName)),
+        );
+      return existing ? { tag: existing, created: false } : null;
+    });
+    if (result) return result;
+  }
+  throw new AppError("CONFLICT", "The tag changed while it was being saved; try again", {
+    retryable: true,
   });
 }
 
@@ -239,6 +270,7 @@ export async function mergeTag(
     for (const id of [sourceId, intoId].sort()) locked.set(id, await lockTag(tx, actor, id));
     const into = locked.get(intoId)!;
     const affected = await taggedArtifactIds(tx, sourceId);
+    await lockArtifacts(tx, affected);
     if (affected.length > 0) {
       await tx
         .insert(artifactTags)
@@ -304,6 +336,7 @@ export async function setArtifactTag(
       .where(and(eq(tags.id, input.tagId), eq(tags.workspaceId, actor.workspaceId)))
       .for("share");
     if (!tag) throw notFound("Tag");
+    await lockArtifacts(tx, [artifact.id]);
     const changed = input.present
       ? await tx
           .insert(artifactTags)

@@ -438,6 +438,11 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(report.counts.fileAssets).toEqual({ stored: 0, reused: 6, repaired: 0 });
     expect(report.counts.tags).toMatchObject({ restored: 0, skipped: 3, copied: 0 });
     expect(report.counts.artifactTags).toBe(0);
+    // The existing artifacts kept their tags; the report says the archive's links were not used.
+    expect(report.counts.artifactTagsKept).toBe(3);
+    expect(report.warnings.join("\n")).toMatch(
+      /3 tag link\(s\) belong to artifacts that already existed/,
+    );
     expect(await workspaceRowCounts(target.workspaceId)).toEqual(counts);
     const again = await snapshot(target.workspaceId);
     expect(again.tags).toEqual(before.tags);

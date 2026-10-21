@@ -407,6 +407,19 @@ conversations. Update it at the end of every PR.
     artifact, follows the tag, searches by it, checks `/tags`, and sees the tag merged on
     restore. Re-indexing, merge conflict handling, the search filter, tag metadata and
     restore links/merging were mutation-checked.
+  - Independent review (Codex was out of credits) found, and this PR fixes, each with a
+    test that fails without the fix:
+    - Tag writes deadlocked on a shared artifact: a link's foreign key takes a key-share
+      lock before the metadata re-index locks the artifact for update. Tag operations now
+      lock their artifacts first (order: tags, then artifacts by id); concurrency test.
+    - Restore failed for good when two archived tags mapped to one target tag (duplicate
+      link): links are de-duplicated and inserted with `on conflict do nothing`.
+    - Restore dropped archived links of existing artifacts without a word: now counted and
+      warned about. Resumed copy-mode tags count as `copied`, like artifacts.
+    - Tag names that render as nothing (ZWJ, soft hyphen, Hangul filler) or contain
+      bidirectional controls are refused.
+    - `ensureTag` and the restore's tag lookup retry instead of failing on a row renamed or
+      deleted between the insert and the select (not reproducible in tests; defensive).
 
 **Not done or not verified**
 

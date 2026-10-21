@@ -316,7 +316,10 @@ instead of guessing from the text (SEARCH_DESIGN §6).
 
 **tags** (built, PR 13): `id`, `workspace_id`, `name` (display form: NFC, single spaces,
 1–50 characters, CHECK), `normalized_name` (NFKC, trimmed, lower-case, collapsed whitespace,
-zero-width characters removed), `created_at`, `updated_at`.
+zero-width characters removed), `created_at`, `updated_at`. A name needs at least one
+visible character (letter, digit, punctuation or symbol; Hangul fillers do not count) and
+may not contain bidirectional controls, so a tag can neither look empty nor display as
+something else.
 `unique(workspace_id, normalized_name)`, `unique(workspace_id, id)`. (`color` is left out
 until a UI uses it.)
 

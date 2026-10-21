@@ -108,7 +108,7 @@ function TagItem({ tag, others, canEdit }: { tag: TagRow; others: TagRow[]; canE
               <input
                 id={`rename-${tag.id}`}
                 value={mode.name}
-                maxLength={50}
+                maxLength={100}
                 onChange={(event) => setMode({ kind: "rename", name: event.target.value })}
                 className="border-border-strong bg-surface focus-visible:ring-ring h-8 min-w-0 flex-1 rounded-md border px-2 text-sm focus-visible:ring-2 focus-visible:outline-none"
               />
