@@ -1,14 +1,16 @@
 # Active Plan
 
-_Last updated: 2026-10-20 by the implementing agent._
+_Last updated: 2026-10-21 by the implementing agent._
 
 ## Current focus
 
-**PR 14 (this branch): P1B-PROJECTS and the filter bar.** Research projects (API, `/projects`
-page, soft delete), editing an artifact's title, description and project, and the library
-and search filter bar (project, kind, source model, import days, sort, search total).
+**PR 15 (this branch): P1B-ORG, collections.** A tree of categories and collections
+(`/collections` page, detail-page card, API), the collection filter with subcollections in
+the library and search, imports into a collection, and export format v3 with restore of
+v1–v3.
 
-**Next: P1B-ORG (PR 15): collections.** The exact steps are in `docs/HANDOFF.md` §4.
+**Next: P1B-NOTES (PR 16): notes and reading state.** The exact steps are in
+`docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.
@@ -52,8 +54,8 @@ findings handled. If the review bot is unavailable, run an independent review fi
    - ✅ preview origin (PR 10)
    - ✅ reading mode (PR 11)
    - 🚧 search (PR 12: keyword search; filters with organization)
-   - organization
-   - search
+   - ✅ organization: tags (PR 13), projects and filters (PR 14), collections (PR 15)
+   - notes and reading state
    - sharing
    - ops dashboard
    - E2E

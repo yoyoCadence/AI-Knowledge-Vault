@@ -4,7 +4,7 @@ import { t } from "@/lib/i18n";
 export async function jsonRequest<T>(
   url: string,
   init: { method: string; body?: unknown },
-  messages: { invalid?: string } = {},
+  messages: { invalid?: string; conflict?: string } = {},
 ) {
   const response = await fetch(url, {
     method: init.method,
@@ -19,10 +19,12 @@ export async function jsonRequest<T>(
   throw new Error(
     code === "VALIDATION_FAILED"
       ? (messages.invalid ?? t("edit.error.invalid"))
-      : code === "NOT_FOUND"
-        ? t("edit.error.gone")
-        : code === "FORBIDDEN"
-          ? t("edit.error.forbidden")
-          : t("edit.error.generic"),
+      : code === "CONFLICT" && messages.conflict
+        ? messages.conflict
+        : code === "NOT_FOUND"
+          ? t("edit.error.gone")
+          : code === "FORBIDDEN"
+            ? t("edit.error.forbidden")
+            : t("edit.error.generic"),
   );
 }

@@ -18,14 +18,14 @@ verified.** `tests/integration/backup-roundtrip.test.ts` proves this on every CI
 | Users, password hashes, sessions, auth accounts | **never**                                             | —               | the admin is re-created with `admin:create` |
 | Audit logs                                      | optional (`--include-audit`)                          | P2              | no, but not needed for restore              |
 
-## 2. Portable export format (current: v2)
+## 2. Portable export format (current: v3)
 
 File name: `knowledge-vault-export-{workspaceSlug}-{YYYYMMDDTHHmmssZ}.zip`
 
 ```
 README.txt                     # human-readable explanation of this format (no app needed)
 manifest.json                  # format, versions, counts, created_at, source app version, encryption: "none"
-schema-version.json            # {"format":"ai-knowledge-vault-export","formatVersion":2,"dbMigration":"0007_…"}
+schema-version.json            # {"format":"ai-knowledge-vault-export","formatVersion":3,"dbMigration":"0008_…"}
 metadata/
   workspace.json               # {id, name, slug}
   research_projects.json
@@ -35,8 +35,8 @@ metadata/
   artifact_files.json
   tags.json                    # v2+: [{id, name, createdAt, updatedAt}]
   artifact_tags.json           # v2+: [{artifactId, tagId, createdAt}]
-  collections.json             # planned (a later format version)
-  collection_items.json
+  collections.json             # v3+: [{id, parentId, kind, name, description, sortOrder, createdAt, updatedAt}]
+  collection_items.json        # v3+: [{collectionId, artifactId, position, addedAt}]
   artifact_notes.json
   artifact_reading_states.json # user ids replaced by "owner"
   share_links.json             # without token_hash
@@ -53,13 +53,14 @@ Properties:
    SHA-256.
 3. **Versioned.** `formatVersion` (integer) plus the DB migration tag. Every format change
    that adds data bumps the version (ADR-018): v1 = the original layout; v2 adds
-   `tags.json` and `artifact_tags.json`. Exports are always written in the latest version.
+   `tags.json` and `artifact_tags.json`; v3 adds `collections.json` and
+   `collection_items.json`. Exports are always written in the latest version.
 4. **Integrity.** `checksums.sha256` covers every entry except itself and `manifest.json`.
    `manifest.json` carries the SHA-256 of `checksums.sha256`, so the manifest is the root of
    trust and the two files together cover the whole archive. (Listing the manifest in the
    checksums would be circular.)
-5. **Migratable.** Restore reads every supported `formatVersion` (today v1 and v2; a v1
-   archive simply has no tags). An app that does not know a version refuses the archive
+5. **Migratable.** Restore reads every supported `formatVersion` (today v1–v3; a v1
+   archive simply has no tags, a v2 archive no collections). An app that does not know a version refuses the archive
    with `UNSUPPORTED_EXPORT_FORMAT` instead of silently dropping data it cannot read.
 6. **Re-importable.** Import & Backup → 從備份還原 (`POST /api/restores`), or `pnpm backup:restore <file>`.
 7. **No secrets.** See §1.
@@ -122,8 +123,9 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    Each original's path hash must also equal its content hash.
 3. **Parse metadata.** Zod-validate every JSON file against the schema of the archive's
    format version, and cross-check it: every reference resolves inside the archive, primary
-   ids are unique, and (v2) tag names are valid and distinct as the app compares them
-   (NFKC, case, spacing). Problems abort before anything is written.
+   ids are unique, (v2) tag names are valid and distinct as the app compares them
+   (NFKC, case, spacing), and (v3) collections form a tree (no cycle, at most 7 levels) whose
+   names are valid and distinct among siblings. Problems abort before anything is written.
 4. **Originals.** For each file asset:
    - If `(target_workspace, sha256)` already exists, reuse it.
    - Otherwise, put the bytes to `ws/{ws}/originals/{sha256}` and insert `file_assets`
@@ -153,6 +155,16 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    is inserted. The unique name constraint makes this hold under retries and concurrent
    restores too, so a restore never creates two tags that look the same.
 
+   **Collections are merged by place and name, in both modes**, parents first. The same
+   collection (same id, already ours, perhaps renamed or moved since the export) maps to
+   itself; otherwise a collection is inserted under its restored parent, and a sibling there
+   with the same name maps to that one instead (`skipped`). Each insert takes the workspace's
+   tree lock and re-checks its parent and the depth limit, like creating a collection in the
+   app. A collection that cannot be placed (its parent was deleted or renamed meanwhile, or
+   merging into a tree whose collections moved since the export would nest it deeper than 7
+   levels) is not restored, nor anything below it: counted as `failed` and named in a warning,
+   while the rest of the restore goes on.
+
 6. **Rows** are inserted in dependency order inside one transaction per artifact, so a
    failure affects only that artifact, which is reported: projects → collections → tags →
    artifacts → versions → artifact_files → tags/collections links → notes → reading states.
@@ -165,13 +177,18 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
    links, the target tags are locked `FOR KEY SHARE` in id order, as every tag operation
    locks them, so a restore cannot deadlock with a tag merge; a tag deleted or merged while
    the restore ran is gone, and its link is dropped and counted (`artifactTagsDropped`)
-   instead of failing the artifact.
+   instead of failing the artifact. Collection items follow the same rules: written with each
+   new artifact (target collections locked `FOR KEY SHARE` in id order, before its tags),
+   left alone on an artifact that already exists (`collectionItemsKept`), and dropped and
+   counted when their collection was not restored or was deleted meanwhile
+   (`collectionItemsDropped`).
 7. **Rebuild.** One `restore.reextract_version` job per restored version. It re-runs
    extraction and preview generation from the restored original, then indexing (Phase 1B).
    The archived `normalized/*.md` is used as a fallback extraction if re-extraction fails.
 8. **Report:**
-   - counts per entity (`restored`, `skipped`, `copied`, `failed`; for tags `skipped` means
-     merged into an existing tag) and the number of tag links written
+   - counts per entity (`restored`, `skipped`, `copied`, `failed`; for tags and collections
+     `skipped` means merged into an existing one) and the number of tag links and collection
+     items written
    - ID-mapping entries (for copies)
    - checksum results
    - warnings

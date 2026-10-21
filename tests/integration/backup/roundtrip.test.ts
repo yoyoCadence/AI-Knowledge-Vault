@@ -13,6 +13,8 @@ import {
   artifactFiles,
   artifacts,
   artifactVersions,
+  collectionItems,
+  collections,
   derivedAssets,
   documentSections,
   extractedDocuments,
@@ -34,6 +36,7 @@ import {
 } from "@/modules/backup";
 import { formatChecksums } from "@/modules/backup/format";
 import type { Actor } from "@/modules/auth";
+import { createCollection, setCollectionItem } from "@/modules/collections";
 import { SEARCH_INDEX_JOB_TYPE, searchArtifacts, TOKENIZER_VERSION } from "@/modules/search";
 import { ensureTag, setArtifactTag } from "@/modules/tags";
 import { SafeZip } from "@/modules/extraction";
@@ -105,7 +108,30 @@ async function snapshot(workspaceId: string) {
     .from(artifactTags)
     .where(eq(artifactTags.workspaceId, workspaceId))
     .orderBy(asc(artifactTags.artifactId), asc(artifactTags.tagId));
+  const collectionRows = await db
+    .select()
+    .from(collections)
+    .where(eq(collections.workspaceId, workspaceId))
+    .orderBy(asc(collections.id));
+  const itemRows = await db
+    .select()
+    .from(collectionItems)
+    .where(eq(collectionItems.workspaceId, workspaceId))
+    .orderBy(asc(collectionItems.collectionId), asc(collectionItems.artifactId));
   return {
+    collections: collectionRows.map((row) => ({
+      id: row.id,
+      parentId: row.parentId,
+      kind: row.kind,
+      name: row.name,
+      normalizedName: row.normalizedName,
+      description: row.description,
+    })),
+    collectionItems: itemRows.map((row) => ({
+      collectionId: row.collectionId,
+      artifactId: row.artifactId,
+      position: row.position,
+    })),
     tags: tagRows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -246,7 +272,30 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
       await setArtifactTag(db, source, { artifactId, tagId, present: true }, meta);
     }
 
+    // Collections (format v3): a category with a subcollection, and an empty one.
+    const cityCategory = await createCollection(
+      db,
+      source,
+      { name: "城市", kind: "category", description: "城市研究" },
+      meta,
+    );
+    const heat = await createCollection(
+      db,
+      source,
+      { name: "熱島", parentId: cityCategory.id },
+      meta,
+    );
+    await createCollection(db, source, { name: "待讀" }, meta);
+    for (const [collectionId, artifactId] of [
+      [heat.id, seeded[0]!.id],
+      [cityCategory.id, seeded[2]!.id],
+    ] as const) {
+      await setCollectionItem(db, source, { collectionId, artifactId, present: true }, meta);
+    }
+
     before = await snapshot(source.workspaceId);
+    expect(before.collections).toHaveLength(3);
+    expect(before.collectionItems).toHaveLength(2);
     expect(before.tags).toHaveLength(3);
     expect(before.artifactTags).toHaveLength(3);
     expect(before.artifacts).toHaveLength(5);
@@ -265,8 +314,10 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     archive = path.join(dir, "export.zip");
     const { manifest, filename } = await exportTo(source.workspaceId, archive);
     expect(filename).toMatch(/^knowledge-vault-export-.+-\d{8}T\d{6}Z\.zip$/);
-    expect(manifest.formatVersion).toBe(2);
+    expect(manifest.formatVersion).toBe(3);
     expect(manifest.counts).toMatchObject({
+      collections: 3,
+      collectionItems: 2,
       artifacts: 5,
       artifactVersions: 6,
       fileAssets: 6,
@@ -326,8 +377,12 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(report.reextractJobs).toBe(6);
     expect(report.counts.tags).toMatchObject({ restored: 3, skipped: 0, copied: 0 });
     expect(report.counts.artifactTags).toBe(3);
+    expect(report.counts.collections).toEqual({ restored: 3, skipped: 0, copied: 0, failed: 0 });
+    expect(report.counts.collectionItems).toBe(2);
 
     const after = await snapshot(target.workspaceId);
+    expect(after.collections).toEqual(before.collections);
+    expect(after.collectionItems).toEqual(before.collectionItems);
     expect(after.artifacts).toEqual(before.artifacts);
     expect(after.versions).toEqual(before.versions);
     expect(after.assets).toEqual(before.assets);
@@ -438,9 +493,12 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(report.counts.fileAssets).toEqual({ stored: 0, reused: 6, repaired: 0 });
     expect(report.counts.tags).toMatchObject({ restored: 0, skipped: 3, copied: 0 });
     expect(report.counts.artifactTags).toBe(0);
+    expect(report.counts.collections).toEqual({ restored: 0, skipped: 3, copied: 0, failed: 0 });
+    expect(report.counts.collectionItems).toBe(0);
     // Nothing differs, so nothing is reported as kept.
     expect(report.counts.artifactTagsKept).toBe(0);
-    expect(report.warnings.join("\n")).not.toMatch(/tag link/);
+    expect(report.counts.collectionItemsKept).toBe(0);
+    expect(report.warnings.join("\n")).not.toMatch(/tag link|collection/);
     expect(await workspaceRowCounts(target.workspaceId)).toEqual(counts);
     const again = await snapshot(target.workspaceId);
     expect(again.tags).toEqual(before.tags);
@@ -473,6 +531,34 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
       { artifactId: removed.artifactId, tagId: removed.tagId, present: true },
       meta,
     );
+
+    // Likewise an artifact taken out of a collection since the export stays out.
+    const item = before.collectionItems[0]!;
+    await setCollectionItem(
+      db,
+      target,
+      { collectionId: item.collectionId, artifactId: item.artifactId, present: false },
+      meta,
+    );
+    const third = await restoreArchive(db, restored, {
+      archivePath: archive,
+      workspaceId: target.workspaceId,
+      userId: target.userId,
+      mode: "skip_existing",
+      restoreId: crypto.randomUUID(),
+      limits: restoreLimitsFromEnv(getEnv()),
+    });
+    expect(third.counts.collectionItemsKept).toBe(1);
+    expect(third.warnings.join("\n")).toMatch(
+      /1 collection item\(s\) from the archive were not added to artifacts that already existed/,
+    );
+    expect((await snapshot(target.workspaceId)).collectionItems).toHaveLength(1);
+    await setCollectionItem(
+      db,
+      target,
+      { collectionId: item.collectionId, artifactId: item.artifactId, present: true },
+      meta,
+    );
   });
 
   it("copy mode creates new ids for the same content and reuses the stored originals", async () => {
@@ -491,9 +577,14 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     // Tags are merged by name: the copies carry the existing tags, none is duplicated.
     expect(report.counts.tags).toMatchObject({ restored: 0, skipped: 3, copied: 0 });
     expect(report.counts.artifactTags).toBe(3);
+    // Collections too are merged by place and name; the copies join them.
+    expect(report.counts.collections).toEqual({ restored: 0, skipped: 3, copied: 0, failed: 0 });
+    expect(report.counts.collectionItems).toBe(2);
     const afterCopy = await snapshot(target.workspaceId);
     expect(afterCopy.tags).toEqual(before.tags);
     expect(afterCopy.artifactTags).toHaveLength(6);
+    expect(afterCopy.collections).toEqual(before.collections);
+    expect(afterCopy.collectionItems).toHaveLength(4);
     const now = await workspaceRowCounts(target.workspaceId);
     expect(now).toEqual({
       artifacts: counts.artifacts + 5,
@@ -666,10 +757,54 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
     expect(configs).toEqual([{ isolationLevel: "repeatable read", accessMode: "read only" }]);
   });
 
+  it("still restores a format v2 archive (no collections)", async () => {
+    const v2 = path.join(dir, "format-v2.zip");
+    await rewriteArchive(archive, v2, (entries) => {
+      for (const name of [PATHS.collections, PATHS.collectionItems]) {
+        entries.splice(
+          entries.findIndex((entry) => entry.name === name),
+          1,
+        );
+      }
+      for (const name of [PATHS.manifest, PATHS.schemaVersion]) {
+        const entry = entries.find((candidate) => candidate.name === name)!;
+        const json = JSON.parse(Buffer.from(entry.data as Buffer).toString("utf8")) as {
+          formatVersion: number;
+          counts?: Record<string, number>;
+        };
+        json.formatVersion = 2;
+        delete json.counts?.collections;
+        delete json.counts?.collectionItems;
+        entry.data = Buffer.from(JSON.stringify(json));
+      }
+      reseal(entries);
+    });
+    const fresh = await createTestActor();
+    const report = await restoreArchive(db, freshStorage("format-v2"), {
+      archivePath: v2,
+      workspaceId: fresh.workspaceId,
+      userId: fresh.userId,
+      mode: "copy",
+      restoreId: crypto.randomUUID(),
+      limits: restoreLimitsFromEnv(getEnv()),
+    });
+    expect(report.source.formatVersion).toBe(2);
+    expect(report.failures).toEqual([]);
+    expect(report.counts.artifacts.copied).toBe(5);
+    expect(report.counts.tags.copied).toBe(3);
+    expect(report.counts.collections).toEqual({ restored: 0, skipped: 0, copied: 0, failed: 0 });
+    expect((await snapshot(fresh.workspaceId)).collections).toEqual([]);
+  });
+
   it("still restores a format v1 archive (no tags)", async () => {
     const v1 = path.join(dir, "format-v1.zip");
     await rewriteArchive(archive, v1, (entries) => {
-      for (const name of [PATHS.tags, PATHS.artifactTags]) {
+      for (const name of [
+        PATHS.tags,
+        PATHS.artifactTags,
+        PATHS.collections,
+        PATHS.collectionItems,
+      ]) {
         entries.splice(
           entries.findIndex((entry) => entry.name === name),
           1,
@@ -682,8 +817,8 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
           counts?: Record<string, number>;
         };
         json.formatVersion = 1;
-        delete json.counts?.tags;
-        delete json.counts?.artifactTags;
+        for (const key of ["tags", "artifactTags", "collections", "collectionItems"])
+          delete json.counts?.[key];
         entry.data = Buffer.from(JSON.stringify(json));
       }
       reseal(entries);
@@ -751,6 +886,77 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
         versions: 0,
         fileAssets: 0,
       });
+    }
+  });
+
+  it("refuses inconsistent collection metadata before anything is written", async () => {
+    type Row = { id: string; parentId: string | null; name: string };
+    type Item = { collectionId: string; artifactId: string };
+    const cases: [string, (rows: Row[], items: Item[]) => void][] = [
+      ["unknown parent", (rows) => (rows[0]!.parentId = crypto.randomUUID())],
+      [
+        "cycle",
+        (rows) => {
+          const child = rows.find((row) => row.parentId !== null)!;
+          rows.find((row) => row.id === child.parentId)!.parentId = child.id;
+        },
+      ],
+      [
+        "too deep",
+        (rows) => {
+          let parentId: string | null = null;
+          for (let level = 0; level < 8; level += 1) {
+            const id = crypto.randomUUID();
+            rows.push({ ...rows[0]!, id, parentId, name: `層 ${level}` });
+            parentId = id;
+          }
+        },
+      ],
+      [
+        "sibling name",
+        (rows) => {
+          const top = rows.filter((row) => row.parentId === null);
+          top[1]!.name = ` ${top[0]!.name} `;
+        },
+      ],
+      ["invalid name", (rows) => (rows[0]!.name = "\u202e")],
+      [
+        "dangling item",
+        (_rows, items) => items.push({ ...items[0]!, artifactId: crypto.randomUUID() }),
+      ],
+      ["duplicate item", (_rows, items) => items.push({ ...items[0]! })],
+    ];
+    for (const [label, mutate] of cases) {
+      const broken = path.join(dir, `collections-${label.replace(" ", "-")}.zip`);
+      await rewriteArchive(archive, broken, (entries) => {
+        const rowEntry = entries.find((entry) => entry.name === PATHS.collections)!;
+        const itemEntry = entries.find((entry) => entry.name === PATHS.collectionItems)!;
+        const rows = JSON.parse(Buffer.from(rowEntry.data as Buffer).toString("utf8")) as Row[];
+        const items = JSON.parse(Buffer.from(itemEntry.data as Buffer).toString("utf8")) as Item[];
+        mutate(rows, items);
+        rowEntry.data = Buffer.from(JSON.stringify(rows));
+        itemEntry.data = Buffer.from(JSON.stringify(items));
+        reseal(entries);
+      });
+      const fresh = await createTestActor();
+      await expect(
+        restoreArchive(db, freshStorage(`collections-${label}`), {
+          archivePath: broken,
+          workspaceId: fresh.workspaceId,
+          userId: fresh.userId,
+          mode: "skip_existing",
+          restoreId: crypto.randomUUID(),
+          limits: restoreLimitsFromEnv(getEnv()),
+        }),
+        label,
+      ).rejects.toSatisfy(
+        (error: unknown) =>
+          error instanceof AppError &&
+          error.code === "UNSUPPORTED_EXPORT_FORMAT" &&
+          error.details?.nothingWritten === true &&
+          /collection/.test(JSON.stringify(error.details.problems)),
+      );
+      expect((await snapshot(fresh.workspaceId)).collections, label).toEqual([]);
     }
   });
 

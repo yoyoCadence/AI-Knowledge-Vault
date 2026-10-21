@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   ARTIFACT_FILE_ROLES,
+  COLLECTION_KINDS,
   CONTENT_KINDS,
   PREVIEW_KINDS,
   PROJECT_STATUSES,
@@ -15,14 +16,15 @@ import {
  * (GNU coreutils format, so `sha256sum -c checksums.sha256` verifies an archive without the app).
  *
  * Versions: v1 is the original layout; v2 adds `metadata/tags.json` and
- * `metadata/artifact_tags.json`. Exports are written as the latest version; restore reads every
- * supported one. An app that only knows v1 refuses a v2 archive instead of silently dropping
- * its tags.
+ * `metadata/artifact_tags.json`; v3 adds `metadata/collections.json` and
+ * `metadata/collection_items.json`. Exports are written as the latest version; restore reads
+ * every supported one. An app that only knows an older version refuses a newer archive instead
+ * of silently dropping what it cannot restore (ADR-018).
  */
 
 export const EXPORT_FORMAT = "ai-knowledge-vault-export";
-export const EXPORT_FORMAT_VERSION = 2;
-export const SUPPORTED_FORMAT_VERSIONS = [1, 2] as const;
+export const EXPORT_FORMAT_VERSION = 3;
+export const SUPPORTED_FORMAT_VERSIONS = [1, 2, 3] as const;
 export type FormatVersion = (typeof SUPPORTED_FORMAT_VERSIONS)[number];
 
 export const PATHS = {
@@ -40,6 +42,10 @@ export const PATHS = {
   tags: "metadata/tags.json",
   /** v2+ */
   artifactTags: "metadata/artifact_tags.json",
+  /** v3+ */
+  collections: "metadata/collections.json",
+  /** v3+ */
+  collectionItems: "metadata/collection_items.json",
 } as const;
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -116,13 +122,19 @@ export const ManifestV2 = ManifestV1.extend({
 });
 export type ManifestV2 = z.infer<typeof ManifestV2>;
 
+export const ManifestV3 = ManifestV2.extend({
+  formatVersion: z.literal(3),
+  counts: ManifestV2.shape.counts.extend({ collections: count, collectionItems: count }),
+});
+export type ManifestV3 = z.infer<typeof ManifestV3>;
+
 /** The manifest of any supported version, told apart by `formatVersion`. */
-export const Manifest = z.discriminatedUnion("formatVersion", [ManifestV1, ManifestV2]);
+export const Manifest = z.discriminatedUnion("formatVersion", [ManifestV1, ManifestV2, ManifestV3]);
 export type Manifest = z.infer<typeof Manifest>;
 
 export const SchemaVersion = z.object({
   format: z.literal(EXPORT_FORMAT),
-  formatVersion: z.union([z.literal(1), z.literal(2)]),
+  formatVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   dbMigration: z.string().max(200),
 });
 
@@ -218,6 +230,26 @@ export type TagV2 = z.infer<typeof TagV2>;
 export const ArtifactTagV2 = z.object({ artifactId: id, tagId: id, createdAt: timestamp });
 export type ArtifactTagV2 = z.infer<typeof ArtifactTagV2>;
 
+export const CollectionV3 = z.object({
+  id,
+  parentId: id.nullable(),
+  kind: z.enum(COLLECTION_KINDS),
+  name: z.string().min(1).max(200),
+  description: nullableText,
+  sortOrder: z.number().int(),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+export type CollectionV3 = z.infer<typeof CollectionV3>;
+
+export const CollectionItemV3 = z.object({
+  collectionId: id,
+  artifactId: id,
+  position: z.number().int(),
+  addedAt: timestamp,
+});
+export type CollectionItemV3 = z.infer<typeof CollectionItemV3>;
+
 // ---------- checksums.sha256 ----------
 
 export interface ChecksumEntry {
@@ -288,6 +320,10 @@ This archive is readable without the application.
     artifact_files.json       which original belongs to which version
     tags.json                 tags {id, name}
     artifact_tags.json        which artifact carries which tag {artifactId, tagId}
+    collections.json          categories and collections {id, parentId, kind, name, …}; a
+                              tree (parentId null at the top)
+    collection_items.json     which artifact is in which collection {collectionId, artifactId,
+                              position}
   originals/<aa>/<sha256>/<filename>
                          the untouched original files; <sha256> is the hash of the bytes
   normalized/<version-id>.md

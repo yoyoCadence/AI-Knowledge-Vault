@@ -8,6 +8,7 @@ import { KindIcon } from "@/components/library/kind-icon";
 import { PreviewFrame } from "@/components/preview/preview-frame";
 import { ArtifactMetaEditor } from "@/components/artifacts/artifact-meta-editor";
 import { ReadingBody } from "@/components/reader/reading-body";
+import { CollectionPicker } from "@/components/collections/collection-picker";
 import { TagEditor } from "@/components/tags/tag-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ import {
 } from "@/modules/artifacts";
 import { roleAllows } from "@/modules/auth";
 import { issuePreviewUrl } from "@/modules/preview";
+import { collectionOptions, collectionsOf } from "@/modules/collections";
 import { findProject, listProjects } from "@/modules/projects";
 import { listTags } from "@/modules/tags";
 
@@ -50,6 +52,8 @@ async function load(id: string, requested?: string) {
     const tags = (await tagsByArtifact(getDb(), actor.workspaceId, [id])).get(id) ?? [];
     const canEdit = roleAllows(actor.role, "library:write");
     const allTags = canEdit ? await listTags(getDb(), actor) : [];
+    const collections = await collectionsOf(getDb(), actor.workspaceId, id);
+    const collectionChoices = canEdit ? await collectionOptions(getDb(), actor) : [];
     // A deleted project (or one that no longer exists) shows as none.
     const project = detail.artifact.projectId
       ? await findProject(getDb(), actor, detail.artifact.projectId)
@@ -67,6 +71,8 @@ async function load(id: string, requested?: string) {
       content,
       tags,
       allTags,
+      collections,
+      collectionChoices,
       canEdit,
       project,
       projects,
@@ -145,6 +151,8 @@ export default async function ArtifactPage({
     content,
     tags,
     allTags,
+    collections,
+    collectionChoices,
     canEdit,
     project,
     projects,
@@ -363,6 +371,24 @@ export default async function ArtifactPage({
                 artifactId={artifact.id}
                 tags={tags}
                 allTags={allTags.map((tag) => ({ id: tag.id, name: tag.name }))}
+                canEdit={canEdit}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{t("collections.section")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <CollectionPicker
+                artifactId={artifact.id}
+                collections={collections}
+                choices={collectionChoices.map((choice) => ({
+                  id: choice.id,
+                  name: choice.name,
+                  depth: choice.depth,
+                }))}
                 canEdit={canEdit}
               />
             </CardContent>

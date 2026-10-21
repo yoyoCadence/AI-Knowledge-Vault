@@ -5,6 +5,7 @@ import {
   artifacts,
   importBatches,
   importItems,
+  collections,
   researchProjects,
   type ItemStatus,
 } from "@/infrastructure/database/schema";
@@ -91,12 +92,22 @@ export async function createBatch(
       );
     if (!project) throw notFound("Research project");
   }
+  if (input.collectionId) {
+    const [collection] = await db
+      .select({ id: collections.id })
+      .from(collections)
+      .where(
+        and(eq(collections.id, input.collectionId), eq(collections.workspaceId, actor.workspaceId)),
+      );
+    if (!collection) throw notFound("Collection");
+  }
   const [batch] = await db
     .insert(importBatches)
     .values({
       workspaceId: actor.workspaceId,
       createdBy: actor.userId,
       targetProjectId: input.projectId ?? null,
+      targetCollectionId: input.collectionId ?? null,
       options: {
         autoVersionByFilename: input.options?.autoVersionByFilename ?? true,
         ...(input.options?.sourcePlatform ? { sourcePlatform: input.options.sourcePlatform } : {}),

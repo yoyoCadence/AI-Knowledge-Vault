@@ -36,6 +36,7 @@ export function sanitizeFilename(raw: string): string {
 
 export const CreateBatchInput = z.object({
   projectId: z.uuid().optional(),
+  collectionId: z.uuid().optional(),
   options: z
     .object({
       autoVersionByFilename: z.boolean().optional(),

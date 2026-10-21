@@ -7,6 +7,7 @@ export interface LibraryControlValues {
   q: string;
   tag?: string;
   project?: string;
+  collection?: string;
   kind?: string;
   model?: string;
   from?: string;
@@ -19,6 +20,13 @@ export interface Option {
   label: string;
 }
 
+/** An option of a tree, indented by its depth (a select cannot nest options). */
+export interface TreeOption extends Option {
+  depth: number;
+}
+
+const indent = (depth: number) => "\u3000".repeat(depth);
+
 const field =
   "border-border-strong bg-surface focus-visible:ring-ring h-9 rounded-md border px-2 text-sm focus-visible:ring-2 focus-visible:outline-none";
 
@@ -30,6 +38,7 @@ const field =
 export function LibraryControls({
   values,
   projects,
+  collections,
   kinds,
   models,
   sorts,
@@ -38,6 +47,7 @@ export function LibraryControls({
 }: {
   values: LibraryControlValues;
   projects: Option[];
+  collections: TreeOption[];
   kinds: Option[];
   models: string[];
   sorts: Option[];
@@ -83,6 +93,19 @@ export function LibraryControls({
               ))}
             </select>
           </label>
+          {collections.length > 0 ? (
+            <label className="flex flex-col gap-1">
+              <span className="text-muted-foreground text-xs">{t("filters.collection")}</span>
+              <select name="collection" defaultValue={values.collection ?? ""} className={field}>
+                <option value="">{t("filters.anyCollection")}</option>
+                {collections.map((collection) => (
+                  <option key={collection.value} value={collection.value}>
+                    {indent(collection.depth) + collection.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="flex flex-col gap-1">
             <span className="text-muted-foreground text-xs">{t("filters.kind")}</span>
             <select name="kind" defaultValue={values.kind ?? ""} className={field}>

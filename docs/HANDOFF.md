@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 12: keyword search)
+## 1. Snapshot (2026-10-21, after PR 15: collections)
 
 **Merged and tested**
 
@@ -470,10 +470,50 @@ conversations. Update it at the end of every PR.
     (status codes, validation, unknown fields, viewer 403, other workspace 404); E2E creates
     a project, assigns the artifact on its page, follows the project, and filters by kind.
 
+- **PR 15, P1B-ORG: collections** (`src/modules/collections`, migration `0008_collections`,
+  DATA_MODEL §4.4, API_CONTRACT §6, BACKUP_RECOVERY §2 and §6):
+  - A tree of categories and collections per workspace (at most 7 levels); an artifact can
+    be in many. Sibling names are unique as the app compares them; the database enforces it
+    (`unique(workspace_id, parent_id, normalized_name)` NULLS NOT DISTINCT) and keeps parents
+    and items inside the workspace with composite foreign keys. Cycles and depth are checked
+    in code under a per-workspace advisory lock taken by every change of the tree's shape
+    (create, move, delete, restore); a deterministic test shows two concurrent moves cannot
+    close a cycle. A collection with subcollections cannot be deleted (409 `HAS_CHILDREN`).
+  - API: `/api/collections` (GET tree, POST), `/api/collections/:id` (PATCH rename, kind,
+    description, move; DELETE), `/api/collections/:id/items/:artifactId` (PUT, DELETE);
+    `GET /api/artifacts/:id` lists the artifact's collections with their paths;
+    `POST /api/imports {collectionId}` puts new artifacts of the batch in a collection
+    (`import_batches.target_collection_id` now has its foreign key, `ON DELETE SET NULL`).
+  - Filter: `collection` on the library and search (API and page) includes the subtree. The
+    filter panel has an indented collection picker, and an active collection filter has its
+    own line with a "clear" link.
+  - UI: `/collections` replaces its placeholder (create at the top or under a parent, rename,
+    change kind, describe, move, delete); the detail page has a "分類與集合" card (add with an
+    indented picker, remove; paths link to the filtered library).
+  - Export format v3 (`collections.json`, `collection_items.json`); restore reads v1–v3.
+    Collections merge by place and name like tags, parents first, each insert under the tree
+    lock with the parent and depth re-checked. One that cannot be placed is reported, with
+    its subtree, and the rest goes on; items follow the tag-link rules (`collectionItems`,
+    `collectionItemsKept`, `collectionItemsDropped`). Verification refuses unknown parents,
+    cycles, trees deeper than 7 levels, invalid or duplicate sibling names, and dangling or
+    duplicate items before anything is written.
+  - Tests: `tests/integration/collections/collections.test.ts` (tree, names, cycles, depth,
+    items, subtree filter in library and search, delete rules, isolation, import into a
+    collection, concurrent moves), `tests/integration/collections/collections-restore.test.ts`
+    (merge by name, a branch too deep to merge, a collection deleted mid-restore),
+    `tests/integration/api/collections-api.test.ts`; the round trip covers v3 exactly, v2
+    and v1 archives, and seven kinds of broken collection metadata; E2E creates a category
+    and a subcollection, adds the artifact on its page, and filters by the category. The
+    guards were mutation-checked: removing the tree lock, the cycle check, a depth check, the
+    import step, the subtree recursion, the restore's depth check, its live-collection check
+    or its merge by name each fails a test.
+
 **Not done or not verified**
 
-- Search filters other than tag (project, collection, source model, kind, dates), sorting
-  and totals: P1B-ORG. No Simplified↔Traditional folding (SEARCH_DESIGN §9).
+- No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
+- Collections: no manual ordering yet (`sort_order` and item `position` are stored; the UI
+  sorts by name and lists items like the library). The import page has no project or
+  collection picker; both work through `POST /api/imports`.
 - Search has no `statement_timeout`. A one-character query over a very large library holds
   a connection for its whole run (0.4 s at 120,000 matching chunks today).
 - Development databases that applied an earlier draft of `0006_search_index` (before PR 12
@@ -533,23 +573,21 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 - P1A-ENC: built-in `age` encryption for exports.
 - Verify the S3 adapter against real R2. This needs the owner's credentials.
 
-**PR 15: P1B-ORG, collections** (DATA_MODEL §4.4, API_CONTRACT §6). Follow the tags slice
-(PR 13) as the pattern:
+**PR 16: P1B-NOTES, notes and reading state** (DATA_MODEL §4.4, API_CONTRACT §6). Follow
+the collections slice (PR 15) as the pattern:
 
-1. Schema: `collections` (hierarchy via `parent_id`, `kind` of category or collection,
-   `unique(workspace_id, parent_id, name)` NULLS NOT DISTINCT, no cycles) and
-   `collection_items` with workspace-scoped composite foreign keys like `artifact_tags`.
-   Lock order like tags: collection rows, then artifact rows by id, before writing items.
-2. APIs: CRUD for collections (tree), put an artifact in or out of a collection, reorder.
-   Workspace-scoped; out-of-scope is 404.
-3. Filter: `collection` in `src/modules/artifacts/filters.ts` (library and search share it);
-   add it to the filter bar.
-4. UI: collections on the detail page; a collections page replacing the `FutureFeature`
-   placeholder at `/collections`.
-5. Export format v3 with `collections.json` and `collection_items.json` (ADR-018); restore
-   reads v1–v3 and de-duplicates links like tags. Extend the round trip.
-6. Tests in the same shape as PR 13 (unit, integration, API, round trip incl. older
-   versions, E2E step), and an independent review before merging while Codex is out.
+1. Schema: `artifact_notes` (workspace-scoped composite key to the artifact, optional
+   version `SET NULL`, author `SET NULL`, Markdown body with a length CHECK) and
+   `artifact_reading_states` (`pk(user_id, artifact_id)`, status, favorite, last opened).
+2. APIs: `GET/POST /api/artifacts/:id/notes`, `PATCH/DELETE /api/notes/:id`,
+   `PUT /api/artifacts/:id/reading-state`. Notes are user content: render them with the
+   reader's allow-list renderer, never as HTML.
+3. Library: "最近開啟" and "我的最愛" views and a favorite filter; opening the detail page
+   records `last_opened_at`.
+4. Notes are searchable (index them into the artifact's metadata document, weight C).
+5. Export format v4 with `artifact_notes.json` and `artifact_reading_states.json` (user ids
+   replaced by "owner"; ADR-018); restore reads v1–v4.
+6. Tests in the same shape as PR 15 and a review before merging.
 
 **Then Phase 1B:**
 

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import {
@@ -13,6 +13,9 @@ import {
   artifacts,
   artifactTags,
   artifactVersions,
+  COLLECTION_MAX_DEPTH,
+  collectionItems,
+  collections,
   fileAssets,
   researchProjects,
   type RestoreMode,
@@ -21,6 +24,11 @@ import {
 import type { StorageAdapter } from "@/infrastructure/storage";
 import { AppError, isAppError } from "@/lib/errors";
 import { newId } from "@/lib/ids";
+import {
+  collectionDepth,
+  lockCollectionTree,
+  normalizeCollectionName,
+} from "@/modules/collections";
 import { SafeZip, ZipRejectedError, type ZipLimits } from "@/modules/extraction";
 import { storeOriginal } from "@/modules/files/originals";
 import { deterministicId, saveExtraction } from "@/modules/imports/derive";
@@ -32,6 +40,8 @@ import {
   ArtifactTagV2,
   ArtifactV1,
   ChecksumFormatError,
+  CollectionItemV3,
+  CollectionV3,
   EXPORT_FORMAT,
   EXPORT_FORMAT_VERSION,
   FileAssetV1,
@@ -39,6 +49,7 @@ import {
   type Manifest,
   ManifestV1,
   ManifestV2,
+  ManifestV3,
   normalizedPath,
   parseChecksums,
   PATHS,
@@ -50,7 +61,7 @@ import {
 } from "./format";
 
 /**
- * Restore of a format v1 or v2 archive into a workspace (docs/BACKUP_RECOVERY.md §6).
+ * Restore of a format v1, v2 or v3 archive into a workspace (docs/BACKUP_RECOVERY.md §6).
  *
  * Order matters for safety:
  * 1. The archive is opened with the same SafeZip defences as imports.
@@ -113,6 +124,17 @@ export interface RestoreReport {
     artifactTagsKept: number;
     /** Links not restored because their tag was deleted or merged while the restore ran. */
     artifactTagsDropped: number;
+    /**
+     * skipped: merged into the target's collection with the same place and name (or the same
+     * collection). failed: could not be placed (see the warnings). v3 only.
+     */
+    collections: Tally;
+    /** Collection items written for newly restored artifacts. */
+    collectionItems: number;
+    /** Archived items an artifact that already existed is not in; not added (as for tags). */
+    collectionItemsKept: number;
+    /** Items not restored because their collection was not restored or was deleted meanwhile. */
+    collectionItemsDropped: number;
   };
   /** Old → new ids for everything restored under a new id (capped). */
   idMap: Record<string, string>;
@@ -213,7 +235,9 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
   const manifest: Manifest =
     header.formatVersion === 1
       ? await readJson(zip, PATHS.manifest, ManifestV1.loose())
-      : await readJson(zip, PATHS.manifest, ManifestV2.loose());
+      : header.formatVersion === 2
+        ? await readJson(zip, PATHS.manifest, ManifestV2.loose())
+        : await readJson(zip, PATHS.manifest, ManifestV3.loose());
   const schemaVersion = await readJson(zip, PATHS.schemaVersion, SchemaVersion.loose());
   if (schemaVersion.formatVersion !== manifest.formatVersion) {
     throw invalidArchive("schema-version.json and manifest.json disagree on the format version");
@@ -274,6 +298,15 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
     manifest.formatVersion >= 2
       ? await readJson(zip, PATHS.artifactTags, z.array(ArtifactTagV2))
       : [];
+  // v1 and v2 archives have no collections.
+  const collectionList =
+    manifest.formatVersion >= 3
+      ? await readJson(zip, PATHS.collections, z.array(CollectionV3))
+      : [];
+  const collectionLinks =
+    manifest.formatVersion >= 3
+      ? await readJson(zip, PATHS.collectionItems, z.array(CollectionItemV3))
+      : [];
 
   // Primary ids must be unique: duplicates would silently collapse in the maps below, so a
   // version could be restored against the wrong original.
@@ -285,6 +318,7 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
     ["file asset", assets],
     ["artifact file", links],
     ["tag", tagList],
+    ["collection", collectionList],
   ];
   for (const [kind, rows] of tables) {
     const seen = new Set<string>();
@@ -341,6 +375,40 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
     if (tagPairs.has(pair)) problems.push(`artifact tag ${pair}: duplicate`);
     tagPairs.add(pair);
   }
+  // Collections must form a tree no deeper than the app allows, with names valid and distinct
+  // among siblings as the app compares them (restore merges by place and name).
+  const collectionById = new Map(collectionList.map((collection) => [collection.id, collection]));
+  const collectionLevel = new Map<string, number>();
+  const siblingNames = new Set<string>();
+  for (const collection of collectionList) {
+    if (collection.parentId !== null && !collectionById.has(collection.parentId))
+      problems.push(`collection ${collection.id}: unknown parent`);
+    try {
+      const { normalizedName } = normalizeCollectionName(collection.name);
+      const key = `${collection.parentId ?? ""}/${normalizedName}`;
+      if (siblingNames.has(key)) problems.push(`collection ${collection.id}: duplicate name`);
+      siblingNames.add(key);
+    } catch {
+      problems.push(`collection ${collection.id}: invalid name`);
+    }
+    let level = 0;
+    for (let at = collection.parentId; at !== null; at = collectionById.get(at)?.parentId ?? null) {
+      level += 1;
+      if (level > COLLECTION_MAX_DEPTH) {
+        problems.push(`collection ${collection.id}: nested too deep, or in a cycle`);
+        break;
+      }
+    }
+    collectionLevel.set(collection.id, level);
+  }
+  const collectionPairs = new Set<string>();
+  for (const item of collectionLinks) {
+    if (!artifactIds.has(item.artifactId) || !collectionById.has(item.collectionId))
+      problems.push(`collection item ${item.collectionId}/${item.artifactId}: dangling reference`);
+    const pair = `${item.collectionId}/${item.artifactId}`;
+    if (collectionPairs.has(pair)) problems.push(`collection item ${pair}: duplicate`);
+    collectionPairs.add(pair);
+  }
   if (problems.length > 0) {
     throw invalidArchive("the archive's metadata is inconsistent", {
       problems: problems.slice(0, MAX_LISTED_PROBLEMS),
@@ -356,6 +424,16 @@ async function verifyArchive(zip: SafeZip, signal?: AbortSignal) {
     links,
     tagList,
     tagLinks,
+    /** Parents before children. */
+    collectionList: collectionList
+      .map((collection, index) => ({ collection, index }))
+      .sort(
+        (a, b) =>
+          collectionLevel.get(a.collection.id)! - collectionLevel.get(b.collection.id)! ||
+          a.index - b.index,
+      )
+      .map(({ collection }) => collection),
+    collectionLinks,
   };
 }
 
@@ -378,7 +456,8 @@ async function existingIds(
     | typeof researchProjects
     | typeof artifactVersions
     | typeof artifactFiles
-    | typeof tags,
+    | typeof tags
+    | typeof collections,
   ids: string[],
 ): Promise<Map<string, string | null>> {
   const rows = await inChunks(ids, async (chunk) =>
@@ -444,6 +523,10 @@ export async function restoreArchive(
         artifactTags: 0,
         artifactTagsKept: 0,
         artifactTagsDropped: 0,
+        collections: tally(),
+        collectionItems: 0,
+        collectionItemsKept: 0,
+        collectionItemsDropped: 0,
       },
       idMap: {},
       failures: [],
@@ -707,6 +790,119 @@ export async function restoreArchive(
       return links;
     };
 
+    // ---- 2c. Collections (v3): merged by place and name, parents first ----
+    // As with tags, a restore never duplicates a collection. One with the same id that is
+    // already ours (perhaps renamed or moved since the export) and a copy resumed from an
+    // earlier attempt map to themselves; otherwise the collection is inserted under its
+    // restored parent, and a sibling of the same name there maps to that one instead. Each
+    // insert takes the workspace's tree lock and re-checks its parent and depth, like creating a
+    // collection in the app. One that cannot be placed (its parent was deleted meanwhile, or
+    // merging into this tree would nest it too deep) is not restored, nor is anything below it.
+    const collectionIdMap = new Map<string, string>();
+    const collectionOwners = await existingIds(
+      db,
+      collections,
+      withDerived(archive.collectionList.map((collection) => collection.id)),
+    );
+    for (const collection of archive.collectionList) {
+      signal?.throwIfAborted();
+      const placed = place(collection.id, collectionOwners);
+      if (placed.existing) {
+        collectionIdMap.set(collection.id, placed.id);
+        remember(collection.id, placed.id);
+        report.counts.collections[placed.resumed ? "copied" : "skipped"] += 1;
+        continue;
+      }
+      // Parents come first, so a parent that is not mapped could not be placed.
+      const parentId =
+        collection.parentId === null ? null : collectionIdMap.get(collection.parentId);
+      const { name, normalizedName } = normalizeCollectionName(collection.name);
+      const result =
+        parentId === undefined
+          ? null
+          : await db.transaction(async (tx) => {
+              await lockCollectionTree(tx, workspaceId);
+              if (parentId !== null) {
+                const [parent] = await tx
+                  .select({ id: collections.id })
+                  .from(collections)
+                  .where(
+                    and(eq(collections.id, parentId), eq(collections.workspaceId, workspaceId)),
+                  );
+                if (!parent) return null;
+                if ((await collectionDepth(tx, parentId)) + 1 > COLLECTION_MAX_DEPTH) return null;
+              }
+              const [row] = await tx
+                .insert(collections)
+                .values({
+                  id: placed.id,
+                  workspaceId,
+                  parentId,
+                  kind: collection.kind,
+                  name,
+                  normalizedName,
+                  description: collection.description,
+                  sortOrder: collection.sortOrder,
+                  createdAt: new Date(collection.createdAt),
+                  updatedAt: new Date(collection.updatedAt),
+                })
+                .onConflictDoNothing({
+                  target: [
+                    collections.workspaceId,
+                    collections.parentId,
+                    collections.normalizedName,
+                  ],
+                })
+                .returning({ id: collections.id });
+              if (row) return { id: row.id, inserted: true };
+              // The tree lock keeps the sibling from being moved or deleted, but not renamed:
+              // if it was renamed since the insert, this collection is not placed.
+              const [sibling] = await tx
+                .select({ id: collections.id })
+                .from(collections)
+                .where(
+                  and(
+                    eq(collections.workspaceId, workspaceId),
+                    parentId === null
+                      ? isNull(collections.parentId)
+                      : eq(collections.parentId, parentId),
+                    eq(collections.normalizedName, normalizedName),
+                  ),
+                );
+              return sibling ? { id: sibling.id, inserted: false } : null;
+            });
+      if (!result) {
+        report.counts.collections.failed += 1;
+        continue;
+      }
+      collectionIdMap.set(collection.id, result.id);
+      remember(collection.id, result.id);
+      report.counts.collections[
+        result.inserted ? (placed.remapped ? "copied" : "restored") : "skipped"
+      ] += 1;
+    }
+    const collectionItemsByArtifact = new Map<string, typeof archive.collectionLinks>();
+    for (const item of archive.collectionLinks) {
+      const list = collectionItemsByArtifact.get(item.artifactId) ?? [];
+      list.push(item);
+      collectionItemsByArtifact.set(item.artifactId, list);
+    }
+    /**
+     * The target collections an archived artifact's items map to (two can map to one, merged
+     * by name), and how many items have no target because their collection was not placed.
+     */
+    const mappedItems = (archivedArtifactId: string) => {
+      const items = new Map<string, { position: number; addedAt: Date }>();
+      let unplaced = 0;
+      for (const item of collectionItemsByArtifact.get(archivedArtifactId) ?? []) {
+        const collectionId = collectionIdMap.get(item.collectionId);
+        if (!collectionId) unplaced += 1;
+        else if (!items.has(collectionId))
+          items.set(collectionId, { position: item.position, addedAt: new Date(item.addedAt) });
+      }
+      return { items, unplaced };
+    };
+
     // ---- 3. Artifacts and versions, one transaction per artifact ----
     const versionsByArtifact = new Map<string, typeof archive.versions>();
     for (const version of archive.versions) {
@@ -823,6 +1019,50 @@ export async function restoreArchive(
       if (versionId !== version.id) remember(version.id, versionId);
     };
 
+    /**
+     * A new artifact's collection items, in its transaction. The target collections are locked
+     * in id order (key share: they cannot be deleted until this commits); a collection that was
+     * not placed or was deleted since is dropped and counted instead of failing the artifact.
+     */
+    const restoreItems = async (tx: DbExecutor, archivedId: string, artifactId: string) => {
+      const { items, unplaced } = mappedItems(archivedId);
+      if (items.size === 0) return { written: 0, dropped: unplaced };
+      const live = new Set(
+        (
+          await tx
+            .select({ id: collections.id })
+            .from(collections)
+            .where(
+              and(
+                eq(collections.workspaceId, workspaceId),
+                inArray(collections.id, [...items.keys()]),
+              ),
+            )
+            .orderBy(asc(collections.id))
+            .for("key share")
+        ).map((row) => row.id),
+      );
+      const rows = [...items]
+        .filter(([collectionId]) => live.has(collectionId))
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([collectionId, item]) => ({
+          workspaceId,
+          collectionId,
+          artifactId,
+          position: item.position,
+          addedAt: item.addedAt,
+        }));
+      const written =
+        rows.length > 0
+          ? await tx
+              .insert(collectionItems)
+              .values(rows)
+              .onConflictDoNothing()
+              .returning({ collectionId: collectionItems.collectionId })
+          : [];
+      return { written: written.length, dropped: unplaced + items.size - rows.length };
+    };
+
     const fail = (artifact: (typeof archive.artifactList)[number], error: unknown) => {
       report.failures.push({
         artifactId: artifact.id,
@@ -861,6 +1101,25 @@ export async function restoreArchive(
           // A copy resumed from an earlier attempt wrote its links then: count them as now.
           if (placed.resumed) report.counts.artifactTags += present.size;
           else report.counts.artifactTagsKept += links.size - present.size;
+        }
+        const { items, unplaced } = mappedItems(artifact.id);
+        report.counts.collectionItemsDropped += unplaced;
+        if (items.size > 0) {
+          const present = new Set(
+            (
+              await db
+                .select({ collectionId: collectionItems.collectionId })
+                .from(collectionItems)
+                .where(
+                  and(
+                    eq(collectionItems.artifactId, placed.id),
+                    inArray(collectionItems.collectionId, [...items.keys()]),
+                  ),
+                )
+            ).map((row) => row.collectionId),
+          );
+          if (placed.resumed) report.counts.collectionItems += present.size;
+          else report.counts.collectionItemsKept += items.size - present.size;
         }
         // skip_existing keeps the artifact as it is, but versions it lacks (e.g. newer ones in
         // the archive than in a database restored to an earlier point) are added to it. A copy
@@ -968,8 +1227,9 @@ export async function restoreArchive(
           // as every tag operation locks them, so this cannot deadlock with a merge; a tag
           // deleted or merged since the tag phase is gone, and its link is dropped and counted
           // instead of failing the artifact.
+          const collected = await restoreItems(tx, artifact.id, placed.id);
           const links = mappedLinks(artifact.id);
-          if (links.size === 0) return { written: 0, dropped: 0 };
+          if (links.size === 0) return { written: 0, dropped: 0, collected };
           const live = new Set(
             (
               await tx
@@ -997,11 +1257,13 @@ export async function restoreArchive(
                   .onConflictDoNothing()
                   .returning({ tagId: artifactTags.tagId })
               : [];
-          return { written: written.length, dropped: links.size - rows.length };
+          return { written: written.length, dropped: links.size - rows.length, collected };
         });
         report.reextractJobs += versions.length;
         report.counts.artifactTags += linkedTags.written;
         report.counts.artifactTagsDropped += linkedTags.dropped;
+        report.counts.collectionItems += linkedTags.collected.written;
+        report.counts.collectionItemsDropped += linkedTags.collected.dropped;
         report.counts.artifacts[placed.remapped ? "copied" : "restored"] += 1;
         report.counts.artifactVersions[placed.remapped ? "copied" : "restored"] += versions.length;
         remember(artifact.id, placed.id);
@@ -1021,6 +1283,21 @@ export async function restoreArchive(
     if (report.counts.artifactTagsDropped > 0) {
       report.warnings.push(
         `${report.counts.artifactTagsDropped} tag link(s) were not restored: their tag was deleted or merged while the restore ran`,
+      );
+    }
+    if (report.counts.collections.failed > 0) {
+      report.warnings.push(
+        `${report.counts.collections.failed} collection(s) were not restored: their parent was deleted or renamed while the restore ran, or merging them into this workspace's tree would nest them more than ${COLLECTION_MAX_DEPTH + 1} levels deep`,
+      );
+    }
+    if (report.counts.collectionItemsKept > 0) {
+      report.warnings.push(
+        `${report.counts.collectionItemsKept} collection item(s) from the archive were not added to artifacts that already existed; those artifacts kept their current collections`,
+      );
+    }
+    if (report.counts.collectionItemsDropped > 0) {
+      report.warnings.push(
+        `${report.counts.collectionItemsDropped} collection item(s) were not restored: their collection was not restored or was deleted while the restore ran`,
       );
     }
     report.durationMs = Date.now() - startedAt;

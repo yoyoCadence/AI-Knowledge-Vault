@@ -52,7 +52,7 @@
 | P1B-DETAIL        | Artifact Detail（版本、來源資訊、下載、metadata 編輯）                        | 🚧 標題、說明、專案可編輯（PR 14）；來源資訊、可見性編輯待做 |
 | P1B-PREVIEW       | 獨立 Preview Origin、token、CSP、sandbox iframe                               | ✅                                                           |
 | P1B-READER        | Reading Mode（安全 Markdown renderer、TOC、手機排版）                         | ✅                                                           |
-| P1B-ORG           | Research Projects、Collections（階層）、Tags（正規化、合併）                  | 🚧 Tags ✅（PR 13）、Projects ✅（PR 14）；Collections 待做  |
+| P1B-ORG           | Research Projects、Collections（階層）、Tags（正規化、合併）                  | ✅ Tags（PR 13）、Projects（PR 14）、Collections（PR 15）    |
 | P1B-NOTES         | Notes、Reading Status、Favorites                                              | 📝                                                           |
 | P1B-SEARCH        | CJK bigram 全文搜尋、篩選、排序、片段 Highlight                               | ✅（PR 12–14；筆記內容待 P1B-NOTES）                         |
 | P1B-SHARE         | Share links（權限分離、到期、撤銷）、分享前檢查、公開閱讀頁                   | 📝                                                           |

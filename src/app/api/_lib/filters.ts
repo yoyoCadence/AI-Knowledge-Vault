@@ -9,6 +9,7 @@ const day = z.iso.date().refine((value) => value >= "0001-01-01", "year must be 
 export const FilterParams = {
   tag: z.uuid().optional(),
   project: z.uuid().optional(),
+  collection: z.uuid().optional(),
   kind: z.enum(CONTENT_KINDS).optional(),
   // Exactly as recorded (not trimmed): the filter offers stored values, which keep spaces.
   model: z
@@ -24,6 +25,7 @@ export const FilterParams = {
 export function toFilters(query: {
   tag?: string;
   project?: string;
+  collection?: string;
   kind?: string;
   model?: string;
   from?: string;
@@ -32,6 +34,7 @@ export function toFilters(query: {
   return {
     tagId: query.tag,
     projectId: query.project,
+    collectionId: query.collection,
     kind: query.kind,
     sourceModel: query.model,
     from: query.from,

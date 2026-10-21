@@ -228,7 +228,7 @@ thumbnail), `storage_key unique`, `mime_type`, `byte_size bigint`, `sha256 char(
 **import_batches** (P1A): `id`, `workspace_id`, `created_by?`,
 `status ∈ {open, processing, completed, completed_with_errors, cancelled}`,
 `target_project_id? → research_projects SET NULL`,
-`target_collection_id?` (FK added in P1B), `options jsonb` (`{autoVersionByFilename: true,
+`target_collection_id? → collections SET NULL` (applies to new artifacts only), `options jsonb` (`{autoVersionByFilename: true,
 sourcePlatform?: string}`), `created_at`, `updated_at`, `completed_at?`.
 Counts are computed from items with an aggregate query, never denormalized.
 
@@ -337,11 +337,25 @@ itself refuses a link between an artifact and a tag of different workspaces. (He
 artifact's `artifact_search_documents` row (weight B), so tag changes re-index the affected
 artifacts in the same transaction.
 
-**collections**: `id`, `workspace_id`, `parent_id? → collections CASCADE`,
-`kind ∈ {category, collection}`, `name`, `description?`, `sort_order int`, timestamps.
-`unique(workspace_id, parent_id, name)` (NULLS NOT DISTINCT).
+**collections** (built, PR 15): `id`, `workspace_id`, `parent_id?`,
+`kind ∈ {category, collection}`, `name` (1–100 characters, the same visible-text rules as
+titles), `normalized_name` (the identity: NFKC, case-folded, spacing collapsed, invisible
+characters removed), `description?` (up to 2,000 characters), `sort_order int` (reserved for
+manual ordering; 0 today), timestamps. `unique(workspace_id, parent_id, normalized_name)`
+NULLS NOT DISTINCT, so siblings (top-level ones too) never share a name; the same name in
+different places is fine. `unique(workspace_id, id)`. The parent key is composite,
+`(workspace_id, parent_id) → collections(workspace_id, id)`, without cascade: a parent is in
+the same workspace, and one with children cannot be deleted (the app answers 409
+`HAS_CHILDREN`). `CHECK (parent_id is distinct from id)`. Cycles and depth (at most 7 levels)
+are checked in code under a per-workspace advisory lock, which every change of the tree's
+shape takes (create, move, delete, restore), so two concurrent moves cannot close a cycle.
+Every recursive walk is also bounded, so a direct database write that broke the tree could
+not make a query run forever.
 
-**collection_items**: `pk(collection_id, artifact_id)`, `position int`, `added_at`.
+**collection_items** (built, PR 15): `workspace_id`, `collection_id`, `artifact_id`,
+`position int` (order added), `added_at`; `pk(collection_id, artifact_id)`, index on
+`artifact_id`. Both foreign keys are composite with the workspace, `ON DELETE CASCADE`, as
+for `artifact_tags`. Filtering the library by a collection includes its whole subtree.
 
 **artifact_notes**: `id`, `workspace_id`, `artifact_id → CASCADE`,
 `artifact_version_id? → SET NULL`, `author_id? → users SET NULL`, `body_markdown`, timestamps.

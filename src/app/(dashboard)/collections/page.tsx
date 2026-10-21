@@ -1,16 +1,34 @@
 import type { Metadata } from "next";
-import { FutureFeature } from "@/components/layout/future-feature";
+import { requirePageActor } from "@/app/_lib/session";
+import { CollectionManager } from "@/components/collections/collection-manager";
+import { getDb } from "@/infrastructure/database/client";
 import { t } from "@/lib/i18n";
+import { roleAllows } from "@/modules/auth";
+import { listCollections } from "@/modules/collections";
 
 export const metadata: Metadata = { title: t("nav.collections") };
 
-export default function CollectionsPage() {
+export default async function CollectionsPage() {
+  const actor = await requirePageActor();
+  const collections = await listCollections(getDb(), actor);
   return (
-    <FutureFeature
-      title={t("nav.collections")}
-      phase="Phase 1B（P1B-ORG）"
-      summary="以階層分類與自訂集合整理作品；一份作品可以同時屬於多個集合。"
-      bullets={["主分類與子分類", "自訂 Collections", "批次加入與移除", "標籤正規化與合併"]}
-    />
+    <div className="flex max-w-3xl flex-col gap-6">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("collections.title")}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t("collections.description")}</p>
+      </header>
+      <CollectionManager
+        collections={collections.map((row) => ({
+          id: row.id,
+          parentId: row.parentId,
+          kind: row.kind,
+          name: row.name,
+          description: row.description,
+          artifactCount: row.artifactCount,
+          depth: row.depth,
+        }))}
+        canEdit={roleAllows(actor.role, "library:write")}
+      />
+    </div>
   );
 }
