@@ -64,10 +64,16 @@ break phrase matching. Content is therefore indexed per **chunk**:
   locations for free.
 
 Artifact-level metadata (title A, tags and description B, notes and source info C) lives in
-`artifact_search_documents`, one row per artifact. Each note is its own part (a phrase never
-runs from one note into the next), newest first, up to 20,000 characters of notes in all, so
-many long notes can never push the vector past Postgres' 1 MB limit. A note write re-indexes
-its artifact in the same transaction.
+`artifact_search_documents`, one row per artifact. Parts are laid out by importance: title,
+description and summary, tags, source fields, then notes. Each note is its own part (a phrase
+never runs from one note into the next), newest first, up to 20,000 characters of notes in
+all, so many long notes can never push the vector past Postgres' 1 MB limit. A note write
+re-indexes its artifact in the same transaction.
+
+Positions end at 16,383. Postgres clamps later positions to that value, where every token
+would share one position and no phrase could match, so `toTsvector` leaves tokens past it out
+instead: what is indexed keeps its true positions, and only the end of the last parts (the
+oldest note text of an artifact with very long notes) is not searchable.
 
 ## 4. Query execution
 

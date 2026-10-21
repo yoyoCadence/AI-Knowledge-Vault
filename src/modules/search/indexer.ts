@@ -133,11 +133,6 @@ export async function indexArtifactMetadata(tx: DbExecutor, artifactId: string) 
     },
     // One part per tag: a phrase never runs from one tag into the next.
     ...tagRows.map((tag) => ({ text: tag.name, weight: "B" as const })),
-    // Notes are the owner's own words about the artifact: one part each, like tags.
-    ...noteParts(
-      noteRows.map((note) => note.body),
-      METADATA_LIMITS.notes,
-    ).map((text) => ({ text, weight: "C" as const })),
     {
       text: [row.sourcePlatform, row.sourceModel, row.author, row.filename]
         .map((text) => clip(text, METADATA_LIMITS.source))
@@ -145,6 +140,12 @@ export async function indexArtifactMetadata(tx: DbExecutor, artifactId: string) 
         .join("\n"),
       weight: "C",
     },
+    // Notes last (newest first, one part each, like tags): they can be long, and positions
+    // past the tsvector's last one are left out, so they must not crowd out the fields above.
+    ...noteParts(
+      noteRows.map((note) => note.body),
+      METADATA_LIMITS.notes,
+    ).map((text) => ({ text, weight: "C" as const })),
   ]);
   await tx
     .insert(artifactSearchDocuments)

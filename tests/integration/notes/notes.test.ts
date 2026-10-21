@@ -12,7 +12,7 @@ import { AppError } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { listArtifacts } from "@/modules/artifacts";
 import type { Actor } from "@/modules/auth";
-import { PATHS, restoreLimitsFromEnv, writeExport } from "@/modules/backup";
+import { PATHS, restoreArchive, restoreLimitsFromEnv, writeExport } from "@/modules/backup";
 import { getStorage } from "@/infrastructure/storage";
 import { SafeZip } from "@/modules/extraction";
 import {
@@ -172,6 +172,52 @@ describe("notes (FR-LIB-8, API_CONTRACT §6)", () => {
     expect(await searchIds(owner, "很多長筆記")).toEqual([target]);
     // The newest notes are the ones kept searchable.
     expect(await searchIds(owner, "藻礁")).toEqual([target]);
+  });
+
+  it("a long note never makes the artifact's other fields unsearchable", async () => {
+    // Notes come last in the metadata document: a note long enough to reach the last tsvector
+    // position must not push the source fields (here the original filename) past it.
+    const target = await importOne(owner, "濕地復育計畫書.html", "長筆記不擠掉檔名");
+    let seed = 88_675_123;
+    const long = Array.from({ length: 17_000 }, () => {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      return String.fromCodePoint(0x4e00 + ((seed >>> 0) % 20_000));
+    }).join("");
+    expect(await searchIds(owner, "濕地復育計畫書")).toEqual([target]);
+    await createNote(db, owner, target, long, meta);
+    expect(await searchIds(owner, "濕地復育計畫書")).toEqual([target]);
+  });
+
+  it("restores a note of characters outside the Basic Multilingual Plane", async () => {
+    // 10,001 emoji are 10,001 characters (the app's and the database's count) but 20,002
+    // UTF-16 units: the archive must accept what the app accepted.
+    const source = await createTestActor();
+    const noted = await importOne(source, "emoji-note.html", "表情符號筆記");
+    const body = "\u{1f30f}".repeat(10_001);
+    await createNote(db, source, noted, body, meta);
+    const dir = await mkdtemp(path.join(tmpdir(), "vault-notes-emoji-"));
+    try {
+      const file = path.join(dir, "export.zip");
+      await writeExport(db, getStorage(), source.workspaceId, createWriteStream(file));
+      const target = await createTestActor();
+      const report = await restoreArchive(db, getStorage(), {
+        archivePath: file,
+        workspaceId: target.workspaceId,
+        userId: target.userId,
+        mode: "skip_existing",
+        restoreId: crypto.randomUUID(),
+        limits: restoreLimitsFromEnv(getEnv()),
+      });
+      expect(report.counts.notes.copied).toBe(1);
+      const [restoredId] = Object.entries(report.idMap)
+        .filter(([oldId]) => oldId === noted)
+        .map(([, newId]) => newId);
+      expect((await listNotes(db, target, restoredId!))[0]!.bodyMarkdown).toBe(body);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("two notes written on one artifact at the same time do not deadlock", async () => {
