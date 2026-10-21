@@ -44,4 +44,5 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 | P1B-DETAIL  | Artifact detail: metadata, outline, references, versions, download | 🚧 read-only detail done (PR 5); metadata editing pending                      |
 | P1B-PREVIEW | Preview origin route, preview token API, sandboxed iframe          | ✅ (PR 10)                                                                     |
 | P1B-READER  | Reading mode: allow-list renderer, content API, TOC, read/preview  | ✅ (PR 11)                                                                     |
+| P1B-SEARCH  | CJK keyword search: tokenizer, chunks, index jobs, API, library UI | 🚧 search, snippets, backfill done (PR 12); filters and sort with P1B-ORG      |
 | others      | see `docs/ROADMAP.md`                                              | 📝                                                                             |

@@ -17,7 +17,7 @@ import {
 import type { JobContext } from "@/modules/jobs";
 import { getLogger } from "@/infrastructure/observability/logger";
 import { htmlDocument, markdownDocument, pngImage } from "@tests/fixtures/builders";
-import { createTestAdmin, signIn } from "../helpers/auth";
+import { createTestAdmin, signInOk } from "../helpers/auth";
 import { closeTestDb, testDb } from "../helpers/db";
 import { drainJobs, newBatch, uploadFile } from "../helpers/imports";
 
@@ -40,7 +40,7 @@ function apiRequest(urlPath: string, init: { method?: string; cookie: string }) 
 
 async function owner() {
   const admin = await createTestAdmin();
-  const { cookie } = await signIn(admin.email, admin.password);
+  const { cookie } = await signInOk(admin.email, admin.password);
   const actor = {
     userId: admin.userId,
     workspaceId: admin.workspaceId,

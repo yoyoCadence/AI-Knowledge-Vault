@@ -23,6 +23,7 @@ import { SafeZip, ZipRejectedError, type ZipLimits } from "@/modules/extraction"
 import { storeOriginal } from "@/modules/files/originals";
 import { deterministicId, saveExtraction } from "@/modules/imports/derive";
 import { enqueueJob } from "@/modules/jobs";
+import { enqueueVersionIndex } from "@/modules/search/indexer";
 import {
   ArtifactFileV1,
   ArtifactV1,
@@ -656,6 +657,10 @@ export async function restoreArchive(
             warnings: ["RESTORED_FROM_ARCHIVE: archived text pending re-extraction"],
           },
         });
+      } else {
+        // No archived text (an image, say): index the metadata now, so the artifact is found
+        // by title even if re-extraction fails for good.
+        await enqueueVersionIndex(tx, { workspaceId, versionId, extractionId: null });
       }
       await enqueueJob(tx, {
         type: REEXTRACT_JOB_TYPE,

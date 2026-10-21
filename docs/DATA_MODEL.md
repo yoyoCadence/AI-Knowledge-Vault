@@ -44,6 +44,7 @@ but not yet created.
 | extracted_documents, document_sections, content_chunks                                      | same                                                                                        | `content_chunks` carries `search_vector` (Phase 1B)                                         |
 | extraction_errors                                                                           | `extracted_documents.status/error_code/error_message/warnings` + `import_items.error_*`     | a separate table added no queryable value                                                   |
 | —                                                                                           | `artifact_search_documents`                                                                 | new; artifact-level metadata search vector (Phase 1B)                                       |
+| —                                                                                           | `search_index_states`                                                                       | new; what each version's chunks were built from (Phase 1B)                                  |
 | embedding_records … research_suggestions                                                    | planned (Phase 2–3)                                                                         | see §5                                                                                      |
 | ai_* , prompt_templates                                                                     | planned (Phase 2)                                                                           |                                                                                             |
 | backup_runs, export_jobs                                                                    | `export_runs`, `restore_runs`                                                               | Phase 1A                                                                                    |
@@ -304,6 +305,12 @@ Index: `GIN(search_vector)`, `(workspace_id, artifact_id)`.
 **artifact_search_documents** (P1B): `artifact_id pk → CASCADE`, `workspace_id`,
 `search_vector tsvector` (title A, tags/description B, notes/source C), `tokenizer_version`,
 `updated_at`. Index: GIN.
+
+**search_index_states** (P1B): `artifact_version_id pk → artifact_versions CASCADE`,
+`workspace_id`, `extracted_document_id? → extracted_documents SET NULL`, `tokenizer_version`,
+`chunk_count`, `indexed_at`. Written with the chunks, in the same transaction, also when a
+version has no text. The daily backfill compares it with the version's active extraction
+instead of guessing from the text (SEARCH_DESIGN §6).
 
 ### 4.4 Organization (P1B)
 

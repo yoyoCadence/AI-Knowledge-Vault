@@ -4,10 +4,10 @@ _Last updated: 2026-10-20 by the implementing agent._
 
 ## Current focus
 
-**PR 11 (this branch): P1B-READER.** Reading mode: allow-list Markdown renderer, content API,
-read/preview switch and a working table of contents.
+**PR 12 (this branch): P1B-SEARCH.** Traditional Chinese keyword search: tokenizer, chunked
+index, index jobs and daily backfill, `/api/search`, and the library search box.
 
-**Next: P1B-SEARCH (PR 12).** The exact steps are in `docs/HANDOFF.md` §4.
+**Next: P1B-ORG (PR 13).** The exact steps are in `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.
@@ -50,6 +50,7 @@ findings handled. If the review bot is unavailable, run an independent review fi
    - library and detail pages
    - ✅ preview origin (PR 10)
    - ✅ reading mode (PR 11)
+   - 🚧 search (PR 12: keyword search; filters with organization)
    - organization
    - search
    - sharing

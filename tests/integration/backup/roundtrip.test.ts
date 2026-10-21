@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { buffer } from "node:stream/consumers";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getEnv } from "@/infrastructure/config/env";
 import { closeDb } from "@/infrastructure/database/client";
@@ -17,6 +17,7 @@ import {
   documentSections,
   extractedDocuments,
   fileAssets,
+  processingJobs,
   workspaces,
 } from "@/infrastructure/database/schema";
 import { getStorage, LocalStorageAdapter } from "@/infrastructure/storage";
@@ -30,6 +31,7 @@ import {
   writeExport,
 } from "@/modules/backup";
 import { formatChecksums } from "@/modules/backup/format";
+import { SEARCH_INDEX_JOB_TYPE, TOKENIZER_VERSION } from "@/modules/search";
 import { SafeZip } from "@/modules/extraction";
 import {
   claudeDesignZipEntries,
@@ -303,6 +305,36 @@ describe("portable export → restore round trip (BACKUP_RECOVERY §8)", () => {
       .where(eq(artifactVersions.workspaceId, target.workspaceId));
     expect(pending.length).toBeGreaterThanOrEqual(5);
     expect(new Set(pending.map((row) => row.method))).toEqual(new Set([RESTORE_EXTRACTION_METHOD]));
+
+    // Every restored version is queued for search indexing, the image without archived text
+    // too (keyed by version), so it is found by title even if its re-extraction fails.
+    const indexJobs = await db
+      .select({ key: processingJobs.idempotencyKey, payload: processingJobs.payload })
+      .from(processingJobs)
+      .where(
+        and(
+          eq(processingJobs.type, SEARCH_INDEX_JOB_TYPE),
+          eq(processingJobs.workspaceId, target.workspaceId),
+        ),
+      );
+    expect(new Set(indexJobs.map((job) => job.payload.versionId))).toEqual(
+      new Set(after.versions.map((version) => version.id)),
+    );
+    const withoutText = await db
+      .select({ id: artifactVersions.id })
+      .from(artifactVersions)
+      .where(
+        and(
+          eq(artifactVersions.workspaceId, target.workspaceId),
+          isNull(artifactVersions.activeExtractionId),
+        ),
+      );
+    expect(withoutText).toHaveLength(6 - pending.length);
+    expect(withoutText.length).toBeGreaterThanOrEqual(1);
+    for (const version of withoutText)
+      expect(indexJobs.map((job) => job.key)).toContain(
+        `${SEARCH_INDEX_JOB_TYPE}:version:${version.id}:${TOKENIZER_VERSION}`,
+      );
   });
 
   it("re-extraction rebuilds text, sections, thumbnails and previews from the originals", async () => {

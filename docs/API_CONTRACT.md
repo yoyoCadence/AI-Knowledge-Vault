@@ -98,7 +98,7 @@ from imports. A metadata-only artifact type can be added later if needed.
 
 | Method | Path          | Description                                                             | Status |
 | ------ | ------------- | ----------------------------------------------------------------------- | ------ |
-| GET    | `/api/search` | `?q&projectId&collectionId&tag&sourceModel&kind&from&to&sort=(relevance | newest | title)&limit&offset`→`{items: [{artifact, score, snippet: {segments:[{text, highlight}]}, matchedIn: ["title","body",…]}], total}` | 📝  |
+| GET    | `/api/search` | `?q&projectId&collectionId&tag&sourceModel&kind&from&to&sort=(relevance | newest | title)&limit&offset`→`{items: [{artifact, score, snippet: {segments:[{text, highlight}]}, matchedIn: ["title","body",…]}], total}` | 🚧 `?q&offset` → `{items: [{id, title, summary, contentKind, score, snippet: {segments, truncatedStart, truncatedEnd}}], nextOffset}` is built; filters, sort and `total` come with P1B-ORG |
 
 ## 8. Sharing (Phase 1B)
 

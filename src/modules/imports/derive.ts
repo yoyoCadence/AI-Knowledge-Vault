@@ -28,6 +28,7 @@ import {
   type SingleFileOutcome,
 } from "@/modules/extraction";
 import { sha256OfBuffer } from "@/modules/files/hash";
+import { enqueueVersionIndex } from "@/modules/search/indexer";
 
 /**
  * Turns one stored original into a version's content: extracted text and sections, the
@@ -228,5 +229,11 @@ export async function saveExtraction(
     .update(artifactVersions)
     .set({ activeExtractionId: document!.id })
     .where(eq(artifactVersions.id, input.versionId));
+  // Searchable once this transaction commits (docs/SEARCH_DESIGN.md §6).
+  await enqueueVersionIndex(tx, {
+    workspaceId: input.workspaceId,
+    versionId: input.versionId,
+    extractionId: document!.id,
+  });
   return document!.id;
 }

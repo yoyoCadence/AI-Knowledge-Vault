@@ -16,6 +16,7 @@ import { isAppError } from "@/lib/errors";
 import { formatBytes, formatDate, formatDateTime } from "@/lib/format";
 import { isUuid } from "@/lib/ids";
 import { t, tOptional } from "@/lib/i18n";
+import { firstParam, type PageSearchParams } from "@/lib/search-params";
 import { getArtifactDetail, getVersionContent, getVersionOverview } from "@/modules/artifacts";
 import { issuePreviewUrl } from "@/modules/preview";
 
@@ -98,10 +99,10 @@ export default async function ArtifactPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<PageSearchParams>;
 }) {
   const { id } = await params;
-  const { view: requested } = await searchParams;
+  const requested = firstParam((await searchParams).view);
   const { artifact, versions, overview, preview, view, content } = await load(id, requested);
   const version = overview?.version;
   const unknown = <span className="text-muted-foreground">{t("artifact.unknown")}</span>;
