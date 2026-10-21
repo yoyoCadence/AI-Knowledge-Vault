@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-20, after PR 11: reading mode)
+## 1. Snapshot (2026-10-20, after PR 12: keyword search)
 
 **Merged and tested**
 
@@ -308,7 +308,66 @@ conversations. Update it at the end of every PR.
     (switch tab, heading rendered, no script/iframe/img in the reader, outline link jumps to
     its anchor).
 
+- **PR 12, P1B-SEARCH** (`src/modules/search`, docs/SEARCH_DESIGN.md):
+  - `tokenizer.ts` (`TOKENIZER_VERSION = 1`):
+    - NFKC plus lower-case;
+    - CJK runs become bigrams and unigrams at consecutive positions; words stay whole;
+    - one position per separator run, so phrases never cross punctuation;
+    - output is a `tsvector` literal.
+    - Queries: CJK runs become `<->` bigram phrases, words become prefixes (`:*`), quoted
+      text becomes an exact phrase, at most 16 terms. Lexemes are only `\p{L}\p{N}`, so
+      input cannot inject tsquery syntax.
+    - Fields of one vector sit 100 positions apart, so phrases never cross fields.
+  - `chunks.ts`: chunks follow sections, at most 1,200 characters, split at paragraph or
+    sentence ends with a 100-character overlap, with exact plain-text offsets. Cuts never
+    split a surrogate pair.
+  - Migration `0006_search_index`: `content_chunks`, `artifact_search_documents` (GIN
+    indexes) and `search_index_states`.
+  - `indexer.ts`:
+    - `saveExtraction` enqueues `search.index_version` in its own transaction. A restored
+      version without archived text is queued by version id, for its metadata.
+    - The job replaces a version's chunks, records the state it built them from, and
+      rebuilds its artifact's metadata document under the artifact row lock.
+    - `search.reindex_all` (daily) queues versions whose recorded state does not match
+      their active extraction and tokenizer, and artifacts without a metadata document.
+  - `query.ts`: one parameterized query matches each term separately and keeps artifacts
+    where every term matched in some chunk of the current version or in the metadata
+    document (AND per artifact, not per chunk). Workspace-scoped, deleted excluded.
+    Snippets are `{text, highlight}` segments from the best chunk.
+  - Lint: backslashes are banned in `sql` templates (the tag drops them, which had silently
+    turned the old backfill regex `'\S'` into `'S'`).
+  - Pages read repeated search parameters (`?q=a&q=b`) by their first value
+    (`src/lib/search-params.ts`) instead of crashing.
+  - `GET /api/search?q&offset`; library page `/?q=` with a plain GET form (works without
+    JS), results with `<mark>` highlights, linking to reading mode.
+  - Tests:
+    - `tests/unit/search/*`: tokenizer (positions, normalization, phrases, injection
+      safety, term cap), chunker (offsets, boundaries, overlap, progress) and snippets
+      (full-width, word-start prefixes, truncation).
+    - `tests/integration/search/search.test.ts`: 2-character word; contiguous 4-character
+      phrase where every bigram also occurs apart; prefix, full-width, mixed and quoted
+      phrase; summary; snippet; workspace isolation; deleted artifact; current version
+      only; backfill; AND across description/body and across sections; no phrase across
+      metadata fields; title-over-body ranking; state-based backfill (own job never ran;
+      no extraction); metadata built from the version current at commit (row lock).
+    - `roundtrip.test.ts`: a restore queues an index job for every restored version.
+    - Test infrastructure: `uniqueIp()` is now random. The old per-file counter restarted in
+      every file while rate-limit buckets live in the database for the whole run, so a
+      file's 4th sign-in could hit the bucket `auth.test.ts` exhausts on purpose. That gave
+      a 429 sign-in and a stray 401, seen twice in `imports-api.test.ts`; it could not be
+      reproduced in 13 further full runs. Tests that need a session now use `signInOk`,
+      which fails with the sign-in status and body instead of a later 401.
+    - `tests/integration/api/search-api.test.ts`.
+    - E2E: Chinese search with a highlighted hit.
+    - Adjacency, current-version, deletion and workspace filters were each mutation-checked,
+      and so was every fix from the independent review (per-artifact AND, field gap, row
+      lock, state backfill, no-extraction metadata, restore enqueue, surrogate-safe cuts,
+      word truncation).
+
 **Not done or not verified**
+
+- Search filters (project, collection, tag, source model, kind, dates), sorting and
+  totals: they need P1B-ORG's tables. No Simplified↔Traditional folding (SEARCH_DESIGN §9).
 
 - Reading mode shows document images as alt text only. Serving derived images of imported
   documents through an authorized route is not built.
@@ -362,23 +421,26 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 - P1A-ENC: built-in `age` encryption for exports.
 - Verify the S3 adapter against real R2. This needs the owner's credentials.
 
-**PR 12: P1B-SEARCH** (docs/SEARCH_DESIGN.md, ADR-009):
+**PR 13: P1B-ORG** (DATA_MODEL §4.4, API_CONTRACT §6):
 
-1. `src/modules/search/tokenizer.ts` (versioned): NFKC + lower-case; CJK runs become bigrams
-   plus unigrams with explicit positions; Latin/number runs become words. Output is a
-   `tsvector` literal; the query side builds `<->` phrases from bigrams.
-2. Schema: a search document per version (title, summary, plain text, weights) with a GIN
-   index; migration via `pnpm db:generate --name search_index`.
-3. Index on extraction save and on re-extraction (`modules/jobs`), plus a backfill job.
-4. `GET /api/search?q=` with workspace scoping, ranking, snippets (highlighting by our own
-   offsets, rendered as text), and keyset pagination.
-5. UI: the search box on the library page, with results and highlighted snippets.
-6. Tests: tokenizer unit tests (Traditional Chinese phrases, mixed scripts, full-width),
-   integration tests for ranking, scoping and the backfill, and an E2E search step.
+1. Schema (one migration): `tags` and `artifact_tags`, `collections` (hierarchy, `kind` of
+   category or collection) and `collection_items`. Research projects already exist; add
+   their API.
+2. APIs: CRUD for projects, collections and tags; assign or unassign artifacts. Tag names
+   are normalized (NFKC, trimmed, lower-case, collapsed whitespace), unique per workspace,
+   and can be merged. Everything is workspace-scoped and out-of-scope is 404.
+3. Re-index the artifact metadata document on tag changes (`indexArtifactMetadata`, tags
+   weighted B), and add the search filters (project, collection, tag, kind, source model,
+   dates) and sort (relevance, newest, title) to `searchArtifacts` and `/api/search`.
+4. UI: tags and project on the detail page; collections and a filter bar on the library.
+5. Include the new tables in export format v1 (or bump to v2 with a migration note) and in
+   restore. The round-trip test must keep passing.
+6. Tests: integration tests for CRUD, scoping, tag normalization and merge, filters, and
+   export/restore round trip with tags; an E2E step that tags an artifact and filters by
+   that tag.
 
 **Then Phase 1B:**
 
-- organization (projects, collections, tags)
 - notes, reading state
 - sharing
 - ops dashboard

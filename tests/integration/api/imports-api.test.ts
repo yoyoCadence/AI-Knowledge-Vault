@@ -14,7 +14,7 @@ import { getEnv } from "@/infrastructure/config/env";
 import { closeDb } from "@/infrastructure/database/client";
 import { newId } from "@/lib/ids";
 import { htmlDocument, pngImage } from "@tests/fixtures/builders";
-import { createTestAdmin, signIn } from "../helpers/auth";
+import { createTestAdmin, signInOk } from "../helpers/auth";
 import { closeTestDb } from "../helpers/db";
 import { drainJobs, newBatch, uploadFile } from "../helpers/imports";
 
@@ -38,7 +38,7 @@ function apiRequest(path: string, init: { method?: string; cookie?: string; body
 
 async function loggedIn() {
   const admin = await createTestAdmin();
-  const { cookie } = await signIn(admin.email, admin.password);
+  const { cookie } = await signInOk(admin.email, admin.password);
   return { ...admin, cookie };
 }
 

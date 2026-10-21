@@ -35,6 +35,13 @@ export const zhTW = {
   "state.retry": "重試",
 
   "library.title": "知識庫",
+  "search.label": "搜尋知識庫",
+  "search.placeholder": "搜尋標題、摘要與內文（支援繁體中文）",
+  "search.submit": "搜尋",
+  "search.results": "「{q}」的搜尋結果",
+  "search.none": "找不到符合「{q}」的作品。可以試試較短的詞，或改用其他說法。",
+  "search.invalid": "請輸入至少一個文字或數字。",
+  "search.clear": "清除搜尋",
   "library.empty.title": "知識庫還是空的",
   "library.empty.body":
     "匯入功能完成後，你可以把 Claude Design、ChatGPT、Gemini 等工具產生的 HTML、ZIP、PDF 與 Markdown 拖曳到這裡保存。",

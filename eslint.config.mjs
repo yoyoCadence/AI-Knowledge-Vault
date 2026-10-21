@@ -15,6 +15,20 @@ const noNextInDomain = {
   ],
 };
 
+/** SQL safety (docs/SECURITY.md §11), shared by every file-scoped no-restricted-syntax. */
+const SQL_RULES = [
+  {
+    selector: "MemberExpression[object.name='sql'][property.name='raw']",
+    message: "sql.raw is banned outside migrations (docs/SECURITY.md §11).",
+  },
+  {
+    // The sql tag reads cooked strings: '\S' reaches Postgres as 'S'. Pass such text as a
+    // parameter or use a POSIX class ([[:space:]]) instead.
+    selector: "TaggedTemplateExpression[tag.name='sql'] TemplateElement[value.raw=/\\\\/]",
+    message: "No backslashes in sql`` templates: the tag drops them (use a parameter).",
+  },
+];
+
 export default defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -37,13 +51,7 @@ export default defineConfig([
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
       ],
       "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports" }],
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector: "MemberExpression[object.name='sql'][property.name='raw']",
-          message: "sql.raw is banned outside migrations (docs/SECURITY.md §11).",
-        },
-      ],
+      "no-restricted-syntax": ["error", ...SQL_RULES],
     },
   },
   {
@@ -66,16 +74,13 @@ export default defineConfig([
   },
   {
     // Reading mode renders untrusted documents: no HTML strings may reach the DOM here
-    // (docs/SECURITY.md §5 "Reading mode"). Restates the global sql.raw ban, which a
+    // (docs/SECURITY.md §5 "Reading mode"). Restates the global SQL rules, which a
     // file-scoped no-restricted-syntax would otherwise replace.
     files: ["src/components/reader/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-syntax": [
         "error",
-        {
-          selector: "MemberExpression[object.name='sql'][property.name='raw']",
-          message: "sql.raw is banned outside migrations (docs/SECURITY.md §11).",
-        },
+        ...SQL_RULES,
         {
           selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
           message: "Reading mode never injects HTML (docs/SECURITY.md §5).",

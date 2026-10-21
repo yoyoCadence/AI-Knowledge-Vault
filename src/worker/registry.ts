@@ -14,6 +14,7 @@ import {
   processLimitsFromEnv,
 } from "@/modules/imports";
 import { JobRegistry } from "@/modules/jobs";
+import { searchIndexJobDefinition, searchReindexAllJobDefinition } from "@/modules/search";
 
 /**
  * All job types the worker executes. Each handler module documents why it is idempotent.
@@ -33,5 +34,7 @@ export function buildJobRegistry(env: Env): JobRegistry {
         env.EXPORT_JOB_TIMEOUT_MS,
       ),
     )
-    .register(integrityScheduleJobDefinition());
+    .register(integrityScheduleJobDefinition())
+    .register(searchIndexJobDefinition())
+    .register(searchReindexAllJobDefinition());
 }

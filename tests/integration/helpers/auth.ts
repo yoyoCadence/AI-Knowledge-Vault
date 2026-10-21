@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { getEnv } from "@/infrastructure/config/env";
 import { createAuth, createAdmin, resolveActor, type Auth } from "@/modules/auth";
 import { newId } from "@/lib/ids";
@@ -19,11 +20,15 @@ export async function createTestAdmin(password = TEST_PASSWORD) {
   return { ...created, email, password };
 }
 
-let ipCounter = 0;
-/** Unique client IP per call site so rate-limit buckets never collide across tests. */
+/**
+ * A random private client IP, so rate-limit buckets never collide across tests. The buckets
+ * live in the database for the whole run, so a per-file counter is not enough: it restarts
+ * in every test file, and a file's 4th sign-in could land in the bucket that auth.test.ts
+ * deliberately exhausted, failing with 429 (seen as a stray 401 in imports-api.test.ts).
+ */
 export function uniqueIp(): string {
-  ipCounter += 1;
-  return `10.${Math.floor(ipCounter / 250) % 250}.${ipCounter % 250}.${(Date.now() % 200) + 1}`;
+  const [a, b, c] = randomBytes(3);
+  return `10.${a}.${b}.${(c! % 254) + 1}`;
 }
 
 export function authRequest(
@@ -58,6 +63,17 @@ export async function signIn(email: string, password: string, ip?: string) {
     authRequest("/sign-in/email", { body: { email, password }, ip }),
   );
   return { response, cookie: cookieHeaderFrom(response) };
+}
+
+/** Signs in and fails loudly (status and body) unless it succeeded, for tests that need a session. */
+export async function signInOk(email: string, password: string, ip?: string) {
+  const result = await signIn(email, password, ip);
+  if (result.response.status !== 200) {
+    throw new Error(
+      `sign-in failed: ${result.response.status} ${await result.response.clone().text()}`,
+    );
+  }
+  return result;
 }
 
 export async function actorFromCookie(cookie: string) {

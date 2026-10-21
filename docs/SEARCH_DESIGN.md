@@ -31,7 +31,9 @@ behaviour depends on the database `LC_CTYPE`.
 4. **Output:** a `tsvector` **literal** with explicit positions and weights, for example
    `'形態':1A '態發':2A '形':1A …`, bound as a parameter and cast with `$1::tsvector`.
    `to_tsvector` would renumber positions, so it is not used. Lexemes contain only
-   `\p{L}\p{N}`, so quoting is trivial and injection-proof.
+   `\p{L}\p{N}`, so quoting is trivial and injection-proof. The parts of one vector (title,
+   description, source fields) are laid out 100 positions apart, more than any phrase
+   distance, so a phrase never matches across two fields.
 
 The query tokenizer uses the same normalization:
 
@@ -40,7 +42,11 @@ The query tokenizer uses the same normalization:
   Length 1 becomes the unigram.
 - A **Latin term** becomes a prefix match `term:*` (partial keywords, e.g. `therm` →
   `thermal`).
-- Multiple terms are joined with `&` (AND). A quoted phrase "…" keeps adjacency for Latin too.
+- Multiple terms are AND-ed **per artifact**: each term is matched on its own, and an
+  artifact qualifies when every term matched somewhere in it, in any chunk of its current
+  version or in its metadata document. So `對策 綠廊` finds a document with 對策 in its
+  description and 綠廊 in a later section. Phrases (CJK runs, quoted text) still match
+  within one chunk or one field. A quoted phrase "…" keeps adjacency for Latin too.
 - Up to 16 terms. Each lexeme is escaped by construction, since tokens contain only
   `\p{L}\p{N}`, so user input can never inject tsquery operators.
 
@@ -63,22 +69,24 @@ Artifact-level metadata (title A, tags and description B, notes and source info 
 ## 4. Query execution
 
 ```sql
-WITH q AS (SELECT $tsquery::tsquery AS query),
-chunk_hits AS (
-  SELECT c.artifact_id, c.id AS chunk_id, ts_rank_cd(c.search_vector, q.query) AS rank
-  FROM content_chunks c, q
-  JOIN artifacts a ON a.id = c.artifact_id
-  WHERE c.workspace_id = $ws AND a.deleted_at IS NULL
-    AND c.artifact_version_id = a.current_version_id
-    AND c.search_vector @@ q.query
+WITH terms (term_no, query) AS (VALUES (1, $t1::tsquery), (2, $t2::tsquery) …),
+any_term AS (SELECT $t1_or_t2::tsquery AS query),        -- GIN narrowing and ranking
+chunk_rows AS (                                        -- current-version chunks, any term
+  SELECT c.* FROM content_chunks c JOIN artifacts a ON a.id = c.artifact_id, any_term q
+  WHERE c.workspace_id = $ws AND a.workspace_id = $ws AND a.deleted_at IS NULL
+    AND c.artifact_version_id = a.current_version_id AND c.search_vector @@ q.query
 ),
-meta_hits AS (
-  SELECT d.artifact_id, ts_rank_cd(d.search_vector, q.query) * 2 AS rank   -- metadata boost
-  FROM artifact_search_documents d, q
-  JOIN artifacts a ON a.id = d.artifact_id
-  WHERE d.workspace_id = $ws AND a.deleted_at IS NULL AND d.search_vector @@ q.query
+meta_rows AS ( … same for artifact_search_documents … ),
+matched AS (                                           -- every term somewhere in the artifact
+  SELECT artifact_id FROM (
+    SELECT r.artifact_id, t.term_no FROM chunk_rows r JOIN terms t ON r.search_vector @@ t.query
+    UNION
+    SELECT m.artifact_id, t.term_no FROM meta_rows m JOIN terms t ON m.search_vector @@ t.query
+  ) hits GROUP BY artifact_id HAVING count(DISTINCT term_no) = $termCount
 )
-SELECT artifact_id, max(rank) … GROUP BY artifact_id ORDER BY score DESC LIMIT $n OFFSET $m
+-- score = best chunk's ts_rank_cd(any_term) + 2 × the metadata document's (metadata boost);
+-- the best chunk is also the snippet source.
+SELECT … ORDER BY score DESC, created_at DESC, id LIMIT $n OFFSET $m
 ```
 
 Filters are applied in the same query: project, collection, tag, source model, created or
@@ -86,8 +94,15 @@ research date range, and content kind. Sorting: relevance (default), newest, or 
 
 **Snippets and highlight.** For each result's best chunk, the app finds match spans in the
 chunk text with the same normalization and builds a snippet of about 160 characters around
-the first span. It returns `segments: [{text, highlight: boolean}]`. The UI renders
-segments as text nodes, with no HTML injection.
+the first span. Normalization is applied per code point, so every match maps back to exact
+offsets in the original text (a combining sequence that NFKC would compose is the one case
+where a highlight can differ from the index). Words match only at a word start (prefix
+search); CJK runs match anywhere. It returns `segments: [{text, highlight: boolean}]`. The UI
+renders segments as text nodes and `<mark>` elements, with no HTML injection.
+
+**Built so far (PR 12):** `q` and `offset` (20 per page, offsets up to 1,000). Filters
+(project, collection, tag, source model, kind, dates), sorting and totals come with
+P1B-ORG, which adds the tables they filter on.
 
 ## 5. Permission filtering
 
@@ -98,17 +113,32 @@ future public showcase search would use a separate query restricted to
 
 ## 6. Indexing lifecycle
 
-- After an extraction commits, a `search.index_version` job (idempotency key
-  `search:{versionId}:{tokenizerVersion}`) chunks the active extraction and writes
-  `content_chunks`, replacing earlier chunks for that version in one transaction.
-- Metadata changes (title, tags, notes) call `reindexArtifactMetadata(artifactId)`
-  synchronously. It is a single row, so this is cheap.
-- A tokenizer upgrade bumps `TOKENIZER_VERSION`, and a `search.reindex_all` job rebuilds
-  everything.
+- `saveExtraction` enqueues a `search.index_version` job in the same transaction that saves
+  the extraction (import, re-extraction and restore all go through it). The idempotency key
+  is `search.index_version:{extractionId}:{tokenizerVersion}`, so a re-extraction or a
+  tokenizer upgrade indexes again and a retry does not. A restored version without archived
+  text (an image) is queued by version instead (`…:version:{versionId}:…`), so its title
+  is searchable even if re-extraction fails for good.
+- The job (`indexVersion`) locks the version row, replaces its `content_chunks` with chunks
+  of the active extraction, records what they were built from in `search_index_states`
+  (extraction, tokenizer version, chunk count; also when the text is empty), and rebuilds
+  the artifact's `artifact_search_documents` row (title A; description and summary B;
+  source platform, model, author and original filename C), all in one transaction.
+  Rebuilding the metadata document locks the artifact row first, so a job for an older
+  version can never overwrite the document of a version that became current meanwhile.
+- Chunk boundaries never split a surrogate pair (emoji, CJK Extension B characters).
+- Metadata edits will call `indexArtifactMetadata(artifactId)` synchronously once metadata
+  editing exists (P1B-DETAIL); today metadata only changes with a new version.
+- `search.reindex_all` runs daily from the maintenance scheduler. It queues index jobs only
+  for current versions without a `search_index_states` row for their active extraction and
+  the current tokenizer, and for artifacts without a current metadata document (keyed per
+  day, so a job that failed for good is retried the next day). That makes it the backfill
+  after deploy and after a `TOKENIZER_VERSION` bump. It decides from recorded state, never
+  by guessing from the text.
 
 ## 7. Validation
 
-`tests/integration/search.test.ts` checks the following against real Postgres with
+`tests/integration/search/search.test.ts` checks the following against real Postgres with
 Traditional Chinese fixtures:
 
 - 2-character word (`熱島`)
@@ -119,6 +149,18 @@ Traditional Chinese fixtures:
 - full-width input (`ＡＩ` → `ai`)
 - private-workspace isolation
 - snippet highlight offsets
+- AND across the artifact: one term in the description and one in the body, or in two
+  different sections (chunks)
+- no phrase match across two metadata fields
+- ranking: a title hit above a body-only hit
+- backfill from recorded state: a current version whose own job never ran is re-queued even
+  though its artifact has a metadata document; a version without an extraction still gets
+  its metadata document
+- the metadata document follows the version that is current when it commits (row lock)
+
+`tests/unit/search/*` covers the tokenizer and chunker, including surrogate pairs at chunk
+cuts and word truncation. `tests/integration/backup/roundtrip.test.ts` checks that a restore
+queues an index job for every restored version.
 
 ## 8. Phase 2: semantic and hybrid search
 
@@ -136,3 +178,8 @@ Traditional Chinese fixtures:
 - Bigram matching can match across word boundaries (`會議` inside `機會議題`). This is
   acceptable for recall-oriented personal search, and ranking mitigates it.
 - There is no stemming for English. Prefix matching covers most needs.
+- Postgres keeps at most 256 positions per lexeme in one `tsvector`. In very repetitive text
+  (a long table of `0`s, say), later occurrences of such a lexeme still match single-token
+  queries but drop out of phrase matches. Chunks of 1,200 characters keep this rare.
+- Ranking sums the best chunk and the metadata document. It does not count how many chunks
+  match. Good enough for a personal library; revisit with hybrid ranking (§8).

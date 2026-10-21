@@ -55,6 +55,16 @@ test.describe("import → library → artifact (Scenario A)", () => {
     await expect(page.getByRole("heading", { name: "端對端 Claude Design 報告" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "端對端測試筆記" })).toBeVisible();
 
+    // Search (Traditional Chinese, in the body): indexing runs right after import, so retry.
+    await expect(async () => {
+      await page.goto(`/?q=${encodeURIComponent("鋪面蓄熱")}`);
+      await expect(page.getByTestId("search-results")).toBeVisible({ timeout: 1_000 });
+    }).toPass({ timeout: 30_000 });
+    const hit = page.getByTestId("search-results").getByRole("link").first();
+    await expect(hit).toContainText("端對端 Claude Design 報告");
+    await expect(hit.locator("mark")).toHaveText(["鋪面蓄熱"]);
+    await page.goto("/");
+
     // Artifact detail: metadata, outline, and a byte-identical original download.
     await page.getByRole("heading", { name: "端對端 Claude Design 報告" }).click();
     await expect(

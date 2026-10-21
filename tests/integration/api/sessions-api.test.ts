@@ -5,7 +5,7 @@ import { GET as listSessions } from "@/app/api/sessions/route";
 import { getEnv } from "@/infrastructure/config/env";
 import { closeDb } from "@/infrastructure/database/client";
 import { newId } from "@/lib/ids";
-import { createTestAdmin, signIn } from "../helpers/auth";
+import { createTestAdmin, signInOk } from "../helpers/auth";
 import { closeTestDb } from "../helpers/db";
 
 afterAll(async () => {
@@ -41,7 +41,7 @@ describe("authenticated API routes", () => {
 
   it("lists the actor's sessions with a valid session cookie", async () => {
     const admin = await createTestAdmin();
-    const { cookie } = await signIn(admin.email, admin.password);
+    const { cookie } = await signInOk(admin.email, admin.password);
     const response = await listSessions(apiRequest("/api/sessions", { cookie }), params({}));
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
@@ -51,7 +51,7 @@ describe("authenticated API routes", () => {
 
   it("rejects cross-origin and origin-less mutations (CSRF)", async () => {
     const admin = await createTestAdmin();
-    const { cookie } = await signIn(admin.email, admin.password);
+    const { cookie } = await signInOk(admin.email, admin.password);
 
     const foreign = await revokeOthers(
       apiRequest("/api/sessions/revoke-others", {
@@ -81,7 +81,7 @@ describe("authenticated API routes", () => {
 
   it("returns 404 for malformed and foreign session ids", async () => {
     const admin = await createTestAdmin();
-    const { cookie } = await signIn(admin.email, admin.password);
+    const { cookie } = await signInOk(admin.email, admin.password);
     const malformed = await deleteSession(
       apiRequest("/api/sessions/x", { method: "DELETE", cookie }),
       params({ id: "not-a-uuid" }),

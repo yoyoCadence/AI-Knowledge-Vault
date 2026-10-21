@@ -6,7 +6,7 @@ import { closeDb } from "@/infrastructure/database/client";
 import { artifactVersions } from "@/infrastructure/database/schema";
 import { newId } from "@/lib/ids";
 import { htmlDocument, markdownDocument, pngImage } from "@tests/fixtures/builders";
-import { createTestAdmin, signIn } from "../helpers/auth";
+import { createTestAdmin, signInOk } from "../helpers/auth";
 import { closeTestDb, testDb } from "../helpers/db";
 import { drainJobs, newBatch, uploadFile } from "../helpers/imports";
 
@@ -20,7 +20,7 @@ afterAll(async () => {
 
 async function loggedIn() {
   const admin = await createTestAdmin();
-  const { cookie } = await signIn(admin.email, admin.password);
+  const { cookie } = await signInOk(admin.email, admin.password);
   const actor = {
     userId: admin.userId,
     workspaceId: admin.workspaceId,

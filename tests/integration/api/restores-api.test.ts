@@ -33,7 +33,7 @@ import type { JobContext } from "@/modules/jobs";
 import { SafeZip } from "@/modules/extraction";
 import { htmlDocument } from "@tests/fixtures/builders";
 import { buildZip, type ZipEntrySpec } from "@tests/fixtures/zip";
-import { createTestAdmin, signIn } from "../helpers/auth";
+import { createTestAdmin, signInOk } from "../helpers/auth";
 import { closeTestDb, testDb } from "../helpers/db";
 import { drainJobs, newBatch, uploadFile } from "../helpers/imports";
 
@@ -61,7 +61,7 @@ function apiRequest(urlPath: string, init: { method?: string; cookie: string; bo
 
 async function owner() {
   const admin = await createTestAdmin();
-  const { cookie } = await signIn(admin.email, admin.password);
+  const { cookie } = await signInOk(admin.email, admin.password);
   const actor = {
     userId: admin.userId,
     workspaceId: admin.workspaceId,

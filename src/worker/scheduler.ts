@@ -3,6 +3,7 @@ import type { Logger } from "@/infrastructure/observability/logger";
 import { EXPORT_CLEANUP_JOB_TYPE, INTEGRITY_SCHEDULE_JOB_TYPE } from "@/modules/backup";
 import { IMPORT_CLEANUP_JOB_TYPE } from "@/modules/imports";
 import { enqueueJob } from "@/modules/jobs";
+import { SEARCH_REINDEX_ALL_JOB_TYPE } from "@/modules/search";
 
 /**
  * Periodic maintenance scheduling. Each period maps to one idempotency key
@@ -13,6 +14,8 @@ export const MAINTENANCE_JOBS = [
   { type: EXPORT_CLEANUP_JOB_TYPE, everyMs: 60 * 60 * 1000 },
   // Weekly re-hash of every original in every workspace (BACKUP_RECOVERY §7).
   { type: INTEGRITY_SCHEDULE_JOB_TYPE, everyMs: 7 * 24 * 60 * 60 * 1000 },
+  // Daily: index anything missing (backfill after deploy, permanently failed index jobs).
+  { type: SEARCH_REINDEX_ALL_JOB_TYPE, everyMs: 24 * 60 * 60 * 1000 },
 ] as const;
 
 export async function enqueueDueMaintenance(db: Database, now = new Date()): Promise<number> {
