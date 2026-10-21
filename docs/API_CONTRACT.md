@@ -96,7 +96,8 @@ from imports. A metadata-only artifact type can be added later if needed.
 
 Projects (built): archiving (`status: archived`) only takes a project out of the pickers;
 it can still be assigned through the API and through imports. Titles are 1–200 visible
-characters (no bidirectional controls), descriptions up to 2,000 characters without
+characters (bidirectional embeddings, overrides and isolates are refused; directional
+marks LRM, RLM and ALM are stripped), descriptions up to 2,000 characters without
 control characters other than tab and line feed (the same rules as artifact titles and
 descriptions, `src/lib/text.ts`). Date filters take YYYY-MM-DD from year 1 on; `model` is
 matched exactly as recorded (not trimmed) and may not contain control characters.

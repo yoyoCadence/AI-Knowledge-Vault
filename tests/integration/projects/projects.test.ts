@@ -111,6 +111,24 @@ describe("research projects (API_CONTRACT §6)", () => {
     ).toBe("第一行\n第二行");
   });
 
+  it("counts only the workspace's own artifacts, even if a reference crosses workspaces", async () => {
+    const project = await createProject(db, owner, { title: "跨工作區計數" }, meta);
+    const foreign = await importFile(
+      stranger,
+      "foreign-member.html",
+      htmlDocument({ title: "他人文件" }),
+      "他人文件",
+    );
+    // The API never allows this (the project must be in the actor's workspace); only a direct
+    // database write can create it, and it must not show up in the owner's count.
+    await db.update(artifacts).set({ projectId: project.id }).where(eq(artifacts.id, foreign));
+    const row = (await listProjects(db, owner)).find((item) => item.id === project.id);
+    expect(row?.artifactCount).toBe(0);
+    expect(
+      (await listArtifacts(db, owner, { limit: 50, filters: { projectId: project.id } })).items,
+    ).toEqual([]);
+  });
+
   it("puts artifacts in a project, counts them and filters by it", async () => {
     const project = await createProject(db, owner, { title: "綠建築" }, meta);
     const id = await importFile(

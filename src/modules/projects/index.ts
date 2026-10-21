@@ -43,6 +43,9 @@ function normalizeDescription(input: string | null | undefined): string | null {
 }
 
 export async function listProjects(db: DbExecutor, actor: Actor): Promise<ProjectSummary[]> {
+  // `artifacts.project_id` references the project id alone, so the join matches the workspace
+  // too: a reference that crosses workspaces (only possible by writing to the database
+  // directly) must not leak into another workspace's count.
   return db
     .select({
       id: researchProjects.id,
@@ -55,7 +58,11 @@ export async function listProjects(db: DbExecutor, actor: Actor): Promise<Projec
     .from(researchProjects)
     .leftJoin(
       artifacts,
-      and(eq(artifacts.projectId, researchProjects.id), isNull(artifacts.deletedAt)),
+      and(
+        eq(artifacts.projectId, researchProjects.id),
+        eq(artifacts.workspaceId, researchProjects.workspaceId),
+        isNull(artifacts.deletedAt),
+      ),
     )
     .where(
       and(eq(researchProjects.workspaceId, actor.workspaceId), isNull(researchProjects.deletedAt)),

@@ -457,6 +457,13 @@ conversations. Update it at the end of every PR.
     spaces (now exact); a deleted project's id still showed on artifacts (now null); the
     editor re-sent an untouched description with CRLF line endings; project errors quoted
     the artifact limits.
+  - Codex review of the PR found, and this PR fixes, each with a test that fails without the
+    fix: project counts joined artifacts by project id only, so a cross-workspace reference
+    (possible only by writing to the database directly; `artifacts.project_id` is not a
+    workspace-scoped key) leaked into another workspace's count; titles and descriptions kept
+    the directional marks LRM, RLM and ALM, which are now stripped (as in tag names). Not
+    changed: the search heading shows no count for zero results, where the page already says
+    "no results".
   - Tests: `tests/integration/projects/projects.test.ts` (CRUD, scoping, soft delete, counts,
     project assignment and filters, edit with re-index, every filter, both sorts with the
     cursor, search filters, sort and total), `tests/integration/api/projects-api.test.ts`
