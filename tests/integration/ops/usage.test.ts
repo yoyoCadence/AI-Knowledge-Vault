@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
 import { GET as usageRoute } from "@/app/api/ops/usage/route";
 import { getEnv } from "@/infrastructure/config/env";
@@ -8,6 +8,7 @@ import {
   derivedAssets,
   exportRuns,
   fileAssets,
+  importItems,
   processingJobs,
   workspaceMembers,
 } from "@/infrastructure/database/schema";
@@ -187,6 +188,60 @@ describe("usage report (FR-OPS-2/3)", () => {
     expect(report.jobs.recentFailures[0]!.error!.endsWith("…")).toBe(true);
     // Another workspace sees none of it.
     expect((await getUsageReport(db, await createTestActor())).jobs.byStatus.failed).toBe(0);
+  });
+
+  it("dates failures by when they failed, not by later bookkeeping", async () => {
+    const actor = await createTestActor();
+    await importAll(actor, [
+      { filename: "old.pdf", bytes: "not a pdf" },
+      { filename: "new.pdf", bytes: "not a pdf either" },
+    ]);
+    const hour = 60 * 60 * 1000;
+    const items = await db
+      .select({ id: importItems.id, filename: importItems.originalFilename })
+      .from(importItems)
+      .where(eq(importItems.workspaceId, actor.workspaceId));
+    const id = (name: string) => items.find((item) => item.filename === name)!.id;
+    const oldFailure = new Date(Date.now() - 10 * 24 * hour);
+    await db
+      .update(importItems)
+      .set({ completedAt: oldFailure })
+      .where(eq(importItems.id, id("old.pdf")));
+    await db
+      .update(importItems)
+      .set({ completedAt: new Date(Date.now() - hour) })
+      .where(eq(importItems.id, id("new.pdf")));
+    // Staging cleanup of the old failure, days later, refreshes its updatedAt.
+    await db
+      .update(importItems)
+      .set({ stagingCleanedAt: new Date() })
+      .where(eq(importItems.id, id("old.pdf")));
+
+    const jobs = await db
+      .select({ id: processingJobs.id, payload: processingJobs.payload })
+      .from(processingJobs)
+      .where(
+        and(eq(processingJobs.workspaceId, actor.workspaceId), eq(processingJobs.status, "failed")),
+      );
+    expect(jobs).toHaveLength(2);
+    const [olderJob, newerJob] = jobs;
+    await db
+      .update(processingJobs)
+      .set({ completedAt: oldFailure, updatedAt: new Date() })
+      .where(eq(processingJobs.id, olderJob!.id));
+    await db
+      .update(processingJobs)
+      .set({ completedAt: new Date(Date.now() - hour), updatedAt: new Date(Date.now() - hour) })
+      .where(eq(processingJobs.id, newerJob!.id));
+
+    const report = await getUsageReport(db, actor);
+    expect(report.imports.recentFailures.map((item) => item.filename)).toEqual([
+      "new.pdf",
+      "old.pdf",
+    ]);
+    expect(report.imports.recentFailures[1]!.failedAt).toEqual(oldFailure);
+    expect(report.jobs.recentFailures.map((job) => job.id)).toEqual([newerJob!.id, olderJob!.id]);
+    expect(report.jobs.recentFailures[1]!.failedAt).toEqual(oldFailure);
   });
 
   it("reports the last export and integrity check, and the latest attempts", async () => {

@@ -149,17 +149,20 @@ export async function getUsageReport(
   >;
   for (const row of jobCounts) byStatus[row.status] = row.count;
 
+  // When it failed: later bookkeeping (staging cleanup, …) touches updatedAt, never this.
+  const jobFailedAt = sql<Date>`coalesce(${processingJobs.completedAt}, ${processingJobs.updatedAt})`;
+  const itemFailedAt = sql<Date>`coalesce(${importItems.completedAt}, ${importItems.updatedAt})`;
   const failedJobs = await db
     .select({
       id: processingJobs.id,
       type: processingJobs.type,
       errorCode: processingJobs.errorCode,
       error: processingJobs.lastError,
-      failedAt: processingJobs.updatedAt,
+      failedAt: jobFailedAt.mapWith(processingJobs.completedAt),
     })
     .from(processingJobs)
     .where(and(eq(processingJobs.workspaceId, ws), eq(processingJobs.status, "failed")))
-    .orderBy(desc(processingJobs.updatedAt), desc(processingJobs.id))
+    .orderBy(desc(jobFailedAt), desc(processingJobs.id))
     .limit(RECENT_FAILURES);
 
   const [failedImportCount] = await db
@@ -172,11 +175,11 @@ export async function getUsageReport(
       filename: importItems.originalFilename,
       errorCode: importItems.errorCode,
       error: importItems.errorMessage,
-      failedAt: importItems.updatedAt,
+      failedAt: itemFailedAt.mapWith(importItems.completedAt),
     })
     .from(importItems)
     .where(and(eq(importItems.workspaceId, ws), eq(importItems.status, "failed")))
-    .orderBy(desc(importItems.updatedAt), desc(importItems.id))
+    .orderBy(desc(itemFailedAt), desc(importItems.id))
     .limit(RECENT_FAILURES);
 
   const [lastExport] = await db
