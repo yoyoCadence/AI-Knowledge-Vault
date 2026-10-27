@@ -46,6 +46,23 @@ function scan(kind: ShareFinding["kind"], text: string, patterns: RegExp[]): Sha
   return count > 0 ? { kind, count, samples } : null;
 }
 
+// Destinations in our normalized Markdown: inline links and images `](url)`, autolinks
+// `<scheme:…>`, and reference definitions `[id]: url`. Every part is bounded and starts at a
+// literal, so extraction stays linear.
+const LINK_DESTINATION =
+  /\]\(\s{0,8}<?([^\s<>()]{1,2048})|<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]{1,2048})>|^ {0,3}\[[^\]\n]{1,999}\]:[ \t]{0,8}<?([^\s<>]{1,2048})/gm;
+
+/**
+ * The link and image destinations of normalized Markdown. Extracted text keeps only link
+ * labels, but the reader renders these as links, so the scan must see them too.
+ */
+export function linkDestinations(markdown: string): string[] {
+  return Array.from(
+    markdown.matchAll(LINK_DESTINATION),
+    (match) => match[1] ?? match[2] ?? match[3] ?? "",
+  );
+}
+
 /** What in `text` looks like secrets, email addresses or private URLs. */
 export function scanShareText(text: string): ShareFinding[] {
   return [

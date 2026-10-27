@@ -19,9 +19,9 @@ import { getArtifactForActor, ORIGINAL_DOWNLOAD_TTL_SECONDS } from "@/modules/ar
 import { recordAudit, type RequestMeta } from "@/modules/audit";
 import type { Actor } from "@/modules/auth";
 import type { JobDefinition } from "@/modules/jobs";
-import { scanShareText, suspiciousFiles, type ShareFinding } from "./scan";
+import { linkDestinations, scanShareText, suspiciousFiles, type ShareFinding } from "./scan";
 
-export { scanShareText, suspiciousFiles, type ShareFinding };
+export { linkDestinations, scanShareText, suspiciousFiles, type ShareFinding };
 import { createPreviewToken, findPreviewFile, SITE_PREVIEW_KINDS } from "@/modules/preview";
 
 /**
@@ -298,9 +298,9 @@ export async function setVisibility(
 const SCAN_MAX_CHARS = 2_000_000;
 
 /**
- * Advisory scan before sharing (FR-SHR-3): the artifact's text and metadata for what looks like
- * secrets, email addresses and private URLs, its preview files for files that usually hold
- * secrets, and its sensitivity. The owner decides; `blocked` is set only for restricted artifacts,
+ * Advisory scan before sharing (FR-SHR-3): the artifact's text, link destinations and metadata
+ * for what looks like secrets, email addresses and private URLs, its preview files for files
+ * that usually hold secrets, and its sensitivity. The owner decides; `blocked` is set only for restricted artifacts,
  * which are never shared.
  */
 export async function checkShare(
@@ -316,7 +316,10 @@ export async function checkShare(
   let text = [artifact.title, artifact.summary ?? "", artifact.description ?? ""].join("\n");
   if (artifact.currentVersionId) {
     const [document] = await db
-      .select({ text: sql<string>`left(${extractedDocuments.plainText}, ${SCAN_MAX_CHARS})` })
+      .select({
+        text: sql<string>`left(${extractedDocuments.plainText}, ${SCAN_MAX_CHARS})`,
+        markdown: sql<string>`left(${extractedDocuments.normalizedMarkdown}, ${SCAN_MAX_CHARS})`,
+      })
       .from(artifactVersions)
       .innerJoin(extractedDocuments, eq(extractedDocuments.id, artifactVersions.activeExtractionId))
       .where(
@@ -325,7 +328,10 @@ export async function checkShare(
           eq(artifactVersions.workspaceId, actor.workspaceId),
         ),
       );
-    if (document?.text) text += `\n${document.text}`;
+    if (document) {
+      // Extracted text keeps link labels only; the reader shows their destinations as links.
+      text += `\n${document.text}\n${linkDestinations(document.markdown).join("\n")}`;
+    }
     const files = await db
       .select({ path: derivedAssets.path })
       .from(derivedAssets)

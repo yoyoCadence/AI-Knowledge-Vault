@@ -310,6 +310,20 @@ describe("share links (FR-SHR, SECURITY.md §7)", () => {
     });
   });
 
+  it("checks link destinations, which the extracted text leaves out", async () => {
+    const owner = await createTestActor();
+    const note = await importOne(
+      owner,
+      "links.html",
+      htmlDocument({
+        title: "連結",
+        body: '<p>見<a href="https://wiki.internal/report">內部報告</a>，或<a href="mailto:carol@example.com">寫信</a>。</p>',
+      }),
+    );
+    const result = await checkShare(db, owner, note.artifactId);
+    expect(result.findings.map((finding) => finding.kind).sort()).toEqual(["email", "private_url"]);
+  });
+
   it("counts page views", async () => {
     const owner = await createTestActor();
     const note = await importOne(owner, "views.html", htmlDocument({ title: "瀏覽" }));
