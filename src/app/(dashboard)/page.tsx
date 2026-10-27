@@ -3,10 +3,12 @@ import Link from "next/link";
 import { requirePageActor } from "@/app/_lib/session";
 import { ArtifactCard, label } from "@/components/library/artifact-card";
 import { LibraryControls } from "@/components/library/library-controls";
+import { LibrarySummary } from "@/components/library/library-summary";
 import { SearchResults } from "@/components/library/search-results";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/states";
 import { getDb } from "@/infrastructure/database/client";
+import { getLogger } from "@/infrastructure/observability/logger";
 import { CONTENT_KINDS, READING_STATUSES } from "@/infrastructure/database/schema";
 import { decodeCursorOrFirstPage, encodeCursor } from "@/lib/cursor";
 import { t } from "@/lib/i18n";
@@ -27,6 +29,8 @@ import {
   type LibrarySort,
 } from "@/modules/artifacts";
 import { collectionOptions, findCollection } from "@/modules/collections";
+import { roleAllows } from "@/modules/auth";
+import { getLibrarySummary } from "@/modules/ops";
 import { findProject, listProjects } from "@/modules/projects";
 import { SEARCH_SORTS, searchArtifacts, type SearchSort } from "@/modules/search";
 import { findTag } from "@/modules/tags";
@@ -301,13 +305,24 @@ export default async function LibraryPage({
   }
 
   const cursor = firstParam(params.cursor);
-  const { items, nextCursor } = await listArtifacts(db, actor, {
-    limit: PAGE_SIZE,
-    cursor: decodeCursorOrFirstPage(cursor),
-    filters,
-    sort: sort as LibrarySort | undefined,
-  });
   const anyFilter = hasFilters(filters);
+  // The whole library's numbers, on its first page with nothing narrowing it (a sort does not),
+  // read alongside the page. It is extra: if it fails, the library shows without it.
+  const wholeLibrary = !anyFilter && sort !== "opened" && !cursor;
+  const [{ items, nextCursor }, summary] = await Promise.all([
+    listArtifacts(db, actor, {
+      limit: PAGE_SIZE,
+      cursor: decodeCursorOrFirstPage(cursor),
+      filters,
+      sort: sort as LibrarySort | undefined,
+    }),
+    wholeLibrary
+      ? getLibrarySummary(db, actor).catch((error: unknown) => {
+          getLogger({ route: "/" }).error({ err: error }, "library summary failed");
+          return null;
+        })
+      : null,
+  ]);
   // Which shortcut this page is exactly (none once other filters are added).
   const only = (key: keyof LibraryFilters) =>
     Object.entries(filters).every(([name, value]) => name === key || value === undefined);
@@ -339,6 +354,14 @@ export default async function LibraryPage({
         {controls}
         {activeFilters}
       </header>
+
+      {summary && items.length > 0 ? (
+        <LibrarySummary
+          summary={summary}
+          canSeeUsage={roleAllows(actor.role, "workspace:admin")}
+          canSeeExports={roleAllows(actor.role, "backup:export")}
+        />
+      ) : null}
 
       {items.length === 0 && !cursor && sort === "opened" && !anyFilter ? (
         <p className="text-muted-foreground text-sm" data-testid="filtered-empty">

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import {
@@ -11,6 +11,7 @@ import {
   integrityChecks,
   JOB_STATUSES,
   processingJobs,
+  type ContentKind,
   type JobStatus,
 } from "@/infrastructure/database/schema";
 import type { Actor } from "@/modules/auth";
@@ -97,6 +98,123 @@ const cut = (text: string | null) =>
 const shownError = (row: { errorCode: string | null; error: string | null }) =>
   row.errorCode === INTERNAL_ERROR ? null : cut(row.error);
 
+const byteSum = (column: AnyPgColumn) => sql<string>`coalesce(sum(${column}), 0)::bigint`;
+
+/** Stored originals: how many, their bytes, and how many were found missing or corrupt. */
+async function originalsOf(db: DbExecutor, ws: string) {
+  const [row] = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+      bytes: byteSum(fileAssets.byteSize),
+      missing: sql<number>`count(*) filter (where ${fileAssets.storageStatus} = 'missing')::int`,
+      corrupt: sql<number>`count(*) filter (where ${fileAssets.storageStatus} = 'corrupt')::int`,
+    })
+    .from(fileAssets)
+    .where(eq(fileAssets.workspaceId, ws));
+  return { ...tally(row), missing: row?.missing ?? 0, corrupt: row?.corrupt ?? 0 };
+}
+
+const liveArtifacts = (ws: string) =>
+  and(eq(artifacts.workspaceId, ws), isNull(artifacts.deletedAt));
+
+/** Artifacts not deleted, and their versions. */
+async function libraryOf(db: DbExecutor, ws: string) {
+  // Two counts: one count(distinct) over the join sorts every version (slow past ~100k).
+  const [artifactCount] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(artifacts)
+    .where(liveArtifacts(ws));
+  const [versionCount] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(artifactVersions)
+    .innerJoin(artifacts, eq(artifacts.id, artifactVersions.artifactId))
+    .where(liveArtifacts(ws));
+  return { artifacts: artifactCount?.count ?? 0, versions: versionCount?.count ?? 0 };
+}
+
+/** The newest completed export, if any. */
+async function lastExportOf(db: DbExecutor, ws: string) {
+  const [row] = await db
+    .select({ id: exportRuns.id, completedAt: exportRuns.completedAt, bytes: exportRuns.byteSize })
+    .from(exportRuns)
+    .where(
+      and(
+        eq(exportRuns.workspaceId, ws),
+        eq(exportRuns.status, "completed"),
+        isNotNull(exportRuns.completedAt),
+      ),
+    )
+    .orderBy(desc(exportRuns.completedAt))
+    .limit(1);
+  return row?.completedAt != null
+    ? { id: row.id, completedAt: row.completedAt, bytes: row.bytes }
+    : null;
+}
+
+/** The newest completed integrity check, if any. */
+async function lastIntegrityCheckOf(db: DbExecutor, ws: string) {
+  const [row] = await db
+    .select({
+      id: integrityChecks.id,
+      completedAt: integrityChecks.completedAt,
+      checked: integrityChecks.checkedCount,
+      ok: integrityChecks.okCount,
+      missing: integrityChecks.missingCount,
+      corrupt: integrityChecks.corruptCount,
+    })
+    .from(integrityChecks)
+    .where(
+      and(
+        eq(integrityChecks.workspaceId, ws),
+        eq(integrityChecks.status, "completed"),
+        isNotNull(integrityChecks.completedAt),
+      ),
+    )
+    .orderBy(desc(integrityChecks.completedAt))
+    .limit(1);
+  return row?.completedAt != null ? { ...row, completedAt: row.completedAt } : null;
+}
+
+/** What the library page shows of its workspace (FR-LIB-1: how many works, how they are kept). */
+export interface LibrarySummary {
+  library: { artifacts: number; versions: number };
+  /** Artifacts by their current version's kind, most first. */
+  kinds: { kind: ContentKind; count: number }[];
+  originals: Tally & { missing: number; corrupt: number };
+  lastExportAt: Date | null;
+  lastIntegrityCheckAt: Date | null;
+}
+
+/**
+ * The library page's summary, for any member: the same numbers as the usage report (its
+ * queries are shared), without anything only owners see (jobs, errors, database size). One
+ * read-only REPEATABLE READ snapshot, like the report.
+ */
+export function getLibrarySummary(database: Database, actor: Actor): Promise<LibrarySummary> {
+  return database.transaction(
+    async (db) => {
+      const ws = actor.workspaceId;
+      const kinds = await db
+        .select({ kind: artifactVersions.contentKind, count: sql<number>`count(*)::int` })
+        .from(artifacts)
+        .innerJoin(artifactVersions, eq(artifactVersions.id, artifacts.currentVersionId))
+        .where(liveArtifacts(ws))
+        .groupBy(artifactVersions.contentKind)
+        .orderBy(desc(sql`count(*)`), asc(artifactVersions.contentKind));
+      const lastExport = await lastExportOf(db, ws);
+      const lastCheck = await lastIntegrityCheckOf(db, ws);
+      return {
+        library: await libraryOf(db, ws),
+        kinds,
+        originals: await originalsOf(db, ws),
+        lastExportAt: lastExport?.completedAt ?? null,
+        lastIntegrityCheckAt: lastCheck?.completedAt ?? null,
+      };
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );
+}
+
 /**
  * The report, read in one read-only REPEATABLE READ transaction, so its numbers come from one
  * snapshot (a failed-job count and its list cannot disagree).
@@ -114,17 +232,7 @@ export function getUsageReport(
 
 async function readReport(db: DbExecutor, actor: Actor, now: Date): Promise<UsageReport> {
   const ws = actor.workspaceId;
-  const byteSum = (column: AnyPgColumn) => sql<string>`coalesce(sum(${column}), 0)::bigint`;
-
-  const [originals] = await db
-    .select({
-      count: sql<number>`count(*)::int`,
-      bytes: byteSum(fileAssets.byteSize),
-      missing: sql<number>`count(*) filter (where ${fileAssets.storageStatus} = 'missing')::int`,
-      corrupt: sql<number>`count(*) filter (where ${fileAssets.storageStatus} = 'corrupt')::int`,
-    })
-    .from(fileAssets)
-    .where(eq(fileAssets.workspaceId, ws));
+  const originals = await originalsOf(db, ws);
 
   const derived = await db
     .select({
@@ -147,17 +255,7 @@ async function readReport(db: DbExecutor, actor: Actor, now: Date): Promise<Usag
       ),
     );
 
-  // Two counts: one count(distinct) over the join sorts every version (slow past ~100k).
-  const live = and(eq(artifacts.workspaceId, ws), isNull(artifacts.deletedAt));
-  const [artifactCount] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(artifacts)
-    .where(live);
-  const [versionCount] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(artifactVersions)
-    .innerJoin(artifacts, eq(artifacts.id, artifactVersions.artifactId))
-    .where(live);
+  const library = await libraryOf(db, ws);
 
   const [database] = await db
     .execute<{ bytes: string }>(sql`select pg_database_size(current_database())::bigint as bytes`)
@@ -207,43 +305,14 @@ async function readReport(db: DbExecutor, actor: Actor, now: Date): Promise<Usag
     .orderBy(desc(itemFailedAt), desc(importItems.id))
     .limit(RECENT_FAILURES);
 
-  const [lastExport] = await db
-    .select({ id: exportRuns.id, completedAt: exportRuns.completedAt, bytes: exportRuns.byteSize })
-    .from(exportRuns)
-    .where(
-      and(
-        eq(exportRuns.workspaceId, ws),
-        eq(exportRuns.status, "completed"),
-        isNotNull(exportRuns.completedAt),
-      ),
-    )
-    .orderBy(desc(exportRuns.completedAt))
-    .limit(1);
+  const lastExport = await lastExportOf(db, ws);
   const [latestExport] = await db
     .select({ id: exportRuns.id, status: exportRuns.status, createdAt: exportRuns.createdAt })
     .from(exportRuns)
     .where(eq(exportRuns.workspaceId, ws))
     .orderBy(desc(exportRuns.createdAt))
     .limit(1);
-  const [lastCheck] = await db
-    .select({
-      id: integrityChecks.id,
-      completedAt: integrityChecks.completedAt,
-      checked: integrityChecks.checkedCount,
-      ok: integrityChecks.okCount,
-      missing: integrityChecks.missingCount,
-      corrupt: integrityChecks.corruptCount,
-    })
-    .from(integrityChecks)
-    .where(
-      and(
-        eq(integrityChecks.workspaceId, ws),
-        eq(integrityChecks.status, "completed"),
-        isNotNull(integrityChecks.completedAt),
-      ),
-    )
-    .orderBy(desc(integrityChecks.completedAt))
-    .limit(1);
+  const lastCheck = await lastIntegrityCheckOf(db, ws);
   const [latestCheck] = await db
     .select({
       id: integrityChecks.id,
@@ -257,11 +326,7 @@ async function readReport(db: DbExecutor, actor: Actor, now: Date): Promise<Usag
 
   const kind = (name: string) => tally(derived.find((row) => row.kind === name));
   const storage = {
-    originals: {
-      ...tally(originals),
-      missing: originals?.missing ?? 0,
-      corrupt: originals?.corrupt ?? 0,
-    },
+    originals,
     previewFiles: kind("preview_file"),
     thumbnails: kind("thumbnail"),
     exports: tally(archives),
@@ -276,7 +341,7 @@ async function readReport(db: DbExecutor, actor: Actor, now: Date): Promise<Usag
         storage.thumbnails.bytes +
         storage.exports.bytes,
     },
-    library: { artifacts: artifactCount?.count ?? 0, versions: versionCount?.count ?? 0 },
+    library,
     database: { bytes: Number(database?.bytes ?? 0) },
     jobs: {
       byStatus,
@@ -287,15 +352,9 @@ async function readReport(db: DbExecutor, actor: Actor, now: Date): Promise<Usag
       recentFailures: failedImports.map((item) => ({ ...item, error: shownError(item) })),
     },
     backup: {
-      lastExport:
-        lastExport?.completedAt != null
-          ? { id: lastExport.id, completedAt: lastExport.completedAt, bytes: lastExport.bytes }
-          : null,
+      lastExport,
       latestExport: latestExport ?? null,
-      lastIntegrityCheck:
-        lastCheck?.completedAt != null
-          ? { ...lastCheck, completedAt: lastCheck.completedAt }
-          : null,
+      lastIntegrityCheck: lastCheck,
       latestIntegrityCheck: latestCheck ?? null,
     },
   };
