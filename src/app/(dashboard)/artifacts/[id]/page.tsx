@@ -10,6 +10,7 @@ import { ArtifactMetaEditor } from "@/components/artifacts/artifact-meta-editor"
 import { ReadingBody } from "@/components/reader/reading-body";
 import { type ReaderView, ViewSwitch } from "@/components/reader/view-switch";
 import { CollectionPicker } from "@/components/collections/collection-picker";
+import { SharePanel } from "@/components/sharing/share-panel";
 import { NewNote, NoteItem } from "@/components/notes/notes-panel";
 import { ReadingControls } from "@/components/notes/reading-controls";
 import { MarkdownView } from "@/components/reader/markdown-view";
@@ -34,6 +35,7 @@ import { roleAllows } from "@/modules/auth";
 import { issuePreviewUrl } from "@/modules/preview";
 import { collectionOptions, collectionsOf } from "@/modules/collections";
 import { listNotes, readingStateOf } from "@/modules/notes";
+import { listShares } from "@/modules/sharing";
 import { findProject, listProjects } from "@/modules/projects";
 import { listTags } from "@/modules/tags";
 
@@ -61,6 +63,8 @@ async function load(id: string, requested?: string) {
     const collectionChoices = canEdit ? await collectionOptions(getDb(), actor) : [];
     const notes = await listNotes(getDb(), actor, id);
     const readingState = await readingStateOf(getDb(), actor, id);
+    const canShare = roleAllows(actor.role, "share:manage");
+    const shares = canShare ? await listShares(getDb(), actor, id) : [];
     // A deleted project (or one that no longer exists) shows as none.
     const project = detail.artifact.projectId
       ? await findProject(getDb(), actor, detail.artifact.projectId)
@@ -83,6 +87,8 @@ async function load(id: string, requested?: string) {
       notes,
       readingState,
       canEdit,
+      canShare,
+      shares,
       project,
       projects,
     };
@@ -144,6 +150,8 @@ export default async function ArtifactPage({
     notes,
     readingState,
     canEdit,
+    canShare,
+    shares,
     project,
     projects,
   } = await load(id, requested);
@@ -420,6 +428,27 @@ export default async function ArtifactPage({
               />
             </CardContent>
           </Card>
+
+          {canShare ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t("share.section")}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <SharePanel
+                  artifactId={artifact.id}
+                  visibility={artifact.visibility}
+                  shares={shares.map((share) => ({
+                    ...share,
+                    expiresAt: share.expiresAt?.toISOString() ?? null,
+                    revokedAt: share.revokedAt?.toISOString() ?? null,
+                    createdAt: share.createdAt.toISOString(),
+                    lastAccessedAt: share.lastAccessedAt?.toISOString() ?? null,
+                  }))}
+                />
+              </CardContent>
+            </Card>
+          ) : null}
 
           {version ? (
             <Card>

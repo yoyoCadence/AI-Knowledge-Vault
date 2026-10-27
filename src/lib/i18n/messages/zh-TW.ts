@@ -404,7 +404,7 @@ export const zhTW = {
   "share.check.none": "沒有發現疑似敏感的內容。",
   "share.check.advisory": "檢查只是輔助，無法保證找出所有敏感資料；請自行確認後再分享。",
   "share.check.blocked": "這個作品標記為限制級，不能分享。",
-  "share.finding.sensitive": "作品的敏感度標記為「{samples}」",
+  "share.finding.sensitive": "作品標記為敏感內容",
   "share.finding.secret": "疑似金鑰或憑證 {count} 處",
   "share.finding.email": "Email 地址 {count} 處",
   "share.finding.private_url": "內部網址 {count} 處",
