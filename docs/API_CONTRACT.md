@@ -178,15 +178,17 @@ same way.
 
 ## 9. Backup
 
-| Method | Path                                                         | Description                                                      | Status |
-| ------ | ------------------------------------------------------------ | ---------------------------------------------------------------- | ------ |
-| POST   | `/api/exports`                                               | `{}` → `202 {export}` (A)                                        | ✅     |
-| GET    | `/api/exports`                                               | `{items: export[]}` status and manifest summary                  | ✅     |
-| GET    | `/api/exports/:id/download`                                  | 302 → 5-min signed URL, `x-content-sha256` (A)                   | ✅     |
-| POST   | `/api/restores` · GET `/api/restores`                        | `{filename, size}` → `201 {restore, upload}` (A, owner) · recent | ✅     |
-| POST   | `/api/restores/:id/start`                                    | `{mode}` → `202 {restore}` (A, idempotent; 409 before upload)    | ✅     |
-| GET    | `/api/restores/:id`                                          | status and report                                                | ✅     |
-| POST   | `/api/integrity-checks` · GET `/api/integrity-checks/latest` | `202 {check}` (A, one pending per workspace) · `{check \| null}` | ✅     |
+| Method | Path                                                         | Description                                                                                                                                                                                                                                         | Status |
+| ------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| POST   | `/api/exports`                                               | `{}` → `202 {export}` (A)                                                                                                                                                                                                                           | ✅     |
+| GET    | `/api/exports`                                               | `{items: export[]}` status and manifest summary                                                                                                                                                                                                     | ✅     |
+| GET    | `/api/exports/:id/download`                                  | 302 → 5-min signed URL, `x-content-sha256` (A)                                                                                                                                                                                                      | ✅     |
+| POST   | `/api/exports/:id/encrypted`                                 | form or JSON `{passphrase}` (≥ 12 characters) or `{recipients: ["age1…"]}` (1–10) → the archive encrypted with age, streamed as `…zip.age` (`content-length`, `x-plaintext-sha256`); the secret is never stored; 400 / 409 (not ready) (A, ADR-022) | ✅     |
+| GET    | `/api/exports/:id/manifest`                                  | the sidecar `…zip.age.manifest.json`: summary, counts, SHA-256 of the plaintext archive (A)                                                                                                                                                         | ✅     |
+| POST   | `/api/restores` · GET `/api/restores`                        | `{filename, size}` → `201 {restore, upload}` (A, owner) · recent                                                                                                                                                                                    | ✅     |
+| POST   | `/api/restores/:id/start`                                    | `{mode}` → `202 {restore}` (A, idempotent; 409 before upload)                                                                                                                                                                                       | ✅     |
+| GET    | `/api/restores/:id`                                          | status and report                                                                                                                                                                                                                                   | ✅     |
+| POST   | `/api/integrity-checks` · GET `/api/integrity-checks/latest` | `202 {check}` (A, one pending per workspace) · `{check \| null}`                                                                                                                                                                                    | ✅     |
 
 ### 9.1 Usage (Phase 1B)
 

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
+import { Decrypter } from "age-encryption";
 import { claudeDesignZipEntries, htmlDocument } from "../fixtures/builders";
 import { buildZip } from "../fixtures/zip";
 import { e2eEnv } from "./e2e-env";
@@ -233,6 +234,25 @@ test.describe("import → library → artifact (Scenario A)", () => {
     expect(archive.suggestedFilename()).toMatch(/^knowledge-vault-export-.+\.zip$/);
     const archiveBytes = await readFile((await archive.path())!);
     expect(createHash("sha256").update(archiveBytes).digest("hex")).toBe(checksum);
+
+    // The same archive, encrypted with a passphrase on its way out (ADR-022).
+    await exportRow.getByText("加密下載（age）").click();
+    const encryptedForm = exportRow.getByTestId("export-encrypted");
+    await encryptedForm.getByLabel("密碼（至少 12 個字元）").fill("e2e passphrase for the backup");
+    await encryptedForm.getByLabel("再輸入一次密碼").fill("e2e passphrase, mistyped");
+    await encryptedForm.getByTestId("export-encrypted-submit").click();
+    await expect(encryptedForm.getByRole("alert")).toHaveText("兩次輸入的密碼不一致。");
+    await encryptedForm.getByLabel("再輸入一次密碼").fill("e2e passphrase for the backup");
+    const encryptedDownload = page.waitForEvent("download");
+    await encryptedForm.getByTestId("export-encrypted-submit").click();
+    const sealed = await encryptedDownload;
+    expect(sealed.suggestedFilename()).toMatch(/^knowledge-vault-export-.+\.zip\.age$/);
+    const decrypter = new Decrypter();
+    decrypter.addPassphrase("e2e passphrase for the backup");
+    const opened = await decrypter.decrypt(await readFile((await sealed.path())!));
+    expect(createHash("sha256").update(opened).digest("hex")).toBe(checksum);
+    // The secret does not stay on the page.
+    await expect(encryptedForm.getByLabel("密碼（至少 12 個字元）")).toHaveValue("");
 
     // Integrity check re-hashes every stored original.
     await page.getByTestId("integrity-run").click();

@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-27, after PR 23: library list layout)
+## 1. Snapshot (2026-10-27, after PR 24: encrypted export downloads)
 
 **Merged and tested**
 
@@ -814,6 +814,25 @@ conversations. Update it at the end of every PR.
     has `role="list"` (Safari drops it otherwise). Cards and rows now show the source model,
     which FR-LIB-2 lists and the card never showed.
 
+- **PR 24, P1A-ENC encrypted export downloads** (ADR-022): `src/modules/backup/encryption.ts`
+  (`encryptionOptions`, `encryptVerified`, `isAgeEncrypted`; `age-encryption` 0.3.1 pinned),
+  `openEncryptedExport` / `exportSidecar` in `service.ts`, `POST /api/exports/:id/encrypted`
+  (form or JSON) and `GET /api/exports/:id/manifest`, and 加密下載（age） in the export panel
+  (passphrase with confirmation, or `age1…` recipients; a plain form POST, so the browser
+  streams the file).
+  - The secret is used while the archive streams and nowhere else; the audit records only
+    the method. The archive is verified against its SHA-256 on the way; a mismatch aborts
+    before age's final chunk.
+  - Restore refuses an age file before writing anything, with `age -d …`.
+  - Tests: `tests/unit/backup/encryption.test.ts` (validation, round trips, the checksum
+    abort leaves an undecryptable file, header detection);
+    `tests/integration/backup/encrypted-export.test.ts` (passphrase and recipients through
+    the route, `content-length`, the audit and the database hold no secret, refusals,
+    a damaged stored archive aborts, the sidecar, restore refusal, and decryption with the
+    `age` CLI, which CI now installs and requires); the import E2E downloads an encrypted
+    copy in the browser and decrypts it to the archive's SHA-256. Removing the checksum
+    check fails a unit and an integration test.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -853,7 +872,8 @@ conversations. Update it at the end of every PR.
     "unlisted" artifact restores without links (readable by no one outside the workspace).
   - The rate-limited reader page answers 200 with a message (a Server Component cannot set
     a 429); the `/s/*` routes answer 429.
-- Export archives are unencrypted (P1A-ENC). The UI and CLI warn about this.
+- The CLI exports and restores plain archives only (P1A-ENC CLI is PR 25); the web encrypts
+  downloads (PR 24).
 - HTML extraction can join adjacent inline labels without a space. This is cosmetic.
 - The S3 adapter has not been verified against real R2.
 
@@ -889,22 +909,16 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 **Phase 1B is complete** (ROADMAP, PR 23). Two Phase 1A items remain, one PR each:
 
-1. **P1A-ENC (PR 24): built-in `age` encryption for exports** (BACKUP_RECOVERY §4 has the
-   rules). Exports are unencrypted today; the UI and CLI warn.
-   - Library: the `age-encryption` npm package (typage, the reference TypeScript
-     implementation; streams, passphrase/scrypt and X25519 recipients). Check its licence and
-     pin it; interop with the `age` CLI is the acceptance test.
-   - Export: an optional passphrase (or `age1…` recipient) on `POST /api/exports` and
-     `pnpm backup:export`. The archive is written as `export.zip.age` and
-     `manifest.json` also goes beside it as a sidecar (`*.manifest.json`), so a backup can be
-     inventoried without decrypting. The passphrase is never stored (not in the database, the
-     job payload or logs): the job encrypts while streaming, so it must get the secret
-     without persisting it. Option: the request waits for an encrypted export run inline
-     (exports are small for a personal vault), or the job takes an ephemeral key held only
-     in memory. Decide in an ADR.
-   - Restore: accepts `.age` with the passphrase or identity; the wrong one is a clear
-     refusal, never a partial restore. Checksums are verified after decryption as now.
-   - Tests: round trip encrypted export → restore; the wrong passphrase; a tampered
-     ciphertext; the sidecar matches the inner manifest; nothing secret in the database,
-     job payloads or logs; decryption with the `age` CLI when it is installed.
+1. **P1A-ENC CLI (PR 25)** (ADR-022 says what; reuse `src/modules/backup/encryption.ts`):
+   - `pnpm backup:export … --out x.zip.age` with `--passphrase-env NAME` (the variable's
+     name; never the passphrase in argv, which `ps` shows) or `--recipient age1…`
+     (repeatable) / `--recipients-file`. It streams `writeExport` through the encrypter into
+     the file and writes the sidecar `x.zip.age.manifest.json` beside it (the full
+     `manifest.json`, which the CLI has).
+   - `pnpm backup:restore x.zip.age` with `--passphrase-env NAME` or `--identity-file` decrypts
+     into a 0600 temp file (in a fresh `mkdtemp` directory, removed afterwards), then restores
+     it as now; the wrong secret is a clear refusal before anything is written.
+   - Tests: export → encrypt → restore round trip through the scripts' functions; the wrong
+     passphrase; `age -d` decrypts the CLI's file; the secret appears in no argv, output or
+     file but the encrypted one.
 2. **Then:** verify the S3 adapter against real R2 (needs the owner's credentials).

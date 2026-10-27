@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Transform } from "node:stream";
@@ -33,6 +33,7 @@ import {
   normalizeCollectionName,
 } from "@/modules/collections";
 import { SafeZip, ZipRejectedError, type ZipLimits } from "@/modules/extraction";
+import { isAgeEncrypted } from "./encryption";
 import { storeOriginal } from "@/modules/files/originals";
 import { deterministicId, saveExtraction } from "@/modules/imports/derive";
 import { enqueueJob } from "@/modules/jobs";
@@ -163,6 +164,18 @@ function checksumMismatch(message: string, files: string[]): AppError {
     details: { files: files.slice(0, MAX_LISTED_PROBLEMS), total: files.length },
     retryable: false,
   });
+}
+
+/** The first bytes of a file (fewer if it is shorter). */
+async function readHead(file: string, length = 64): Promise<Uint8Array> {
+  const handle = await open(file, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
 }
 
 function invalidArchive(message: string, details?: Record<string, unknown>): AppError {
@@ -572,6 +585,15 @@ export async function restoreArchive(
 ): Promise<RestoreReport> {
   const { signal } = input;
   const startedAt = Date.now();
+  // An encrypted copy (ADR-022) is decrypted outside the app first: say so, not "not a ZIP".
+  if (isAgeEncrypted(await readHead(input.archivePath))) {
+    throw beforeAnyWrite(
+      invalidArchive(
+        "This archive is encrypted with age: decrypt it first (age -d -o export.zip export.zip.age), then restore the .zip",
+        { encrypted: true },
+      ),
+    );
+  }
   let zip: SafeZip;
   try {
     zip = await SafeZip.open(input.archivePath, input.limits);

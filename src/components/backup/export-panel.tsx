@@ -1,9 +1,10 @@
 "use client";
 
-import { Download, PackageOpen, ShieldAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Download, FileJson, Lock, PackageOpen, ShieldAlert } from "lucide-react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PASSPHRASE_MAX, PASSPHRASE_MIN, RECIPIENTS_MAX } from "@/lib/backup-encryption";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { t, tOptional } from "@/lib/i18n";
 
@@ -23,6 +24,140 @@ export interface ExportView {
 }
 
 const ACTIVE = new Set(["queued", "running"]);
+
+const field =
+  "border-border-strong bg-surface focus-visible:ring-ring w-full max-w-md rounded-md border px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:outline-none";
+
+/**
+ * Encrypted download (ADR-022): a plain form POST, so the browser streams the `.age` file to
+ * disk however large it is. The confirmation field has no name, so only the passphrase is
+ * sent; both are cleared once the request has gone.
+ */
+function EncryptedDownload({ exportId }: { exportId: string }) {
+  const form = useRef<HTMLFormElement>(null);
+  const [mode, setMode] = useState<"passphrase" | "recipients">("passphrase");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    const data = new FormData(event.currentTarget);
+    const problem =
+      mode === "passphrase"
+        ? [...String(data.get("passphrase") ?? "")].length < PASSPHRASE_MIN
+          ? t("backup.encrypt.tooShort", { min: PASSPHRASE_MIN })
+          : data.get("passphrase") !== confirm
+            ? t("backup.encrypt.mismatch")
+            : null
+        : String(data.get("recipients") ?? "").trim() === ""
+          ? t("backup.encrypt.noRecipients")
+          : null;
+    if (problem) {
+      event.preventDefault();
+      setError(problem);
+      return;
+    }
+    setError(null);
+    // Let the browser take the values first, then clear the secret from the page.
+    setTimeout(() => {
+      form.current?.reset();
+      setConfirm("");
+    }, 0);
+  }
+
+  return (
+    <details className="text-xs" data-testid="export-encrypted">
+      <summary className="text-primary w-fit cursor-pointer">
+        <Lock className="mr-1 inline size-3.5 align-[-2px]" aria-hidden />
+        {t("backup.encrypt.open")}
+      </summary>
+      <form
+        ref={form}
+        method="post"
+        action={`/api/exports/${exportId}/encrypted`}
+        onSubmit={submit}
+        className="mt-2 flex flex-col gap-2"
+      >
+        <fieldset className="flex flex-wrap gap-3">
+          <legend className="sr-only">{t("backup.encrypt.mode")}</legend>
+          {(["passphrase", "recipients"] as const).map((value) => (
+            <label key={value} className="flex items-center gap-1">
+              <input
+                type="radio"
+                checked={mode === value}
+                onChange={() => {
+                  setMode(value);
+                  setError(null);
+                }}
+              />
+              {t(
+                value === "passphrase"
+                  ? "backup.encrypt.byPassphrase"
+                  : "backup.encrypt.byRecipients",
+              )}
+            </label>
+          ))}
+        </fieldset>
+        {mode === "passphrase" ? (
+          <>
+            <label className="flex flex-col gap-1">
+              {t("backup.encrypt.passphrase", { min: PASSPHRASE_MIN })}
+              <input
+                type="password"
+                name="passphrase"
+                autoComplete="new-password"
+                maxLength={PASSPHRASE_MAX}
+                className={field}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              {t("backup.encrypt.confirm")}
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirm}
+                onChange={(event) => setConfirm(event.target.value)}
+                maxLength={PASSPHRASE_MAX}
+                className={field}
+              />
+            </label>
+          </>
+        ) : (
+          <label className="flex flex-col gap-1">
+            {t("backup.encrypt.recipients", { max: RECIPIENTS_MAX })}
+            <textarea
+              name="recipients"
+              rows={3}
+              spellCheck={false}
+              placeholder="age1…"
+              className={`${field} font-mono`}
+            />
+          </label>
+        )}
+        <p className="text-muted-foreground max-w-md leading-relaxed">
+          {t("backup.encrypt.custody")}
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="submit" size="sm" data-testid="export-encrypted-submit">
+            <Lock />
+            {t("backup.encrypt.submit")}
+          </Button>
+          <a
+            href={`/api/exports/${exportId}/manifest`}
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+          >
+            <FileJson className="size-3.5" aria-hidden />
+            {t("backup.encrypt.sidecar")}
+          </a>
+        </div>
+        {error ? (
+          <p role="alert" className="text-danger">
+            {error}
+          </p>
+        ) : null}
+      </form>
+    </details>
+  );
+}
 
 /** Portable export (BACKUP_RECOVERY §3): request, follow progress, download the archive. */
 export function ExportPanel({ initial }: { initial: ExportView[] }) {
@@ -154,6 +289,7 @@ export function ExportPanel({ initial }: { initial: ExportView[] }) {
                     SHA-256 {run.sha256}
                   </p>
                 ) : null}
+                {run.downloadable ? <EncryptedDownload exportId={run.id} /> : null}
                 {run.status === "failed" && run.errorMessage ? (
                   <p className="text-danger text-xs">{run.errorMessage}</p>
                 ) : null}

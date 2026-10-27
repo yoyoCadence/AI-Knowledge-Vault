@@ -398,3 +398,38 @@ peer dependencies). Anything not verified that way is marked _assumption_.
   the report says so and copy mode restores it as a copy. In that restore, a version added
   under the reused number is skipped too ("already has a different version"). There is no
   merge (the reverse) yet.
+
+## ADR-022 Export encryption: age, applied as the archive leaves the vault, secrets never kept
+
+- **Status:** accepted (PR 24, P1A-ENC; the CLI follows in PR 25)
+- **Context:** Exports are the owner's backups and end up on disks and cloud drives the
+  vault does not control, so they must be encryptable with an open format any tool can
+  decrypt (BACKUP_RECOVERY §4). Exports are built by a background job; a passphrase given to
+  that job would have to sit in the job queue or the database, and nothing secret may.
+- **Decision:**
+  - Format: `age` (age-encryption.org/v1), through `age-encryption` (typage, the reference
+    TypeScript implementation by the age authors, BSD-3-Clause, pinned). A passphrase uses
+    age's scrypt (work factor 2^18, at least 12 characters); or 1–10 recipients (`age1…`
+    public keys) whose private keys the owner keeps. Never both (the age spec forbids it).
+  - Encryption happens when the archive leaves the vault, not when it is built. The export
+    job still writes the plain archive to the app's storage, the same trust boundary as the
+    live originals, for its 7 days. `POST /api/exports/:id/encrypted` streams it through the
+    encrypter into the response, so the passphrase lives only in that request's memory: not
+    in the database, the job queue, storage, the audit log (which records only "passphrase"
+    or the number of recipients) or logs (the logger redacts `passphrase` too).
+  - The export panel posts a plain HTML form, so the browser streams the `.age` file to disk
+    whatever its size; the confirmation field has no name and is never sent.
+  - The archive is hashed while it streams. If it no longer matches its recorded SHA-256 the
+    response fails before age's final chunk, so a damaged archive never becomes a valid
+    encrypted backup (an age file without its final chunk does not decrypt).
+  - A sidecar (`…zip.age.manifest.json`, `GET /api/exports/:id/manifest`) describes the
+    archive (summary, counts, SHA-256 of the plaintext), so encrypted backups can be
+    inventoried without decrypting. It holds nothing secret.
+  - Restore takes plain ZIPs; an age file is refused before anything is written, with the
+    command that decrypts it. Decrypting inside the app is the CLI's (PR 25).
+- **Consequences:** Encrypted backups decrypt with any age tool (`age -d`), so the vault is
+  not needed to read them (CI checks interoperability with the `age` CLI). The vault never
+  holds a key and cannot recover a lost passphrase. The plain archive exists in the app's
+  storage until it expires, like the data it was made from. A download's `content-length` is
+  the ciphertext's exact size, but a mismatch found at the end can only abort the response,
+  not change its status.

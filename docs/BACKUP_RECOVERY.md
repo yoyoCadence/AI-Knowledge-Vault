@@ -84,18 +84,24 @@ Properties:
 
 ## 4. Encryption
 
-- **Phase 1A (implemented):** archives are **unencrypted**. The UI and CLI warn about this
-  explicitly. The procedure for encrypting at rest uses the open `age` format with a
-  passphrase or recipient key:
+- **Built in (P1A-ENC, ADR-022):** Import & Backup → 加密下載（age） downloads a completed
+  export encrypted with `age`, with a passphrase (scrypt, at least 12 characters) or to
+  `age1…` recipients (`POST /api/exports/:id/encrypted`). Rules:
+  - The passphrase or key is never stored: not in the archive, the database, the job queue,
+    the audit log or logs. It is used while the archive streams out, and then gone.
+  - The archive is checked against its SHA-256 as it streams; a mismatch aborts the download
+    before age's final chunk, so the partial file does not decrypt.
+  - The sidecar `…zip.age.manifest.json` (`GET /api/exports/:id/manifest`) stays outside
+    the envelope: the export's summary, counts and the plaintext archive's SHA-256, so a
+    backup can be inventoried without decrypting and checked after decrypting.
+- **Decrypting** needs no app: `age -d -o export.zip export.zip.age` (asks for the
+  passphrase), or `age -d -i key.txt …` for a recipient's identity. Restore takes the
+  decrypted `.zip`; an `.age` file is refused with this command. The CLI's built-in
+  encryption and decryption (`pnpm backup:export`, `pnpm backup:restore`) are PR 25.
+- The plain download stays for owners who encrypt elsewhere:
   ```bash
   age --passphrase -o export.zip.age export.zip      # or: age -r age1… -o export.zip.age export.zip
-  age -d -o export.zip export.zip.age                # decrypt anywhere, no app needed
   ```
-- **P1A-ENC (planned):** built-in `age` encryption (passphrase/scrypt or X25519 recipient)
-  during export. Rules:
-  - The key or passphrase is never stored in the archive or in the database.
-  - `manifest.json` stays outside the encryption envelope in a sidecar
-    `*.manifest.json`, so a backup can be inventoried without decryption.
 - **Key custody guidance:** store the passphrase or identity in a password manager **and** an
   offline copy. Losing it means the backup is unrecoverable by design.
 

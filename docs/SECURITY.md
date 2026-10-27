@@ -238,6 +238,10 @@ nofollow`, are never cached, and are rate limited per client address
   never values.
 - Exports exclude `users` password hashes, `sessions`, `auth_accounts`,
   `auth_verifications`, `auth_rate_limits` and share token hashes (FR-BAK-2).
+- Export encryption passphrases and age recipients' keys are never stored (ADR-022): the
+  passphrase is used while an encrypted download streams and is not written to the
+  database, job payloads, the audit log or logs (redacted as `passphrase`). The vault holds
+  no private key; a lost passphrase cannot be recovered.
 
 ## 11. Input validation and injection
 

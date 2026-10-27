@@ -313,9 +313,23 @@ export const zhTW = {
   "backup.expires": "{date} 前可下載",
   "backup.summary": "{artifacts} 件作品 · {versions} 個版本 · {files} 個原始檔",
   "backup.unencrypted":
-    "匯出檔未加密。存放到雲端或交給他人之前，請先加密，例如：age --passphrase -o export.zip.age export.zip",
+    "「下載」取得的是未加密的 ZIP。要存放到雲端或交給他人，請用「加密下載」：以密碼或 age 公鑰加密（.age），任何 age 工具都能解密。",
+  "backup.encrypt.open": "加密下載（age）",
+  "backup.encrypt.mode": "加密方式",
+  "backup.encrypt.byPassphrase": "密碼",
+  "backup.encrypt.byRecipients": "age 公鑰",
+  "backup.encrypt.passphrase": "密碼（至少 {min} 個字元）",
+  "backup.encrypt.confirm": "再輸入一次密碼",
+  "backup.encrypt.recipients": "age 公鑰（age1…），每行一個，最多 {max} 個",
+  "backup.encrypt.submit": "下載加密備份",
+  "backup.encrypt.sidecar": "說明檔（未加密，只有摘要與 SHA-256）",
+  "backup.encrypt.custody":
+    "密碼與私鑰不會被保存；遺失就無法解密。請存放在密碼管理工具，並另留一份離線備份。解密：age -d -o export.zip export.zip.age",
+  "backup.encrypt.tooShort": "密碼至少需要 {min} 個字元。",
+  "backup.encrypt.mismatch": "兩次輸入的密碼不一致。",
+  "backup.encrypt.noRecipients": "請至少輸入一個 age 公鑰。",
   "backup.restoreHint":
-    "還原：使用下方的「從備份還原」，或在伺服器上執行 pnpm backup:restore <檔案> --workspace <slug>。",
+    "還原：使用下方的「從備份還原」，或在伺服器上執行 pnpm backup:restore <檔案> --workspace <slug>。加密的備份（.age）請先解密成 ZIP 再還原。",
   "settings.title": "設定",
   "collections.title": "收藏分類",
   "collections.description":
