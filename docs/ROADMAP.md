@@ -46,19 +46,19 @@
 
 ## Phase 1B — Usable Knowledge Library
 
-| ID                | 任務                                                                          | 狀態                                                                  |
-| ----------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| P1B-LIBRARY       | Library 首頁（最近新增/閱讀、收藏、分類、統計、保存狀態）、Grid/List Cards    | 🚧 首頁各區、統計與保存狀態（PR 5、15、16、22）；清單（List）版面待做 |
-| P1B-DETAIL        | Artifact Detail（版本、來源資訊、下載、metadata 編輯）                        | ✅ 標題、說明、專案（PR 14）；可見性（PR 17）；來源資訊（PR 19）      |
-| P1B-PREVIEW       | 獨立 Preview Origin、token、CSP、sandbox iframe                               | ✅                                                                    |
-| P1B-READER        | Reading Mode（安全 Markdown renderer、TOC、手機排版）                         | ✅                                                                    |
-| P1B-ORG           | Research Projects、Collections（階層）、Tags（正規化、合併）                  | ✅ Tags（PR 13）、Projects（PR 14）、Collections（PR 15）             |
-| P1B-NOTES         | Notes、Reading Status、Favorites                                              | ✅（PR 16）                                                           |
-| P1B-SEARCH        | CJK bigram 全文搜尋、篩選、排序、片段 Highlight                               | ✅（PR 12–14；筆記內容 PR 16）                                        |
-| P1B-SHARE         | Share links（權限分離、到期、撤銷）、分享前檢查、公開閱讀頁                   | ✅（PR 17）                                                           |
-| P1B-OPS           | Usage Dashboard（儲存、DB、Jobs、失敗、最後完整性檢查）                       | ✅（PR 18）                                                           |
-| P1B-E2E           | E2E：登入、批次上傳、進度、開啟作品、搜尋、改分類、筆記、分享、撤銷、匯出還原 | ✅（各功能 PR；手機版 PR 20）                                         |
-| P1B-VERSION-SPLIT | 將誤判的版本拆成獨立作品                                                      | ✅（PR 21）                                                           |
+| ID                | 任務                                                                          | 狀態                                                               |
+| ----------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| P1B-LIBRARY       | Library 首頁（最近新增/閱讀、收藏、分類、統計、保存狀態）、Grid/List Cards    | ✅ 首頁各區、統計與保存狀態、格狀/清單版面（PR 5、15、16、22、23） |
+| P1B-DETAIL        | Artifact Detail（版本、來源資訊、下載、metadata 編輯）                        | ✅ 標題、說明、專案（PR 14）；可見性（PR 17）；來源資訊（PR 19）   |
+| P1B-PREVIEW       | 獨立 Preview Origin、token、CSP、sandbox iframe                               | ✅                                                                 |
+| P1B-READER        | Reading Mode（安全 Markdown renderer、TOC、手機排版）                         | ✅                                                                 |
+| P1B-ORG           | Research Projects、Collections（階層）、Tags（正規化、合併）                  | ✅ Tags（PR 13）、Projects（PR 14）、Collections（PR 15）          |
+| P1B-NOTES         | Notes、Reading Status、Favorites                                              | ✅（PR 16）                                                        |
+| P1B-SEARCH        | CJK bigram 全文搜尋、篩選、排序、片段 Highlight                               | ✅（PR 12–14；筆記內容 PR 16）                                     |
+| P1B-SHARE         | Share links（權限分離、到期、撤銷）、分享前檢查、公開閱讀頁                   | ✅（PR 17）                                                        |
+| P1B-OPS           | Usage Dashboard（儲存、DB、Jobs、失敗、最後完整性檢查）                       | ✅（PR 18）                                                        |
+| P1B-E2E           | E2E：登入、批次上傳、進度、開啟作品、搜尋、改分類、筆記、分享、撤銷、匯出還原 | ✅（各功能 PR；手機版 PR 20）                                      |
+| P1B-VERSION-SPLIT | 將誤判的版本拆成獨立作品                                                      | ✅（PR 21）                                                        |
 
 **Exit Criteria**：可瀏覽、可搜尋內文、繁中搜尋有效、可閱讀原始內容或安全替代預覽、桌面與手機可用、未登入無法取得 Private、可公開與撤銷分享、主要功能通過 E2E。
 

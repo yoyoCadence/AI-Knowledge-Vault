@@ -147,6 +147,9 @@ assignment.
   - 7-day expiry, refreshed daily
   - cookie `__Secure-vault.session_token` (production), `HttpOnly`, `Secure`, `SameSite=Lax`, host-only
   - all sessions listed and revocable in Settings
+- The only other cookie is a preference: `vault_library_layout` (`grid` or `list`), set by the
+  library page's switch in the browser (not `HttpOnly`; it carries no credential and no
+  data). The server reads anything but `list` as the grid.
 - Rate limits (database storage): sign-in 5 per 60 s per IP; other auth routes 30 per 60 s.
 - Login failures are recorded in `audit_logs` (no password, email hashed). Successes are
   recorded with IP and UA.

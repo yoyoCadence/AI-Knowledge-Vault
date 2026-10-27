@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-27, after PR 22: library statistics)
+## 1. Snapshot (2026-10-27, after PR 23: library list layout)
 
 **Merged and tested**
 
@@ -787,6 +787,33 @@ conversations. Update it at the end of every PR.
     restores) is in the work count but in no kind. On a phone the summary pushes the first
     card down by about 150–200 px; there is no collapsed variant.
 
+- **PR 23, P1B-LIBRARY list layout** (ROADMAP "Grid/List Cards"): a 格狀/清單 switch
+  (`src/components/library/layout-switch.tsx`) next to the library's views; the list renders
+  `ArtifactRow`, one row per work (title, tags, kind, platform, reading state, versions, date;
+  no thumbnail or summary), stacked on a phone and side by side from `sm` up.
+  - The card and the row share their parts (title, badges, tags, date) in
+    `src/components/library/artifact-card.tsx`; tags now break inside long names.
+  - The choice is a preference cookie (`vault_library_layout`, `src/lib/library-layout.ts`,
+    SECURITY.md), not the `layout=` URL parameter the plan had: a cookie keeps it on every
+    library link (views, filters, kinds, paging, the summary) without threading it through
+    each, and it persists. The search results keep their own list.
+  - Tests: `tests/unit/library/artifact-row.test.ts` (a row shows what a card shows, without
+    thumbnail and summary; the cookie reads anything but `list` as the grid);
+    `tests/e2e/layout.spec.ts` (switch, same works one row each with no images while the grid
+    has a thumbnail, kept after a reload and on another view, back to cards); the phone spec
+    measures the list for overflow, now with a 90-character platform, a long model and a long
+    tag.
+  - An independent review found, and this PR fixes: from `sm` up the row's badges squeezed
+    the title to a few pixels (0 with a long platform); a long imported platform (free text,
+    up to 100 characters, `nowrap`) made the phone page scroll sideways in the list (the card
+    clipped it). Rows now stack until `lg`, badges and the date line are capped beside the
+    title, and the platform badge wraps. Restoring the old markup fails both E2E checks (the
+    title's width, the phone overflow). Also: tags wrap at spaces (`wrap-anywhere`, not
+    `break-all`); the switch always writes the cookie (a stale tab can choose the grid again)
+    and is disabled while the page refreshes; it is hidden when no works are shown; the list
+    has `role="list"` (Safari drops it otherwise). Cards and rows now show the source model,
+    which FR-LIB-2 lists and the card never showed.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -860,17 +887,24 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 ## 4. Next steps (exact)
 
-**Phase 1A is feature-complete.** Remaining Phase 1A items:
+**Phase 1B is complete** (ROADMAP, PR 23). Two Phase 1A items remain, one PR each:
 
-- P1A-ENC: built-in `age` encryption for exports.
-- Verify the S3 adapter against real R2. This needs the owner's credentials.
-
-**Then Phase 1B** (ROADMAP; one PR each):
-
-1. **P1B-LIBRARY list layout (PR 23):** ROADMAP asks for grid and list cards. A 格狀/清單
-   switch on the library page (`layout=list` in the URL, kept by the library links like the
-   other parameters; no stored preference), rendering each work as one row: title, kind,
-   source, version count, tags, reading state and date, wrapping on a phone. Same data as the
-   grid (`listArtifacts`), so no new query. Tests: E2E on desktop and the phone spec.
-2. **Phase 1A leftovers:** P1A-ENC (`age` encryption for exports) and verifying the S3 adapter
-   against real R2 (needs the owner's credentials).
+1. **P1A-ENC (PR 24): built-in `age` encryption for exports** (BACKUP_RECOVERY §4 has the
+   rules). Exports are unencrypted today; the UI and CLI warn.
+   - Library: the `age-encryption` npm package (typage, the reference TypeScript
+     implementation; streams, passphrase/scrypt and X25519 recipients). Check its licence and
+     pin it; interop with the `age` CLI is the acceptance test.
+   - Export: an optional passphrase (or `age1…` recipient) on `POST /api/exports` and
+     `pnpm backup:export`. The archive is written as `export.zip.age` and
+     `manifest.json` also goes beside it as a sidecar (`*.manifest.json`), so a backup can be
+     inventoried without decrypting. The passphrase is never stored (not in the database, the
+     job payload or logs): the job encrypts while streaming, so it must get the secret
+     without persisting it. Option: the request waits for an encrypted export run inline
+     (exports are small for a personal vault), or the job takes an ephemeral key held only
+     in memory. Decide in an ADR.
+   - Restore: accepts `.age` with the passphrase or identity; the wrong one is a clear
+     refusal, never a partial restore. Checksums are verified after decryption as now.
+   - Tests: round trip encrypted export → restore; the wrong passphrase; a tampered
+     ciphertext; the sidecar matches the inner manifest; nothing secret in the database,
+     job payloads or logs; decryption with the `age` CLI when it is installed.
+2. **Then:** verify the S3 adapter against real R2 (needs the owner's credentials).

@@ -47,13 +47,18 @@ function longNames(run: string) {
     latinTitle: `Unbroken${"Supercalifragilisticexpialidocious".repeat(2)}Title${run}`,
     collection: `Collection${"Unbroken".repeat(10)}${run}`,
     project: `Project${"Unbroken".repeat(18)}${run}`,
+    // Imported source fields are free text: a platform up to 100 characters, a model up to 200.
+    platform: `Platform${"Unbroken".repeat(11)}`,
+    model: `Model${"Unbroken".repeat(24)}`,
+    tag: `Tag${"Unbroken".repeat(4)}${run}`, // tag names are at most 50 characters
   };
 }
 
 test.describe("on a phone (Pixel 7)", () => {
   test("navigation, library, search, reading and sharing fit the screen", async ({ page }) => {
     const run = attempt();
-    const { longName, title, latinTitle, collection, project } = longNames(run);
+    const { longName, title, latinTitle, collection, project, platform, model, tag } =
+      longNames(run);
     await login(page);
     await page.goto("/import");
     await page.getByTestId("import-file-input").setInputFiles([
@@ -77,9 +82,16 @@ test.describe("on a phone (Pixel 7)", () => {
           }),
         ),
       },
+      {
+        name: `source-fields-${run}.md`,
+        mimeType: "text/markdown",
+        buffer: Buffer.from(
+          `---\nplatform: ${platform}\nmodel: ${model}\n---\n# 來源欄位很長 ${run}\n\n內容。\n`,
+        ),
+      },
     ]);
     await page.getByRole("button", { name: "開始上傳" }).click();
-    await expect(page.getByTestId("import-summary")).toHaveText(/2 完成/, { timeout: 30_000 });
+    await expect(page.getByTestId("import-summary")).toHaveText(/3 完成/, { timeout: 30_000 });
     await expectNoHorizontalOverflow(page, "/import");
 
     // Long names: a collection and a project holding the Latin-titled work.
@@ -116,6 +128,12 @@ test.describe("on a phone (Pixel 7)", () => {
         })
       ).ok(),
     ).toBe(true);
+    const tagged = await page.request.post("/api/tags", { headers: origin, data: { name: tag } });
+    expect(tagged.status()).toBe(201);
+    const tagId = ((await tagged.json()) as { tag: { id: string } }).tag.id;
+    expect(
+      (await page.request.put(`/api/artifacts/${latinId}/tags/${tagId}`, { headers: origin })).ok(),
+    ).toBe(true);
 
     // The artifact page with its long title, project and collection (preview, then reading).
     await page.reload();
@@ -144,6 +162,16 @@ test.describe("on a phone (Pixel 7)", () => {
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await expect(page.getByTestId("library-summary")).toBeVisible();
     await expectNoHorizontalOverflow(page, "the library (with its summary)");
+    // The list layout: one row per work, its parts stacked on a phone.
+    const layout = page.getByRole("group", { name: "版面" });
+    await layout.getByRole("button", { name: "清單" }).click();
+    await expect(page.getByTestId("artifact-row").filter({ hasText: latinTitle })).toBeVisible();
+    await expect(
+      page.getByTestId("artifact-row").filter({ hasText: `來源欄位很長 ${run}` }),
+    ).toContainText(platform);
+    await expectNoHorizontalOverflow(page, "the library as a list");
+    await layout.getByRole("button", { name: "格狀" }).click();
+    await expect(page.getByTestId("artifact-row")).toHaveCount(0);
 
     // Search, once both are indexed (indexing runs right after the import).
     await expect(async () => {

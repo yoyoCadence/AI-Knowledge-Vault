@@ -1,7 +1,14 @@
 import { FolderKanban, FolderTree, Library, Tag, Upload, X } from "lucide-react";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { requirePageActor } from "@/app/_lib/session";
-import { ArtifactCard, label } from "@/components/library/artifact-card";
+import {
+  ArtifactCard,
+  type ArtifactCardData,
+  ArtifactRow,
+  label,
+} from "@/components/library/artifact-card";
+import { LayoutSwitch } from "@/components/library/layout-switch";
 import { LibraryControls } from "@/components/library/library-controls";
 import { LibrarySummary } from "@/components/library/library-summary";
 import { SearchResults } from "@/components/library/search-results";
@@ -13,6 +20,7 @@ import { CONTENT_KINDS, READING_STATUSES } from "@/infrastructure/database/schem
 import { decodeCursorOrFirstPage, encodeCursor } from "@/lib/cursor";
 import { t } from "@/lib/i18n";
 import { isUuid } from "@/lib/ids";
+import { LIBRARY_LAYOUT_COOKIE, libraryLayout } from "@/lib/library-layout";
 import {
   dayParam,
   firstParam,
@@ -305,6 +313,7 @@ export default async function LibraryPage({
   }
 
   const cursor = firstParam(params.cursor);
+  const layout = libraryLayout((await cookies()).get(LIBRARY_LAYOUT_COOKIE)?.value);
   const anyFilter = hasFilters(filters);
   // The whole library's numbers, on its first page with nothing narrowing it (a sort does not),
   // read alongside the page. It is extra: if it fails, the library shows without it.
@@ -337,6 +346,22 @@ export default async function LibraryPage({
             ? "all"
             : null;
 
+  const cards: ArtifactCardData[] = items.map((item) => ({
+    id: item.id,
+    title: item.title,
+    summary: item.summary,
+    visibility: item.visibility,
+    createdAt: item.createdAt.toISOString(),
+    versionCount: item.versionCount,
+    hasThumbnail: item.hasThumbnail,
+    contentKind: item.currentVersion?.contentKind ?? null,
+    sourcePlatform: item.currentVersion?.sourcePlatform ?? null,
+    sourceModel: item.currentVersion?.sourceModel ?? null,
+    tags: item.tags.map((itemTag) => itemTag.name),
+    readingStatus: item.readingStatus,
+    isFavorite: item.isFavorite,
+  }));
+
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -350,7 +375,10 @@ export default async function LibraryPage({
             {t("library.import")}
           </Link>
         </Button>
-        <LibraryViews current={view} />
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          <LibraryViews current={view} />
+          {items.length > 0 ? <LayoutSwitch current={layout} /> : null}
+        </div>
         {controls}
         {activeFilters}
       </header>
@@ -385,30 +413,23 @@ export default async function LibraryPage({
           }
         />
       ) : (
-        <section
-          aria-label={t("library.title")}
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-        >
-          {items.map((item) => (
-            <ArtifactCard
-              key={item.id}
-              artifact={{
-                id: item.id,
-                title: item.title,
-                summary: item.summary,
-                visibility: item.visibility,
-                createdAt: item.createdAt.toISOString(),
-                versionCount: item.versionCount,
-                hasThumbnail: item.hasThumbnail,
-                contentKind: item.currentVersion?.contentKind ?? null,
-                sourcePlatform: item.currentVersion?.sourcePlatform ?? null,
-                sourceModel: item.currentVersion?.sourceModel ?? null,
-                tags: item.tags.map((itemTag) => itemTag.name),
-                readingStatus: item.readingStatus,
-                isFavorite: item.isFavorite,
-              }}
-            />
-          ))}
+        <section aria-label={t("library.title")}>
+          {layout === "list" ? (
+            // role="list": Safari drops list semantics from a list styled without markers.
+            <ul role="list" className="flex flex-col gap-2">
+              {cards.map((card) => (
+                <li key={card.id}>
+                  <ArtifactRow artifact={card} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {cards.map((card) => (
+                <ArtifactCard key={card.id} artifact={card} />
+              ))}
+            </div>
+          )}
         </section>
       )}
 
