@@ -9,6 +9,8 @@ import {
   previewHeaders,
   verifyPreviewToken,
 } from "@/modules/preview";
+import { rateLimitAddress } from "@/modules/auth";
+import { SHARE_PREVIEW_RATE_LIMIT, shareAllowsPreview, withinRateLimit } from "@/modules/sharing";
 import { services } from "../../../api/_lib/services";
 
 /**
@@ -16,8 +18,8 @@ import { services } from "../../../api/_lib/services";
  * token binds (docs/SECURITY.md §5). proxy.ts already confines `/p/*` to the preview host; the
  * host is re-checked here so a routing mistake can never serve untrusted HTML on the app origin.
  *
- * Every refusal (wrong host, bad or expired token, unsafe path, unknown file) is the same bare
- * 404, so a probe learns nothing about which part failed.
+ * Every refusal (wrong host, bad or expired token, a share link no longer live, unsafe path,
+ * unknown file) is the same bare 404, so a probe learns nothing about which part failed.
  */
 const REFUSAL_HEADERS = {
   "content-type": "text/plain; charset=utf-8",
@@ -42,6 +44,37 @@ async function serve(request: Request, withBody: boolean): Promise<Response> {
   if (!claims || path === null) return notFound();
 
   try {
+    // Anyone holding a share link can load its preview: limited per client address, like
+    // the link's own pages (owners' previews need a session to obtain at all).
+    if (
+      claims.s === "share" &&
+      !(await withinRateLimit(
+        services.db(),
+        `share-preview:${rateLimitAddress(request.headers, env.TRUSTED_PROXIES) ?? "unknown"}`,
+        SHARE_PREVIEW_RATE_LIMIT.limit,
+        SHARE_PREVIEW_RATE_LIMIT.windowSeconds,
+      ))
+    ) {
+      return new Response("Too many requests", {
+        status: 429,
+        headers: {
+          ...REFUSAL_HEADERS,
+          "retry-after": String(SHARE_PREVIEW_RATE_LIMIT.windowSeconds),
+        },
+      });
+    }
+    // A share link's preview stops the moment the link does: revoked, expired, its artifact
+    // made private, restricted or deleted, its preview turned off, or a newer version current.
+    if (
+      claims.s === "share" &&
+      !(await shareAllowsPreview(services.db(), {
+        linkId: claims.l!,
+        versionId: claims.v,
+        workspaceId: claims.w,
+      }))
+    ) {
+      return notFound();
+    }
     const asset = await findPreviewFile(
       services.db(),
       { versionId: claims.v, workspaceId: claims.w },
@@ -56,6 +89,9 @@ async function serve(request: Request, withBody: boolean): Promise<Response> {
       }),
       etag: `"${asset.sha256}"`,
     };
+    // A browser may keep an owner's preview for a few minutes; a shared one is revalidated on
+    // every load (a cheap 304), so a revoked link shows nothing more, even from the cache.
+    if (claims.s === "share") headers["cache-control"] = "private, no-cache";
     if (request.headers.get("if-none-match") === headers.etag) {
       return new Response(null, { status: 304, headers });
     }

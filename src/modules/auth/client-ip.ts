@@ -12,3 +12,14 @@ export function resolveClientIp(headers: Headers, trustedProxies: string[]): str
   if (!forwarded) return null;
   return getIPFromHeader(forwarded, { trustedProxies, ipv6Subnet: 128 });
 }
+
+/**
+ * The client address a rate limit counts against: as `resolveClientIp`, but an IPv6 address
+ * stands for its /64, which one client usually holds whole (Better Auth's limiter does the same).
+ * Keyed by /128, a client could rotate through its /64 and never be limited.
+ */
+export function rateLimitAddress(headers: Headers, trustedProxies: string[]): string | null {
+  const forwarded = headers.get("x-forwarded-for");
+  if (!forwarded) return null;
+  return getIPFromHeader(forwarded, { trustedProxies, ipv6Subnet: 64 });
+}

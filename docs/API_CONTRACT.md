@@ -153,13 +153,27 @@ writes `library:write`; another workspace's tag or artifact is `404`.
 
 ## 8. Sharing (Phase 1B)
 
-| Method | Path                             | Description                                                                                                                            | Status |
-| ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| POST   | `/api/artifacts/:id/share-check` | pre-share safety scan → findings (advisory)                                                                                            | 📝     |
-| POST   | `/api/artifacts/:id/shares`      | `{label?, allowPreview, allowReading, allowDownload, expiresAt?, acknowledgeFindings: true}` → `201 {share, url}` (URL shown once) (A) | 📝     |
-| GET    | `/api/artifacts/:id/shares`      | list (no tokens)                                                                                                                       | 📝     |
-| DELETE | `/api/shares/:shareId`           | revoke (A)                                                                                                                             | 📝     |
-| GET    | `/s/:token` (page)               | public reader; 404 if revoked, expired, artifact private or deleted                                                                    | 📝     |
+| Method | Path                             | Description                                                                                                                                                            | Status |
+| ------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| POST   | `/api/artifacts/:id/share-check` | pre-share safety scan of the text as the reader shows it → `{findings: [{kind, count (distinct values), samples}], blocked, visibility}` (advisory; samples masked)    | ✅     |
+| POST   | `/api/artifacts/:id/shares`      | `{label?, allowPreview, allowReading, allowDownload, expiresAt? \| expiresInDays?, acknowledgeFindings: true}` → `201 {share, url, madeUnlisted}` (URL shown once) (A) | ✅     |
+| GET    | `/api/artifacts/:id/shares`      | `{items: share[]}` newest first (no tokens: they are not stored)                                                                                                       | ✅     |
+| DELETE | `/api/shares/:shareId`           | revoke → `{revoked: true}` (A, idempotent)                                                                                                                             | ✅     |
+| PUT    | `/api/artifacts/:id/visibility`  | `{visibility: "private" \| "unlisted"}` → `{visibility, revoked}`; private revokes every link (A)                                                                      | ✅     |
+| GET    | `/s/:token` (page)               | public reader; 404 if malformed, unknown, revoked, expired, or the artifact is private, restricted or deleted                                                          | ✅     |
+| GET    | `/s/:token/download`             | 302 → 5-minute signed URL when the link allows downloads, `x-content-sha256` (A)                                                                                       | ✅     |
+| GET    | `/s/:token/thumbnail`            | the current version's WebP thumbnail                                                                                                                                   | ✅     |
+| POST   | `/s/:token/preview-token`        | `{url, expiresAt, expiresInSeconds}`: a share-scoped preview URL (≤ 1 h, never past the link's expiry)                                                                 | ✅     |
+
+`share` is `{id, label, allowPreview, allowReading, allowDownload, expiresAt, revokedAt,
+createdAt, lastAccessedAt, accessCount, active}`. Management routes need `share:manage` (owner,
+editor); another workspace's artifact or link is `404`; a restricted artifact is `409
+CONFLICT` with `details.reason = "RESTRICTED"`. Labels are up to 100 visible characters;
+`expiresAt` must be in the future and at most 365 days ahead; `expiresInDays` (1–365) is
+counted by the server's clock instead (not both). Every `/s/*` route is anonymous,
+answers every refusal with the same bare `404`, and is rate limited per client address
+(`429` with `retry-after`). Share-scoped preview files on PREVIEW_ORIGIN are rate limited the
+same way.
 
 ## 9. Backup
 

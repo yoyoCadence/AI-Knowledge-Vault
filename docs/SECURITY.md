@@ -37,7 +37,9 @@ Untrusted inputs include:
 
 - every uploaded byte
 - filenames, ZIP entry names, and HTML/PDF metadata
-- share tokens and preview tokens (verified with HMAC and constant-time compare)
+- preview tokens (verified with HMAC and constant-time compare) and share tokens (format
+  checked, then looked up by their SHA-256; a lookup's timing can reveal something about a
+  hash, never about a token)
 - query strings
 - `Host`/`Origin` headers (compared against configured origins)
 
@@ -76,7 +78,10 @@ Layers:
    is `{purpose: "preview", v: versionId, w: workspaceId, s: scope, exp: expiry}`
    (`src/modules/preview`). TTL is 15 minutes for owners;
    for share links it is the shorter of the link expiry and 1 hour, re-issued per page view.
-   Only scope `owner` is accepted until sharing (P1B-SHARE) adds its own checks. The route
+   Scopes: `owner` (no link), and `share` with `l: linkId`. For `share` the route checks on
+   **every file request** that the link is still live, allows previews, and that the version
+   is its artifact's current one, so revoking a link (or making the artifact private,
+   restricted or deleted) stops its previews at once, before the token expires. The route
    also re-checks the Host, so a routing mistake cannot serve preview content on the app
    origin.
 4. **Response headers:**
@@ -166,6 +171,38 @@ assignment.
   `modules/sharing`/`modules/preview` resolvers that return a **narrow capability**, for
   example "may read extracted content of version X". The rest of the app's services are
   never called with an anonymous actor.
+- **Share links** (P1B-SHARE, ADR-020):
+  - A token is 32 random bytes (base64url, 43 characters). Only its SHA-256 is stored; the
+    URL is shown once, at creation, and is never logged, audited or exported.
+  - `resolveShare` returns a capability only while the link is not revoked, not expired, and
+    its artifact is not deleted, not private and not `restricted`. Every other case
+    (malformed, unknown, revoked, expired, …) is the same 404.
+  - A capability reads one artifact's current version, and only what the link allows:
+    reading mode, the sandboxed preview (share-scoped token, §5), the original's download
+    (5-minute signed URL, audited as `share.original.downloaded`). Notes, tags,
+    collections, other versions and anything else of the workspace are never read. A link
+    follows the artifact's **current** version: a version added later is shared too (the
+    panel says so).
+  - Revoking a link (or making its artifact private, restricted or deleted) stops its pages,
+    files and previews at once. A download URL already handed out stays valid for the rest
+    of its 5 minutes.
+  - Creating a link makes a private artifact `unlisted` (the owner confirms this); making it
+    private again revokes every link for good (also when it already was private: the sweep
+    always runs). Restricted artifacts cannot be shared. Restriction and deletion suspend
+    links rather than revoke them; nothing can undo either today, and a future undo must
+    revoke them.
+  - Before creating a link the owner sees an advisory scan (`checkShare`) of what the reader
+    shows (the normalized Markdown with escapes undone, so link destinations and raw HTML
+    blocks are included, plus the extracted text): sensitivity, well-known key and token
+    formats, private keys, email addresses, intranet URLs, and preview files that usually
+    hold secrets. Counts are distinct values. It is advisory: it cannot prove a document clean.
+  - `/s/*` responses send `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex,
+nofollow`, are never cached, and are rate limited per client address
+    (`rate_limit_buckets`, 120 requests a minute, unknown tokens included); share-scoped
+    preview files are limited too (600 a minute). Addresses are trusted as for sign-in
+    (DEPLOYMENT §5.6), and an IPv6 client counts by its /64.
+  - Every pattern of the pre-share scan is anchored where a run starts, so the scan is linear
+    in its (capped) input; adversarial inputs are unit-tested.
 
 ## 8. CSRF
 

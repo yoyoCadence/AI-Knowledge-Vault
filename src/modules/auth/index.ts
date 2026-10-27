@@ -10,7 +10,7 @@ export {
   MAX_PASSWORD_LENGTH,
   type Auth,
 } from "./auth";
-export { resolveClientIp } from "./client-ip";
+export { rateLimitAddress, resolveClientIp } from "./client-ip";
 export { resolveActor, assertCan, requireActorOrThrow, type Actor } from "./actor";
 export { roleAllows, ACTIONS, type Action } from "./policy";
 export { createAdmin, AdminInput, slugify } from "./admin";

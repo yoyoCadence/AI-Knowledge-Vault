@@ -5,7 +5,10 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
 
-/** A signed preview URL from POST /api/artifacts/:id/versions/:versionId/preview-token. */
+/**
+ * A signed preview URL from POST /api/artifacts/:id/versions/:versionId/preview-token, or from
+ * POST /s/:token/preview-token for a share link.
+ */
 export interface PreviewLink {
   url: string;
   expiresAt: string;
@@ -50,13 +53,12 @@ function useExpired(expiresAtMs: number): boolean {
  * new-tab link is kept fresh in the background, retrying with backoff when a refresh fails.
  */
 export function PreviewFrame({
-  artifactId,
-  versionId,
+  mintUrl,
   title,
   initial,
 }: {
-  artifactId: string;
-  versionId: string;
+  /** POST endpoint that issues a fresh `PreviewLink`. */
+  mintUrl: string;
   title: string;
   initial: PreviewLink;
 }) {
@@ -71,15 +73,12 @@ export function PreviewFrame({
 
   const mint = useCallback(async (): Promise<PreviewLink | null> => {
     try {
-      const response = await fetch(
-        `/api/artifacts/${artifactId}/versions/${versionId}/preview-token`,
-        { method: "POST" },
-      );
+      const response = await fetch(mintUrl, { method: "POST" });
       return response.ok ? ((await response.json()) as PreviewLink) : null;
     } catch {
       return null;
     }
-  }, [artifactId, versionId]);
+  }, [mintUrl]);
 
   useEffect(() => {
     let cancelled = false;

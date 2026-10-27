@@ -8,7 +8,9 @@ import { KindIcon } from "@/components/library/kind-icon";
 import { PreviewFrame } from "@/components/preview/preview-frame";
 import { ArtifactMetaEditor } from "@/components/artifacts/artifact-meta-editor";
 import { ReadingBody } from "@/components/reader/reading-body";
+import { type ReaderView, ViewSwitch } from "@/components/reader/view-switch";
 import { CollectionPicker } from "@/components/collections/collection-picker";
+import { SharePanel } from "@/components/sharing/share-panel";
 import { NewNote, NoteItem } from "@/components/notes/notes-panel";
 import { ReadingControls } from "@/components/notes/reading-controls";
 import { MarkdownView } from "@/components/reader/markdown-view";
@@ -33,10 +35,11 @@ import { roleAllows } from "@/modules/auth";
 import { issuePreviewUrl } from "@/modules/preview";
 import { collectionOptions, collectionsOf } from "@/modules/collections";
 import { listNotes, readingStateOf } from "@/modules/notes";
+import { listShares } from "@/modules/sharing";
 import { findProject, listProjects } from "@/modules/projects";
 import { listTags } from "@/modules/tags";
 
-type View = "read" | "preview";
+type View = ReaderView;
 
 async function load(id: string, requested?: string) {
   const actor = await requirePageActor();
@@ -60,6 +63,8 @@ async function load(id: string, requested?: string) {
     const collectionChoices = canEdit ? await collectionOptions(getDb(), actor) : [];
     const notes = await listNotes(getDb(), actor, id);
     const readingState = await readingStateOf(getDb(), actor, id);
+    const canShare = roleAllows(actor.role, "share:manage");
+    const shares = canShare ? await listShares(getDb(), actor, id) : [];
     // A deleted project (or one that no longer exists) shows as none.
     const project = detail.artifact.projectId
       ? await findProject(getDb(), actor, detail.artifact.projectId)
@@ -82,6 +87,8 @@ async function load(id: string, requested?: string) {
       notes,
       readingState,
       canEdit,
+      canShare,
+      shares,
       project,
       projects,
     };
@@ -109,27 +116,6 @@ function previewNotice(version: { previewKind: string; previewStatus: string }):
   // PDF, image and text versions are shown by reading mode, not this frame.
   if (["pdf", "image", "text_only"].includes(version.previewKind)) return t("preview.notYet");
   return t("preview.unavailable");
-}
-
-function ViewSwitch({ view }: { view: View }) {
-  const tab = (value: View, text: string) => (
-    <Link
-      href={`?view=${value}`}
-      aria-current={view === value ? "page" : undefined}
-      className={`rounded px-3 py-1 ${view === value ? "bg-surface-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
-    >
-      {text}
-    </Link>
-  );
-  return (
-    <nav
-      aria-label={t("reader.title")}
-      className="border-border flex w-fit gap-1 rounded-md border p-0.5 text-sm"
-    >
-      {tab("read", t("reader.tabRead"))}
-      {tab("preview", t("reader.tabPreview"))}
-    </nav>
-  );
 }
 
 function Field({ name, value }: { name: string; value: React.ReactNode }) {
@@ -164,6 +150,8 @@ export default async function ArtifactPage({
     notes,
     readingState,
     canEdit,
+    canShare,
+    shares,
     project,
     projects,
   } = await load(id, requested);
@@ -236,7 +224,7 @@ export default async function ArtifactPage({
               <CardContent>
                 {view === "read" ? (
                   <ReadingBody
-                    artifactId={artifact.id}
+                    thumbnailSrc={`/api/artifacts/${artifact.id}/thumbnail`}
                     title={artifact.title}
                     version={version}
                     hasThumbnail={overview?.hasThumbnail ?? false}
@@ -244,8 +232,7 @@ export default async function ArtifactPage({
                   />
                 ) : preview ? (
                   <PreviewFrame
-                    artifactId={artifact.id}
-                    versionId={version.id}
+                    mintUrl={`/api/artifacts/${artifact.id}/versions/${version.id}/preview-token`}
                     title={artifact.title}
                     initial={{
                       url: preview.url,
@@ -441,6 +428,27 @@ export default async function ArtifactPage({
               />
             </CardContent>
           </Card>
+
+          {canShare ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t("share.section")}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <SharePanel
+                  artifactId={artifact.id}
+                  visibility={artifact.visibility}
+                  shares={shares.map((share) => ({
+                    ...share,
+                    expiresAt: share.expiresAt?.toISOString() ?? null,
+                    revokedAt: share.revokedAt?.toISOString() ?? null,
+                    createdAt: share.createdAt.toISOString(),
+                    lastAccessedAt: share.lastAccessedAt?.toISOString() ?? null,
+                  }))}
+                />
+              </CardContent>
+            </Card>
+          ) : null}
 
           {version ? (
             <Card>

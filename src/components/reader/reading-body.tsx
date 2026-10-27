@@ -4,13 +4,14 @@ import { headingAnchors, MarkdownView, PlainTextView } from "./markdown-view";
 
 /** Reading mode for a version: rendered from its extraction, never from its raw HTML. */
 export function ReadingBody({
-  artifactId,
+  thumbnailSrc,
   title,
   version,
   hasThumbnail,
   content,
 }: {
-  artifactId: string;
+  /** Where the version's thumbnail is served from: the member route, or a share link's. */
+  thumbnailSrc: string;
   title: string;
   version: { contentKind: string; processingStatus: string };
   /** Whether the version's thumbnail exists (a restored image gets it only after re-extraction). */
@@ -31,7 +32,7 @@ export function ReadingBody({
       <figure className="flex flex-col gap-3">
         {/* eslint-disable-next-line @next/next/no-img-element -- authorized same-origin image route, not optimizable */}
         <img
-          src={`/api/artifacts/${artifactId}/thumbnail`}
+          src={thumbnailSrc}
           alt={title}
           className="border-border max-h-[70vh] w-fit max-w-full rounded-md border object-contain"
         />

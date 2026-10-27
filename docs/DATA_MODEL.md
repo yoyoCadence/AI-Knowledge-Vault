@@ -123,10 +123,17 @@ provider. `id`, `account_id`, `provider_id`, `user_id → users CASCADE`, `acces
 Index: `(workspace_id, created_at desc)`, `(action, created_at desc)`.
 Append-only: the application never updates or deletes these rows.
 
-**share_links** (P1B): `id`, `workspace_id`, `artifact_id → artifacts CASCADE`,
-`token_hash char(64) unique`, `label?`, `allow_preview bool (true)`, `allow_reading bool (true)`,
-`allow_download bool (false)`, `expires_at?`, `revoked_at?`, `created_by → users SET NULL`,
-`last_accessed_at?`, `access_count int (0)`, `created_at`, `updated_at`.
+**share_links** (P1B, PR 17): `id`, `workspace_id`, `artifact_id`
+(`(workspace_id, artifact_id) → artifacts CASCADE`, so a link never points across workspaces),
+`token_hash char(64) unique` (SHA-256 of the token; the token itself is never stored),
+`label?` (≤ 100 characters), `allow_preview bool (true)`, `allow_reading bool (true)`,
+`allow_download bool (false)` (CHECK: at least one), `expires_at?` (at most 365 days ahead),
+`revoked_at?`, `created_by → users SET NULL`, `last_accessed_at?`, `access_count int (0)`
+(page views), `created_at`, `updated_at`. Index `(artifact_id, created_at)`. Never exported.
+
+**rate_limit_buckets** (P1B, PR 17): `key text pk` (purpose and client address),
+`window_start`, `count`. Fixed-window counters for anonymous routes; one atomic upsert per
+request. The hourly `maintenance.cleanup_rate_limits` job deletes windows over an hour old.
 
 ### 4.2 Library core
 

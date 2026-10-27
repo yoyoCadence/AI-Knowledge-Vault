@@ -7,3 +7,4 @@ export * from "./backup";
 export * from "./search";
 export * from "./organization";
 export * from "./notes";
+export * from "./sharing";

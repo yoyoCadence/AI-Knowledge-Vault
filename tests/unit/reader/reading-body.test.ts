@@ -6,7 +6,7 @@ import { ReadingBody } from "@/components/reader/reading-body";
 const render = (props: Partial<Parameters<typeof ReadingBody>[0]>) =>
   renderToStaticMarkup(
     createElement(ReadingBody, {
-      artifactId: "a",
+      thumbnailSrc: "/api/artifacts/a/thumbnail",
       title: "圖",
       version: { contentKind: "image", processingStatus: "ready" },
       hasThumbnail: true,
