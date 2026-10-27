@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-27, after PR 20: phone viewport)
+## 1. Snapshot (2026-10-27, after PR 21: version split)
 
 **Merged and tested**
 
@@ -716,6 +716,45 @@ conversations. Update it at the end of every PR.
     already passed its retry (its filename makes the retry a new version of the same work).
     Older specs (`import.spec`, …) were not checked for this.
 
+- **PR 21, P1B-VERSION-SPLIT** (ADR-021): `splitVersion` in `src/modules/artifacts/split.ts`,
+  `POST /api/artifacts/:id/versions/:versionId/split`, and 拆成獨立作品 in the detail page's
+  version list (`src/components/artifacts/version-split.tsx`; the first press explains, the
+  second splits and opens the new artifact).
+  - Moves the version and its search chunks to a new artifact made by the import's rules
+    (title, summary via the shared `summaryFromText`, identity key; private; same project).
+    Notes, tags, collections, reading state and share links stay; the old artifact's other
+    versions keep their numbers and its newest becomes current. 409 for an only version.
+    Both metadata documents are re-indexed; `artifact_version.split` is audited.
+  - Locks the moved version and the newest remaining one (id order), then the artifact, and
+    starts over if versions changed in between. `tests/integration/library/version-split.test.ts`
+    runs a split and an `indexVersion` of either version queued behind a held artifact lock, in
+    both orders, plus a version added (and being indexed) between the split's first read and its
+    artifact lock. Codex found the remaining version's case (pointing the artifact at it
+    deadlocked with its index job); reproduced, then fixed. Mutation-checked: the artifact
+    locked first, the remaining version not locked first, no re-check, chunks left behind,
+    a current version left on the moved one, and the stored original's name each fail a
+    test.
+  - Export/restore: the result round-trips (the old artifact's numbering gap included).
+    Restoring an archive made after a split over a database saved before it used to fail the
+    split-off artifact with a raw primary-key error; it now fails with a reason that points
+    to copy mode (`src/modules/backup/restore.ts`, BACKUP_RECOVERY §5), and copy mode works.
+  - After a split two artifacts share the identity key, so the next file with that stem is
+    a new artifact with `AMBIGUOUS_VERSION_MATCH` (tested, IMPORT_PIPELINE §6).
+  - E2E `tests/e2e/split.spec.ts`: two imports matched by filename, split, the new artifact
+    opens with V1, the old one keeps V1; the explanation row fits a 360 px screen.
+  - An independent review found, and this PR fixes: the new artifact lost a `restricted` or
+    `sensitive` flag (it now keeps the old artifact's sensitivity; a share on it is refused);
+    a double-click on the split button skipped the confirmation (confirming is now its own
+    button, "確認拆分 V{n}", and the explanation says when the current version is split, since
+    the work and its links then show another one); the current version moved even when the
+    split one was not current; tests that passed vacuously (an audit row from another test, a
+    title too short for the unit test's title rule, restored copies merged by title). The
+    archive also restores into a clean database under its own ids (tested).
+  - Known: version numbers are reused after the newest is split off (ADR-021). The import
+    report still links a split version's file to the old artifact (`result_artifact_id`, the
+    import's record).
+  - Not built: merging artifacts (the reverse), moving notes along with a version.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -796,27 +835,11 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 **Then Phase 1B** (ROADMAP; one PR each):
 
-1. **P1B-VERSION-SPLIT (PR 21): split a wrongly matched version into its own artifact.**
-   Imports match versions by filename stem (`match_reason`), which can be wrong.
-   `POST /api/artifacts/:id/versions/:versionId/split` (`library:write`, A) moves the version
-   (and only it) to a new artifact in the same workspace, in one transaction:
-   - lock order: the version, then its artifact (the search index job's order), then insert
-     the new artifact (title from the version's extraction title or its filename; private;
-     the same project); refuse when it is the artifact's only version (409, nothing to split);
-   - the version gets `artifact_id` = the new one and `version_number` 1; the old artifact
-     keeps its other versions' numbers (gaps are fine) and, if the split version was current,
-     its newest remaining version becomes current;
-   - `content_chunks`, `derived_assets`, `extracted_documents` follow the version
-     (`artifact_id` columns where they exist) — check every table with an `artifact_id` or a
-     composite `(workspace_id, artifact_id)` FK; `file_assets` never change (immutable);
-   - notes, tags, collections, reading state and share links stay with the old artifact;
-   - re-index both artifacts' metadata documents; audit `artifact_version.split` with both
-     ids; the import item's `result_artifact_id` is left as the historical record.
-     UI: a "拆成獨立作品" action per version in the detail page's version list (two-step
-     confirm), then go to the new artifact. Tests: the move, numbering, current version,
-     chunks and search on both sides, the only-version refusal, isolation, viewer 403, a lock
-     test against `indexVersion` like PR 19's, and export/restore of the result.
-2. **P1B-LIBRARY remainder:** library statistics (counts by kind, storage used) on the
-   library page, read from the same queries as the usage page.
-3. **Phase 1A leftovers:** P1A-ENC (`age` encryption for exports) and verifying the S3 adapter
+1. **P1B-LIBRARY remainder (PR 22):** library statistics on the library page: counts by
+   content kind, versions, storage used and preservation state (missing or corrupt
+   originals), read in one snapshot from the same queries as the usage page
+   (`src/modules/ops/index.ts`; reuse, don't copy). Shown above the grid for every member
+   (viewers included), linking to `/settings/usage` for owners. Tests: integration for the
+   numbers (isolation; deleted artifacts excluded), E2E on desktop and the phone spec.
+2. **Phase 1A leftovers:** P1A-ENC (`age` encryption for exports) and verifying the S3 adapter
    against real R2 (needs the owner's credentials).

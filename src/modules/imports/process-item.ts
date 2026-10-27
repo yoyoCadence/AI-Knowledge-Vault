@@ -19,6 +19,7 @@ import {
   fileExtension,
   filenameStem,
   sniffFormat,
+  summaryFromText,
   type ArchiveLimits,
   type ExtractionResult,
 } from "@/modules/extraction";
@@ -116,10 +117,7 @@ async function resolveTarget(
 
 function summarize(extraction: ExtractionResult, description: string | undefined): string | null {
   if (description) return description.slice(0, 280);
-  const lines = extraction.plainText.split("\n").map((line) => line.trim());
-  const first = lines.find((line) => line.length >= 20 && line !== extraction.title);
-  if (!first) return null;
-  return first.length > 280 ? `${first.slice(0, 279)}…` : first;
+  return summaryFromText(extraction.plainText, extraction.title);
 }
 
 async function markDuplicate(

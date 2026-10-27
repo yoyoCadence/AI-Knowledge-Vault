@@ -146,8 +146,12 @@ Applied in order. The first match wins.
 3. Otherwise → a new artifact.
 
 The import report shows, for every new version, "added as V{n} of {title} (reason)". This
-lets the user spot a wrong match. Splitting a version into its own artifact is
-ROADMAP P1B-VERSION-SPLIT.
+lets the user spot a wrong match, and undo it by splitting the version off into its own
+artifact (the version list's 拆成獨立作品, `POST /api/artifacts/:id/versions/:versionId/split`,
+ADR-021). The new artifact gets the identity key its filename gives, as an import would have
+given it. Afterwards two artifacts share that key, so the next file with that stem matches
+neither: it becomes a new artifact with `AMBIGUOUS_VERSION_MATCH`, and `target_artifact_id`
+puts it where it belongs.
 
 ## 7. Metadata extraction (never guess)
 

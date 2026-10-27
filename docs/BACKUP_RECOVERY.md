@@ -152,6 +152,12 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
      `origin_ref = restore:{restoreId}:{oldId}` is set, and the title of an artifact that
      already exists in the target is suffixed `（還原副本）`. Rows an earlier attempt of the
      same run already copied count as `copied` again, not as duplicates.
+   - A split version (ADR-021) moves to another artifact. An archive made after a split,
+     restored with `skip_existing` over a database saved before it, finds the version still in
+     its old artifact, which is kept as it is; the split-off artifact therefore cannot come
+     back with it and fails with a reason that names copy mode, which restores it as a copy.
+     A version imported afterwards under the split one's number (the newest's number is
+     reused) is skipped the same way, as "already has a different version".
 
    Workspace IDs are always remapped to the target workspace. User references
    (`created_by`, `author_id`) map to the restoring user.

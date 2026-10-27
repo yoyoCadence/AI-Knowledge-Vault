@@ -1386,6 +1386,17 @@ export async function restoreArchive(
       }
 
       try {
+        // A version of this new artifact that is here already belongs to another artifact: the
+        // archive was made after it was split off into this one, and this database predates the
+        // split. skip_existing keeps that artifact as it is, so this one cannot come back here.
+        const taken = versions.find((version) => place(version.id, versionOwners).existing);
+        if (taken) {
+          throw new AppError(
+            "CONFLICT",
+            `version ${taken.id} already belongs to another artifact here (it was split off into this one after this database was saved); restore in copy mode to bring this artifact back as a copy`,
+            { retryable: false },
+          );
+        }
         const linkedTags = await db.transaction(async (tx) => {
           await tx.insert(artifacts).values({
             id: placed.id,

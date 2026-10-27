@@ -28,3 +28,4 @@ export {
   type VersionSourceEdit,
 } from "./edit";
 export { filterConditions, hasFilters, type LibraryFilters } from "./filters";
+export { splitVersion } from "./split";
