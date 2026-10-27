@@ -2,7 +2,8 @@
  * The pattern scan behind the pre-share check (FR-SHR-3). Advisory: it looks for what commonly
  * leaks (keys and tokens of well-known services, private keys, email addresses, intranet URLs,
  * files that usually hold secrets), and can neither prove a document clean nor catch everything.
- * Every pattern is bounded, so a scan stays linear in the text's length.
+ * Every pattern is bounded and anchored to where a run starts, so a scan stays linear in the
+ * text's length (adversarial inputs are in the unit tests).
  */
 
 export interface ShareFinding {
@@ -12,10 +13,21 @@ export interface ShareFinding {
   samples: string[];
 }
 
+// Token patterns start only where a run of token characters starts, and end where it ends:
+// without the anchors, every position inside a long run (`-eyJ-eyJ…`) would begin a fresh
+// attempt that scans up to thousands of characters, quadratic in the run's length.
+const TOKEN_START = "(?<![A-Za-z0-9_-])";
+const TOKEN_END = "(?![A-Za-z0-9_-])";
 const SECRET_PATTERNS = [
-  /-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----/g,
-  /\b(?:sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,200}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,255}|glpat-[A-Za-z0-9_-]{20,200}|xox[abprs]-[A-Za-z0-9-]{10,200}|AIza[0-9A-Za-z_-]{35})\b/g,
-  /\beyJ[A-Za-z0-9_-]{8,2000}\.[A-Za-z0-9_-]{8,4000}\.[A-Za-z0-9_-]{8,2000}/g,
+  /-----BEGIN (?:[A-Z]{1,20} ){0,4}PRIVATE KEY-----/g,
+  new RegExp(
+    `${TOKEN_START}(?:sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,200}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,255}|glpat-[A-Za-z0-9_-]{20,200}|xox[abprs]-[A-Za-z0-9-]{10,200}|AIza[0-9A-Za-z_-]{35})${TOKEN_END}`,
+    "g",
+  ),
+  new RegExp(
+    `${TOKEN_START}eyJ[A-Za-z0-9_-]{8,2000}\\.[A-Za-z0-9_-]{8,4000}\\.[A-Za-z0-9_-]{8,2000}${TOKEN_END}`,
+    "g",
+  ),
 ];
 // Matches start only where a local part starts: without the lookbehind, every position inside
 // a long run of letters would begin a fresh attempt (64 steps each).

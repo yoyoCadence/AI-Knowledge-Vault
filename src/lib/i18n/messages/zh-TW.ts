@@ -416,6 +416,8 @@ export const zhTW = {
   "share.option.label": "備註（選填，只有工作區成員看得到）",
   "share.option.expiry": "有效期限",
   "share.option.none": "至少要允許一種存取方式。",
+  "share.option.previewHint": "安全預覽只適用於網頁與網站作品；圖片在閱讀或預覽下都會顯示。",
+  "share.followsCurrent": "連結一律顯示作品目前的版本；加入新版本前請留意它也會被分享。",
   "share.expiry.never": "不設期限",
   "share.expiry.days": "{days} 天",
   "share.makesUnlisted": "建立連結後，這個作品會從「私人」改為「不公開列出」。",

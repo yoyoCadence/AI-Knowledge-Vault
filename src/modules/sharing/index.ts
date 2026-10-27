@@ -131,8 +131,12 @@ export interface CreateShareInput {
   allowPreview: boolean;
   allowReading: boolean;
   allowDownload: boolean;
+  /** An exact expiry, or `expiresInDays` from now by the server's clock (not both). */
   expiresAt?: Date | null;
+  expiresInDays?: number | null;
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Creates a link and returns its token, the only time it exists outside the requester. A
@@ -153,9 +157,19 @@ export async function createShare(
   const label = input.label?.trim()
     ? cleanTitle(input.label, SHARE_LABEL_MAX, "Share labels")
     : null;
-  const expiresAt = input.expiresAt ?? null;
+  if (input.expiresAt && input.expiresInDays) {
+    throw new AppError("VALIDATION_FAILED", "Give expiresAt or expiresInDays, not both");
+  }
+  const days = input.expiresInDays;
+  if (days != null && (!Number.isInteger(days) || days < 1 || days > SHARE_EXPIRY_MAX_DAYS)) {
+    throw new AppError(
+      "VALIDATION_FAILED",
+      `expiresInDays is a whole number from 1 to ${SHARE_EXPIRY_MAX_DAYS}`,
+    );
+  }
+  const expiresAt = days ? new Date(now.getTime() + days * DAY_MS) : (input.expiresAt ?? null);
   if (expiresAt) {
-    const latest = now.getTime() + SHARE_EXPIRY_MAX_DAYS * 24 * 60 * 60 * 1000;
+    const latest = now.getTime() + SHARE_EXPIRY_MAX_DAYS * DAY_MS;
     if (expiresAt.getTime() <= now.getTime() || expiresAt.getTime() > latest) {
       throw new AppError(
         "VALIDATION_FAILED",
@@ -220,7 +234,10 @@ export async function createShare(
   });
 }
 
-/** Revokes a link (idempotent); it stops working at once, previews included. */
+/**
+ * Revokes a link (idempotent); its pages, files and previews stop at once. A download URL
+ * already handed out stays valid for its last few minutes (5 at most, ORIGINAL_DOWNLOAD_TTL).
+ */
 export async function revokeShare(db: Database, actor: Actor, shareId: string, meta: RequestMeta) {
   if (!isUuid(shareId)) throw notFound("Share link");
   return db.transaction(async (tx) => {
@@ -265,12 +282,16 @@ export async function setVisibility(
 ): Promise<{ visibility: ShareableVisibility; revoked: number }> {
   return db.transaction(async (tx) => {
     const artifact = await lockArtifact(tx, actor, artifactId);
-    if (artifact.visibility === visibility) return { visibility, revoked: 0 };
+    const changed = artifact.visibility !== visibility;
+    // "Private" always sweeps: links left live by any other path are revoked too.
+    if (!changed && visibility !== "private") return { visibility, revoked: 0 };
     const now = new Date();
-    await tx
-      .update(artifacts)
-      .set({ visibility, updatedAt: now })
-      .where(eq(artifacts.id, artifact.id));
+    if (changed) {
+      await tx
+        .update(artifacts)
+        .set({ visibility, updatedAt: now })
+        .where(eq(artifacts.id, artifact.id));
+    }
     const revoked =
       visibility === "private"
         ? await tx
@@ -279,6 +300,7 @@ export async function setVisibility(
             .where(and(eq(shareLinks.artifactId, artifact.id), isNull(shareLinks.revokedAt)))
             .returning({ id: shareLinks.id })
         : [];
+    if (!changed && revoked.length === 0) return { visibility, revoked: 0 };
     await recordAudit(tx, {
       action: "artifact.visibility_changed",
       workspaceId: actor.workspaceId,
@@ -626,6 +648,8 @@ export async function issueSharePreviewUrl(
 
 /** Requests one client address may make to share links (pages, thumbnails, downloads). */
 export const SHARE_RATE_LIMIT = { limit: 120, windowSeconds: 60 };
+/** Shared preview files one client address may load (a site page loads many files). */
+export const SHARE_PREVIEW_RATE_LIMIT = { limit: 600, windowSeconds: 60 };
 /** Windows longer than this would be cut short by the cleanup job. */
 const RATE_LIMIT_MAX_WINDOW_SECONDS = 60 * 60;
 export const RATE_LIMIT_CLEANUP_JOB_TYPE = "maintenance.cleanup_rate_limits";

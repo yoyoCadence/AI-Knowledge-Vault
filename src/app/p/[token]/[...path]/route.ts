@@ -9,7 +9,8 @@ import {
   previewHeaders,
   verifyPreviewToken,
 } from "@/modules/preview";
-import { shareAllowsPreview } from "@/modules/sharing";
+import { rateLimitAddress } from "@/modules/auth";
+import { SHARE_PREVIEW_RATE_LIMIT, shareAllowsPreview, withinRateLimit } from "@/modules/sharing";
 import { services } from "../../../api/_lib/services";
 
 /**
@@ -43,6 +44,25 @@ async function serve(request: Request, withBody: boolean): Promise<Response> {
   if (!claims || path === null) return notFound();
 
   try {
+    // Anyone holding a share link can load its preview: limited per client address, like
+    // the link's own pages (owners' previews need a session to obtain at all).
+    if (
+      claims.s === "share" &&
+      !(await withinRateLimit(
+        services.db(),
+        `share-preview:${rateLimitAddress(request.headers, env.TRUSTED_PROXIES) ?? "unknown"}`,
+        SHARE_PREVIEW_RATE_LIMIT.limit,
+        SHARE_PREVIEW_RATE_LIMIT.windowSeconds,
+      ))
+    ) {
+      return new Response("Too many requests", {
+        status: 429,
+        headers: {
+          ...REFUSAL_HEADERS,
+          "retry-after": String(SHARE_PREVIEW_RATE_LIMIT.windowSeconds),
+        },
+      });
+    }
     // A share link's preview stops the moment the link does: revoked, expired, its artifact
     // made private, restricted or deleted, its preview turned off, or a newer version current.
     if (

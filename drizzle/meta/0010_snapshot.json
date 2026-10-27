@@ -1,5 +1,5 @@
 {
-  "id": "d8e2d947-77a7-42d5-b6e9-0beb12d37b20",
+  "id": "3286e586-4ccb-44ed-81aa-92532f4b2a08",
   "prevId": "066f37cb-4d10-45e9-8ba7-cf004d22761a",
   "version": "7",
   "dialect": "postgresql",
@@ -4437,7 +4437,23 @@
           "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "rate_limit_buckets_window_idx": {
+          "name": "rate_limit_buckets_window_idx",
+          "columns": [
+            {
+              "expression": "window_start",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},

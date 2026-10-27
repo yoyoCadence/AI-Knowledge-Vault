@@ -154,9 +154,19 @@ describe("sharing API (API_CONTRACT §8)", () => {
       { ...OPTIONS, expiresAt: "tomorrow" },
       { ...OPTIONS, token: "mine" },
       { ...OPTIONS, allowDownload: "yes" },
+      { ...OPTIONS, expiresInDays: 0 },
+      { ...OPTIONS, expiresInDays: 366 },
+      { ...OPTIONS, expiresInDays: "7" },
+      { ...OPTIONS, expiresInDays: 7, expiresAt: new Date(Date.now() + 86_400_000).toISOString() },
     ]) {
       expect((await create(bad)).status, JSON.stringify(bad)).toBe(400);
     }
+    const yearLong = await create({ ...OPTIONS, expiresInDays: 365 });
+    expect(yearLong.status).toBe(201);
+    const { share } = (await yearLong.json()) as { share: ShareJson };
+    const days = (new Date(share.expiresAt!).getTime() - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(364.99);
+    expect(days).toBeLessThanOrEqual(365);
     expect((await create(OPTIONS, owner.cookie, null)).status).toBe(403);
     expect((await create(OPTIONS, owner.cookie, "https://evil.example")).status).toBe(403);
   });

@@ -40,8 +40,9 @@ const load = cache(async (token: string) => {
   await recordShareAccess(db, capability.linkId);
   const version = await shareVersion(db, capability);
   const preview = version ? await issueSharePreviewUrl(db, capability, version, getEnv()) : null;
+  // An image's own view is its thumbnail, so "reading" or "preview" both show it.
   const thumbnail =
-    version?.contentKind === "image" && capability.allowReading
+    version?.contentKind === "image" && (capability.allowReading || capability.allowPreview)
       ? await shareThumbnail(db, capability)
       : null;
   return { ok: true as const, capability, version, preview, hasThumbnail: Boolean(thumbnail) };
@@ -55,7 +56,13 @@ export async function generateMetadata({
   const loaded = await load((await params).token);
   return {
     // `absolute`: the app name in the title template would say where this came from.
-    title: { absolute: loaded.ok ? loaded.capability.title : t("state.notFound.title") },
+    title: {
+      absolute: loaded.ok
+        ? loaded.capability.title
+        : loaded.reason === "rate_limited"
+          ? t("share.public.rateLimited.title")
+          : t("state.notFound.title"),
+    },
     robots: { index: false, follow: false },
     referrer: "no-referrer",
   };
@@ -83,7 +90,8 @@ export default async function SharedArtifactPage({
 
   const views: ReaderView[] = [];
   if (preview) views.push("preview");
-  if (capability.allowReading && version) views.unshift("read");
+  const imageView = version?.contentKind === "image" && hasThumbnail;
+  if (version && (capability.allowReading || imageView)) views.unshift("read");
   const requested = firstParam((await searchParams).view);
   const view: ReaderView | null =
     requested === "read" || requested === "preview"

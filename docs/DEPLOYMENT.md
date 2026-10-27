@@ -116,11 +116,12 @@ proxy must overwrite, not append, this header. Alternatively, set `TRUSTED_PROXI
 Better Auth `advanced.ipAddress.trustedProxies`) to the platform's proxy ranges. If neither is done, clients
 can spoof IPs to evade the per-IP limit.
 
-Share links (`/s/*`) are rate limited per client address too, through the same resolver
-(`resolveClientIp`). It believes `X-Forwarded-For` only from `TRUSTED_PROXIES`, or a
-single-hop header; when it finds no trustworthy address, the request counts against one shared
-"unknown" budget (120 requests a minute for all such visitors together). Configure the proxy
-so share links are limited per visitor, not all together.
+Share links (`/s/*`, and their previews on the preview host) are rate limited per client
+address too, with the same trust rules (`rateLimitAddress`; IPv6 counts by /64): it believes
+`X-Forwarded-For` from `TRUSTED_PROXIES`, or a single-hop header. Exposed without a proxy that
+overwrites the header, a client chooses its own address: it can evade the limit, or spend
+another address's budget. Requests with no usable address share one "unknown" budget (120 a
+minute for all of them together). Deploy behind the platform proxy and configure it.
 
 ## 6. What the owner must provide to deploy
 

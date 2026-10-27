@@ -180,15 +180,27 @@ assignment.
   - A capability reads one artifact's current version, and only what the link allows:
     reading mode, the sandboxed preview (share-scoped token, §5), the original's download
     (5-minute signed URL, audited as `share.original.downloaded`). Notes, tags,
-    collections, other versions and anything else of the workspace are never read.
+    collections, other versions and anything else of the workspace are never read. A link
+    follows the artifact's **current** version: a version added later is shared too (the
+    panel says so).
+  - Revoking a link (or making its artifact private, restricted or deleted) stops its pages,
+    files and previews at once. A download URL already handed out stays valid for the rest
+    of its 5 minutes.
   - Creating a link makes a private artifact `unlisted` (the owner confirms this); making it
-    private again revokes every link for good. Restricted artifacts cannot be shared.
+    private again revokes every link for good (also when it already was private: the sweep
+    always runs). Restricted artifacts cannot be shared. Restriction and deletion suspend
+    links rather than revoke them; nothing can undo either today, and a future undo must
+    revoke them.
   - Before creating a link the owner sees an advisory scan (`checkShare`): sensitivity,
     well-known key and token formats, private keys, email addresses, intranet URLs, preview
     files that usually hold secrets. It is advisory: it cannot prove a document clean.
   - `/s/*` responses send `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex,
 nofollow`, are never cached, and are rate limited per client address
-    (`rate_limit_buckets`, 120 requests a minute, unknown tokens included).
+    (`rate_limit_buckets`, 120 requests a minute, unknown tokens included); share-scoped
+    preview files are limited too (600 a minute). Addresses are trusted as for sign-in
+    (DEPLOYMENT §5.6), and an IPv6 client counts by its /64.
+  - Every pattern of the pre-share scan is anchored where a run starts, so the scan is linear
+    in its (capped) input; adversarial inputs are unit-tested.
 
 ## 8. CSRF
 

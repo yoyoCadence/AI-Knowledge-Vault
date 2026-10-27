@@ -598,6 +598,20 @@ conversations. Update it at the end of every PR.
   - Found while testing, fixed here: the email pattern cost ~64 steps per character on long
     letter runs (1.2 s per 2 MB; now anchored, ~20 ms), and `localhost.example.com` was
     reported as an intranet URL.
+  - Codex review found, and this PR fixes with a test that fails without it: the scan read
+    only extracted text, which keeps link labels, so `[報告](https://wiki.internal/…)` or a
+    `mailto:` went unreported; link and image destinations of the normalized Markdown are
+    scanned too.
+  - An independent review found, and this PR fixes, each with a test that fails without the
+    fix: the JWT pattern (and other token patterns) restarted inside long runs (`-eyJ`×500k
+    blocked the server 8 s; all now anchored); IPv6 clients could rotate inside their /64
+    past the rate limit (now keyed by /64); the 365-day option failed when the browser's
+    clock ran ahead (`expiresInDays`, counted by the server); shared preview files were not
+    rate limited; a missing thumbnail object gave a 500; "private" skipped revoking when the
+    artifact already was private; preview-only links showed nothing for images. Tests now
+    also cover an older version's preview token after a new version, and previews after
+    "private". The docs no longer claim downloads stop at once (a handed-out URL lasts 5
+    minutes).
 
 **Not done or not verified**
 
@@ -626,9 +640,12 @@ conversations. Update it at the end of every PR.
     artifact stops the server at once, but a browser may show its cached copy for up to
     5 minutes. (Share-scoped previews are revalidated on every load.)
 - Sharing limits:
-  - The rate limit keys on the client address from `X-Forwarded-For` as trusted by
-    `TRUSTED_PROXIES`. Without a configured proxy, every visitor counts as "unknown" and
-    shares one budget of 120 requests a minute (DEPLOYMENT §5.6).
+  - The rate limits key on the client address from `X-Forwarded-For`, trusted as for sign-in.
+    Exposed without a proxy that overwrites the header, clients choose their own address;
+    requests with no usable address share one "unknown" budget (DEPLOYMENT §5.6).
+  - A link follows the current version: adding a version to a shared artifact shares it
+    without a new check. A handed-out download URL outlives a revocation by up to 5 minutes.
+  - Restriction and deletion suspend links (no undo exists yet; one must revoke them).
   - The pre-share check is pattern-based and advisory; it scans at most 2,000,000
     characters of extracted text, plus metadata and preview file names.
   - A restored artifact keeps its archived visibility, but links are never exported, so an

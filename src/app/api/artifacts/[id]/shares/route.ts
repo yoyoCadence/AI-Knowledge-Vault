@@ -13,6 +13,8 @@ const CreateShare = z
     allowReading: z.boolean(),
     allowDownload: z.boolean(),
     expiresAt: z.iso.datetime({ offset: true }).nullish(),
+    // Counted from the server's clock, so a browser's wrong clock cannot make it invalid.
+    expiresInDays: z.int().min(1).max(365).nullish(),
     // The client showed the pre-share check and the owner confirmed it.
     acknowledgeFindings: z.literal(true),
   })
@@ -46,6 +48,7 @@ export const POST = authedRoute<{ id: string }>(
         allowReading: body.allowReading,
         allowDownload: body.allowDownload,
         expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+        expiresInDays: body.expiresInDays ?? null,
       },
       meta,
     );

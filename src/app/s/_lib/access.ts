@@ -2,7 +2,7 @@ import { getEnv } from "@/infrastructure/config/env";
 import { getDb } from "@/infrastructure/database/client";
 import { getLogger } from "@/infrastructure/observability/logger";
 import { newErrorId } from "@/lib/ids";
-import { resolveClientIp } from "@/modules/auth";
+import { rateLimitAddress } from "@/modules/auth";
 import {
   resolveShare,
   SHARE_RATE_LIMIT,
@@ -16,15 +16,16 @@ import {
  * then the token is resolved to a narrow capability. No session is read: a link works the same
  * signed in or not, and never acts as the person who created it.
  *
- * Addresses come from `resolveClientIp`, which believes X-Forwarded-For only from trusted proxies.
- * Without one (no proxy in front, or TRUSTED_PROXIES unset behind one) every visitor counts as
- * "unknown" and shares one budget: deploy behind a proxy and configure it (DEPLOYMENT.md).
+ * Addresses come from X-Forwarded-For, trusted as for sign-in rate limits (DEPLOYMENT.md §5.6):
+ * through TRUSTED_PROXIES, or a single-hop header that the edge proxy must overwrite. Exposed
+ * without such a proxy, a client could choose its own address and evade or misdirect the
+ * limit. Requests with no usable address share one "unknown" budget. IPv6 counts by /64.
  */
 export type ShareAccess =
   { ok: true; capability: ShareCapability } | { ok: false; reason: "rate_limited" | "not_found" };
 
 export async function accessShare(headers: Headers, token: string): Promise<ShareAccess> {
-  const address = resolveClientIp(headers, getEnv().TRUSTED_PROXIES) ?? "unknown";
+  const address = rateLimitAddress(headers, getEnv().TRUSTED_PROXIES) ?? "unknown";
   const allowed = await withinRateLimit(
     getDb(),
     `share:${address}`,

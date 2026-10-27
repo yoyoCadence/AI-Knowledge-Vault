@@ -348,5 +348,8 @@ peer dependencies). Anything not verified that way is marked _assumption_.
   - Anonymous routes are rate limited in Postgres (`rate_limit_buckets`, fixed windows, one
     atomic upsert), keyed by the trusted client address.
 - **Consequences:** A lost URL cannot be recovered, only replaced. Revoking is instant for
-  pages, files and previews. An unconfigured proxy makes all visitors share one rate-limit
-  budget (DEPLOYMENT §5.6). Restores bring artifacts back without links.
+  pages, files and previews; a download URL already handed out lasts its 5 minutes. A link
+  shares whatever version is current, including ones added after it was created. Rate limits
+  are only as good as the client address (DEPLOYMENT §5.6). Restores bring artifacts back
+  without links. Restriction and deletion suspend links; a future undo of either must revoke
+  them.

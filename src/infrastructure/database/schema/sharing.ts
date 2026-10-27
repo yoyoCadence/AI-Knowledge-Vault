@@ -59,8 +59,13 @@ export const shareLinks = pgTable(
  * Fixed-window request counters for anonymous routes (share links), keyed by purpose and
  * client address. Rows are tiny and rewritten in place; old windows are simply overwritten.
  */
-export const rateLimitBuckets = pgTable("rate_limit_buckets", {
-  key: text("key").primaryKey(),
-  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
-  count: integer("count").notNull(),
-});
+export const rateLimitBuckets = pgTable(
+  "rate_limit_buckets",
+  {
+    key: text("key").primaryKey(),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    count: integer("count").notNull(),
+  },
+  // The hourly cleanup deletes by window start; rows can pile up when many addresses call.
+  (t) => [index("rate_limit_buckets_window_idx").on(t.windowStart)],
+);

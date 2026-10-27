@@ -121,6 +121,16 @@ describe("pre-share scan (FR-SHR-3)", () => {
       "eyJaaaaaaaa.",
       "-----BEGIN A ",
       "x@a.a",
+      // Token starts inside one long run of token characters.
+      "-eyJ",
+      "-eyJaaaaaaaa.",
+      "-sk-",
+      "-glpat-",
+      "-xoxb-",
+      "_AKIA",
+      "-AIza",
+      "github_pat_",
+      "-----BEGIN A ",
       "](",
       "](<a",
       "<a:",
@@ -131,7 +141,7 @@ describe("pre-share scan (FR-SHR-3)", () => {
       const started = performance.now();
       scanShareText(text);
       linkDestinations(text);
-      // About 1.2 s before the email pattern was anchored; tens of milliseconds after.
+      // Seconds before the patterns were anchored (1.2 s for "a", 7.8 s for "-eyJ").
       expect(performance.now() - started, unit).toBeLessThan(600);
     }
   });

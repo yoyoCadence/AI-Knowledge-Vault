@@ -6,6 +6,7 @@ import { GET as downloadRoute } from "@/app/s/[token]/download/route";
 import { POST as previewTokenRoute } from "@/app/s/[token]/preview-token/route";
 import { GET as thumbnailRoute } from "@/app/s/[token]/thumbnail/route";
 import { getEnv } from "@/infrastructure/config/env";
+import { getStorage } from "@/infrastructure/storage";
 import { closeDb } from "@/infrastructure/database/client";
 import {
   artifacts,
@@ -27,6 +28,7 @@ import {
   resolveShare,
   revokeShare,
   setVisibility,
+  SHARE_PREVIEW_RATE_LIMIT,
   SHARE_RATE_LIMIT,
   shareAllowsPreview,
   shareContent,
@@ -157,6 +159,22 @@ describe("share links (FR-SHR, SECURITY.md §7)", () => {
         })
       ).share.active,
     ).toBe(true);
+    // Days are counted by the server's clock: 365 is always accepted, whatever a browser says.
+    const before = Date.now();
+    const yearLong = await share(owner, note.artifactId, { expiresInDays: 365 });
+    expect(yearLong.share.expiresAt!.getTime()).toBeGreaterThanOrEqual(before + 365 * day);
+    expect(yearLong.share.expiresAt!.getTime()).toBeLessThanOrEqual(Date.now() + 365 * day);
+    for (const input of [
+      { expiresInDays: 0 },
+      { expiresInDays: 366 },
+      { expiresInDays: 1.5 },
+      { expiresInDays: 7, expiresAt: new Date(now.getTime() + day) },
+    ]) {
+      await expect(
+        share(owner, note.artifactId, input),
+        JSON.stringify(input),
+      ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    }
 
     const secret = await importOne(owner, "secret.html", htmlDocument({ title: "限制" }));
     await db
@@ -209,6 +227,24 @@ describe("share links (FR-SHR, SECURITY.md §7)", () => {
     // Unlisting it again never brings old links back.
     await setVisibility(db, owner, madePrivate.artifactId, "unlisted", meta);
     expect(await resolveShare(db, second.token)).toBeNull();
+    // "Private" sweeps even when the artifact already is: no link stays live behind it.
+    const leftover = await share(owner, madePrivate.artifactId);
+    await db
+      .update(artifacts)
+      .set({ visibility: "private" })
+      .where(eq(artifacts.id, madePrivate.artifactId));
+    expect(await setVisibility(db, owner, madePrivate.artifactId, "private", meta)).toEqual({
+      visibility: "private",
+      revoked: 1,
+    });
+    expect((await listShares(db, owner, madePrivate.artifactId))[0]).toMatchObject({
+      id: leftover.share.id,
+      active: false,
+    });
+    expect(await setVisibility(db, owner, madePrivate.artifactId, "private", meta)).toEqual({
+      visibility: "private",
+      revoked: 0,
+    });
 
     // Changed behind the module's back: the resolver checks the artifact's state itself.
     const restricted = await make("restricted");
@@ -405,6 +441,63 @@ describe("shared previews (SECURITY.md §5)", () => {
   });
 });
 
+describe("shared previews, continued", () => {
+  const fetchPreview = (url: string, ip = uniqueIp()) =>
+    previewRoute(new Request(url, { headers: { host: new URL(url).host, "x-forwarded-for": ip } }));
+  const previewUrl = async (token: string) => {
+    const capability = await resolveShare(db, token);
+    const version = await shareVersion(db, capability!);
+    return (await issueSharePreviewUrl(db, capability!, version!, env))!.url;
+  };
+
+  it("stop when the artifact is made private, and serve only its current version", async () => {
+    const owner = await createTestActor();
+    const site = await importOne(
+      owner,
+      "site4.zip",
+      buildZip(await claudeDesignZipEntries("版本")),
+    );
+    const { token } = await share(owner, site.artifactId);
+    const url = await previewUrl(token);
+    expect((await fetchPreview(url)).status).toBe(200);
+
+    // A new current version: the old version's token serves nothing more.
+    await uploadFile(owner, (await newBatch(owner)).id, {
+      filename: "site4-v2.zip",
+      bytes: buildZip(await claudeDesignZipEntries("版本 2")),
+      targetArtifactId: site.artifactId,
+    });
+    await drainJobs();
+    expect((await resolveShare(db, token))!.versionId).not.toBe(site.versionId);
+    expect((await fetchPreview(url)).status).toBe(404);
+    const current = await previewUrl(token);
+    expect((await fetchPreview(current)).status).toBe(200);
+
+    await setVisibility(db, owner, site.artifactId, "private", meta);
+    expect((await fetchPreview(current)).status).toBe(404);
+  });
+
+  it("are rate limited per client address", async () => {
+    const owner = await createTestActor();
+    const site = await importOne(
+      owner,
+      "site5.zip",
+      buildZip(await claudeDesignZipEntries("限流")),
+    );
+    const url = await previewUrl((await share(owner, site.artifactId)).token);
+    const ip = uniqueIp();
+    await db.insert(rateLimitBuckets).values({
+      key: `share-preview:${ip}`,
+      windowStart: new Date(),
+      count: SHARE_PREVIEW_RATE_LIMIT.limit,
+    });
+    const limited = await fetchPreview(url, ip);
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe(String(SHARE_PREVIEW_RATE_LIMIT.windowSeconds));
+    expect((await fetchPreview(url)).status).toBe(200);
+  });
+});
+
 describe("public share routes", () => {
   it("download the original only when the link allows it, audited", async () => {
     const owner = await createTestActor();
@@ -467,6 +560,21 @@ describe("public share routes", () => {
         .subarray(8, 12)
         .toString(),
     ).toBe("WEBP");
+    // A row that outlived its object is a 404, not a 500.
+    const capability = await resolveShare(db, token);
+    const { rows } = await db.execute<{ storage_key: string }>(
+      sql`select storage_key from derived_assets where artifact_version_id = ${capability!.versionId} and kind = 'thumbnail'`,
+    );
+    const key = rows[0]!.storage_key;
+    const kept = await getStorage().getObject(key);
+    const bytes = Buffer.concat((await kept.body.toArray()) as Buffer[]);
+    await getStorage().deleteObject(key);
+    const missing = await thumbnailRoute(
+      publicRequest(`/s/${token}/thumbnail`, ip),
+      tokenParams(token),
+    );
+    expect(missing.status).toBe(404);
+    await getStorage().putObject(key, bytes);
     // An image has no site preview.
     const noPreview = await previewTokenRoute(
       publicRequest(`/s/${token}/preview-token`, ip, "POST"),

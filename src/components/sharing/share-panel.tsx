@@ -123,7 +123,8 @@ export function SharePanel({
             allowReading,
             allowPreview,
             allowDownload,
-            expiresAt: days > 0 ? new Date(Date.now() + days * 86_400_000).toISOString() : null,
+            // Days, not a date: the server counts them, whatever this browser's clock says.
+            expiresInDays: days > 0 ? days : null,
             acknowledgeFindings: true,
           },
         },
@@ -153,6 +154,7 @@ export function SharePanel({
       );
       setConfirming(null);
       setCreatedUrl(null);
+      setCheck(null);
       router.refresh();
     });
 
@@ -243,6 +245,7 @@ export function SharePanel({
                     {t(`share.option.${name}`)}
                   </label>
                 ))}
+                <p className="text-muted-foreground text-xs">{t("share.option.previewHint")}</p>
               </fieldset>
               <label className="flex flex-col gap-1">
                 {t("share.option.expiry")}
@@ -300,6 +303,9 @@ export function SharePanel({
         </Button>
       )}
 
+      {shares.length > 0 ? (
+        <p className="text-muted-foreground text-xs">{t("share.followsCurrent")}</p>
+      ) : null}
       {shares.length > 0 ? (
         <ul className="divide-border flex flex-col divide-y" data-testid="share-list">
           {shares.map((row) => {

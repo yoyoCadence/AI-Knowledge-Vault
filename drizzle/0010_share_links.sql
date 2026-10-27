@@ -27,4 +27,5 @@ CREATE TABLE "share_links" (
 --> statement-breakpoint
 ALTER TABLE "share_links" ADD CONSTRAINT "share_links_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "share_links" ADD CONSTRAINT "share_links_artifact_fk" FOREIGN KEY ("workspace_id","artifact_id") REFERENCES "public"."artifacts"("workspace_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "rate_limit_buckets_window_idx" ON "rate_limit_buckets" USING btree ("window_start");--> statement-breakpoint
 CREATE INDEX "share_links_artifact_idx" ON "share_links" USING btree ("artifact_id","created_at");
