@@ -186,7 +186,7 @@ export default async function ArtifactPage({
             <Badge variant="outline">{t("library.versions", { count: versions.length })}</Badge>
           ) : null}
         </div>
-        <h1 className="text-2xl leading-tight font-semibold tracking-tight sm:text-3xl">
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight break-words sm:text-3xl">
           {artifact.title}
         </h1>
         {artifact.summary ? (
@@ -267,7 +267,7 @@ export default async function ArtifactPage({
                     >
                       <a
                         href={`?view=read#${encodeURIComponent(section.anchor)}`}
-                        className="hover:text-primary hover:underline"
+                        className="hover:text-primary break-words hover:underline"
                       >
                         {section.heading}
                       </a>

@@ -101,9 +101,13 @@ function ActiveFilter({
   testId: string;
 }) {
   return (
-    <p className="flex flex-wrap items-center gap-2 text-sm" data-testid={testId}>
+    <p
+      className="flex max-w-full min-w-0 flex-wrap items-center gap-2 text-sm"
+      data-testid={testId}
+    >
       <Icon className="text-muted-foreground size-4" aria-hidden />
-      {text}
+      {/* A name can be one long word: it wraps instead of widening the header. */}
+      <span className="min-w-0 break-words">{text}</span>
       <Link
         href={clearHref}
         className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1"

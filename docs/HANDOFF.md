@@ -697,6 +697,17 @@ conversations. Update it at the end of every PR.
     `min-w-0`; now `grid-cols-1` and `min-w-0`), and search snippets with long URLs (now
     `break-words`). The usage page's grid and library card titles got the same treatment.
     Removing the grid fix fails the spec.
+  - An independent review found that the first version still passed falsely: a card click
+    navigates on the client and returns at once, so the check measured the library again. Each
+    measurement now waits for something only the measured page has; the spec also creates a
+    long collection and project name, opens the library filters, measures both views of an
+    artifact, waits for search indexing, and puts a per-attempt nonce in uploads (so a CI
+    retry is not a duplicate; also in `share.spec` and `source.spec`). That found, and this
+    PR fixes: the artifact and share-reader `<h1>`, outline links, the project link, manager
+    and picker names (now `break-words`), and selects and filter labels that grew to their
+    longest option or name (`max-w-full min-w-0`). A failing check names the culprits (the
+    deepest elements whose content is wider than their box). Removing the `<h1>` fix fails
+    the spec and names the `<h1>`.
 
 **Not done or not verified**
 

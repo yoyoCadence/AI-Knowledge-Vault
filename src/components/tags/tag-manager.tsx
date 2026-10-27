@@ -57,7 +57,10 @@ function TagItem({ tag, others, canEdit }: { tag: TagRow; others: TagRow[]; canE
   return (
     <li className="flex flex-col gap-2 px-4 py-3" data-testid="tag-row">
       <div className="flex flex-wrap items-center gap-3">
-        <Link href={`/?tag=${tag.id}`} className="hover:text-primary font-medium">
+        <Link
+          href={`/?tag=${tag.id}`}
+          className="hover:text-primary min-w-0 font-medium break-words"
+        >
           #{tag.name}
         </Link>
         <span className="text-muted-foreground text-xs">
@@ -122,7 +125,7 @@ function TagItem({ tag, others, canEdit }: { tag: TagRow; others: TagRow[]; canE
                 id={`merge-${tag.id}`}
                 value={mode.intoId}
                 onChange={(event) => setMode({ kind: "merge", intoId: event.target.value })}
-                className="border-border-strong bg-surface h-8 rounded-md border px-2 text-sm"
+                className="border-border-strong bg-surface h-8 max-w-full min-w-0 rounded-md border px-2 text-sm"
               >
                 <option value="">{t("tags.choose")}</option>
                 {others.map((other) => (

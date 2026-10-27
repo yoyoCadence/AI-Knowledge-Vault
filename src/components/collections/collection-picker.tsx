@@ -76,7 +76,10 @@ export function CollectionPicker({
         <ul className="flex flex-col gap-1.5">
           {collections.map((collection) => (
             <li key={collection.id} className="flex items-center gap-1 text-sm">
-              <Link href={`/?collection=${collection.id}`} className="hover:text-primary">
+              <Link
+                href={`/?collection=${collection.id}`}
+                className="hover:text-primary min-w-0 break-words"
+              >
                 {collection.path.join(" / ")}
               </Link>
               {canEdit ? (

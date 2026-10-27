@@ -14,7 +14,8 @@ test.describe("share links (Scenario: share a work, then take it back)", () => {
         buffer: Buffer.from(
           htmlDocument({
             title: "分享端對端報告",
-            body: "<h2>結論</h2><p>透水鋪面降低地表溫度。聯絡 e2e@example.com</p>",
+            // Distinct bytes per attempt: a retry's upload must not be a duplicate.
+            body: `<h2>結論</h2><p>透水鋪面降低地表溫度。聯絡 e2e@example.com</p><p>attempt ${test.info().retry}</p>`,
           }),
         ),
       },
