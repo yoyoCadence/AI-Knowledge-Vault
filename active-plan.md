@@ -4,12 +4,11 @@ _Last updated: 2026-10-27 by the implementing agent._
 
 ## Current focus
 
-**PR 22 (this branch): P1B-LIBRARY statistics.** The library page says how many works it
-holds (by kind, linking to the kind filter), their versions and stored originals, and how they
-are kept (missing or corrupt originals, the last integrity check and export), from the usage
-report's own queries (FR-LIB-1).
+**PR 23 (this branch): P1B-LIBRARY list layout.** The library switches between cards and
+one row per work (格狀/清單), a choice kept in a preference cookie. Phase 1B is complete with
+it.
 
-**Next: the library's list layout (PR 23), then P1A-ENC.** The exact steps are in
+**Next: P1A-ENC (PR 24), built-in `age` encryption for exports.** The exact steps are in
 `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
@@ -62,7 +61,8 @@ findings handled. If the review bot is unavailable, run an independent review fi
    - ✅ E2E, phone viewport (PR 20)
    - ✅ version split (PR 21)
    - ✅ library statistics (PR 22)
-   - library list layout (PR 23)
+   - ✅ library list layout (PR 23)
+8. P1A-ENC: built-in `age` encryption for exports (PR 24).
 
 ## Open questions for the owner
 

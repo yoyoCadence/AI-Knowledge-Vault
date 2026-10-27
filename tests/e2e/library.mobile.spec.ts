@@ -144,6 +144,13 @@ test.describe("on a phone (Pixel 7)", () => {
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await expect(page.getByTestId("library-summary")).toBeVisible();
     await expectNoHorizontalOverflow(page, "the library (with its summary)");
+    // The list layout: one row per work, its parts stacked on a phone.
+    const layout = page.getByRole("group", { name: "版面" });
+    await layout.getByRole("button", { name: "清單" }).click();
+    await expect(page.getByTestId("artifact-row").filter({ hasText: latinTitle })).toBeVisible();
+    await expectNoHorizontalOverflow(page, "the library as a list");
+    await layout.getByRole("button", { name: "格狀" }).click();
+    await expect(page.getByTestId("artifact-row")).toHaveCount(0);
 
     // Search, once both are indexed (indexing runs right after the import).
     await expect(async () => {
