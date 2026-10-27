@@ -142,7 +142,8 @@ test.describe("on a phone (Pixel 7)", () => {
     await expectNoHorizontalOverflow(page, "the library with filters open");
     await page.goto("/");
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
-    await expectNoHorizontalOverflow(page, "the library");
+    await expect(page.getByTestId("library-summary")).toBeVisible();
+    await expectNoHorizontalOverflow(page, "the library (with its summary)");
 
     // Search, once both are indexed (indexing runs right after the import).
     await expect(async () => {

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requirePageActor } from "@/app/_lib/session";
 import { ArtifactCard, label } from "@/components/library/artifact-card";
 import { LibraryControls } from "@/components/library/library-controls";
+import { LibrarySummary } from "@/components/library/library-summary";
 import { SearchResults } from "@/components/library/search-results";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/states";
@@ -27,6 +28,8 @@ import {
   type LibrarySort,
 } from "@/modules/artifacts";
 import { collectionOptions, findCollection } from "@/modules/collections";
+import { roleAllows } from "@/modules/auth";
+import { getLibrarySummary } from "@/modules/ops";
 import { findProject, listProjects } from "@/modules/projects";
 import { SEARCH_SORTS, searchArtifacts, type SearchSort } from "@/modules/search";
 import { findTag } from "@/modules/tags";
@@ -321,6 +324,9 @@ export default async function LibraryPage({
           : sort === undefined && !anyFilter
             ? "all"
             : null;
+  // The whole library's numbers, on its first page with nothing narrowing it.
+  const summary =
+    view === "all" && !cursor && items.length > 0 ? await getLibrarySummary(db, actor) : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -339,6 +345,10 @@ export default async function LibraryPage({
         {controls}
         {activeFilters}
       </header>
+
+      {summary ? (
+        <LibrarySummary summary={summary} canSeeUsage={roleAllows(actor.role, "workspace:admin")} />
+      ) : null}
 
       {items.length === 0 && !cursor && sort === "opened" && !anyFilter ? (
         <p className="text-muted-foreground text-sm" data-testid="filtered-empty">
