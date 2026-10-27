@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-21, after PR 16: notes and reading state)
+## 1. Snapshot (2026-10-27, after PR 17: share links)
 
 **Merged and tested**
 
@@ -565,6 +565,40 @@ conversations. Update it at the end of every PR.
     approximate; a slow "opened" request could override a status chosen right after opening;
     exports included removed members' reading states.
 
+- **PR 17, P1B-SHARE: share links** (`src/modules/sharing`, migration `0010_share_links`,
+  DATA_MODEL §4.1, API_CONTRACT §8, SECURITY.md §5 and §7, ADR-020):
+  - Owners and editors create links from the artifact page: an advisory pre-share check
+    first (sensitivity, key and token formats, private keys, emails, intranet URLs,
+    suspicious preview files; samples masked), then the options (reading, preview, download,
+    expiry up to 365 days, a label), then the URL, shown once. Only the token's SHA-256 is
+    stored. A private artifact becomes "unlisted"; "private" again revokes every link; a
+    restricted artifact cannot be shared. Links list their use (views, last opened) and can
+    be revoked. Everything is audited; tokens never are.
+  - The public reader `/s/:token` (no session, no workspace data besides the artifact):
+    reading mode, the sandboxed preview through a share-scoped token that the preview route
+    re-checks on every file (revalidated, never served from cache), the original's download
+    (5-minute signed URL), the thumbnail. Every failure is the same 404; every `/s/*`
+    request is rate limited per client address (`rate_limit_buckets`, cleaned hourly), with
+    `no-referrer` and `noindex`.
+  - `ReadingBody` takes a `thumbnailSrc` and `PreviewFrame` a `mintUrl`, so members and
+    link holders share them; `ViewSwitch` moved to `src/components/reader`.
+  - Tests: `tests/unit/sharing/scan.test.ts` (each pattern, masking, intranet vs public URLs,
+    suspicious files, adversarial 2 MB inputs under 600 ms), the preview token's share scope,
+    `tests/integration/sharing/sharing.test.ts` (token stored only as a hash, near-miss
+    tokens, options, restricted, revoked / expired / private / restricted / deleted,
+    cross-workspace, capability limits, the scan, views, the share-scoped preview stopping
+    with its link, TTL bound to the link, download flag and audit, thumbnail, preview refresh,
+    rate limit, counters under concurrency and their cleanup),
+    `tests/integration/api/shares-api.test.ts` (URL shape, no tokens in lists, the
+    acknowledgement, strict bodies, CSRF, visibility, viewers 403, strangers 404), and E2E
+    (create → open in a fresh context → revoke → 404 → private again). Mutation-checked: each
+    `live()` condition, the preview route's link check, the download flag, the TTL cap, the
+    preview flag, the rate-limit bound, private revoking links, the restricted refusal, and
+    both token-scope rules.
+  - Found while testing, fixed here: the email pattern cost ~64 steps per character on long
+    letter runs (1.2 s per 2 MB; now anchored, ~20 ms), and `localhost.example.com` was
+    reported as an intranet URL.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -590,7 +624,17 @@ conversations. Update it at the end of every PR.
     HTML/CSS/JS/JSON/images/fonts/text/PDF.
   - Owner tokens cannot be revoked early. They expire after 15 minutes; deleting the
     artifact stops the server at once, but a browser may show its cached copy for up to
-    5 minutes.
+    5 minutes. (Share-scoped previews are revalidated on every load.)
+- Sharing limits:
+  - The rate limit keys on the client address from `X-Forwarded-For` as trusted by
+    `TRUSTED_PROXIES`. Without a configured proxy, every visitor counts as "unknown" and
+    shares one budget of 120 requests a minute (DEPLOYMENT §5.6).
+  - The pre-share check is pattern-based and advisory; it scans at most 2,000,000
+    characters of extracted text, plus metadata and preview file names.
+  - A restored artifact keeps its archived visibility, but links are never exported, so an
+    "unlisted" artifact restores without links (readable by no one outside the workspace).
+  - The rate-limited reader page answers 200 with a message (a Server Component cannot set
+    a 429); the `/s/*` routes answer 429.
 - Export archives are unencrypted (P1A-ENC). The UI and CLI warn about this.
 - HTML extraction can join adjacent inline labels without a space. This is cosmetic.
 - The S3 adapter has not been verified against real R2.
@@ -630,69 +674,16 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 - P1A-ENC: built-in `age` encryption for exports.
 - Verify the S3 adapter against real R2. This needs the owner's credentials.
 
-**PR 17: P1B-SHARE, share links — IN PROGRESS (draft PR, do not merge yet).** Work in the
-branch `claude/cool-gates-ycsprt` (draft PR). Paused mid-slice when the session ran out of
-budget.
+**Then Phase 1B** (ROADMAP; one PR each):
 
-Done (format, lint, typecheck and the preview unit tests pass; **nothing below has its own tests yet**):
-
-- `schema/sharing.ts` + `drizzle/0010_share_links.sql`: `share_links` (only `token_hash`,
-  composite FK to the artifact, CHECKs for some permission and label length) and
-  `rate_limit_buckets`.
-- `src/modules/sharing/index.ts`: `createShare` (private → unlisted with an audit row;
-  restricted → 409), `listShares`, `revokeShare`, `setVisibility` (private revokes every
-  live link), `checkShare` (advisory scan, masked samples), `resolveShare` (format check, then
-  hash lookup with the `live()` condition: not revoked, not expired, not deleted, not
-  private, not restricted), `recordShareAccess`, `shareAllowsPreview`, `shareVersion`,
-  `shareContent`, `shareThumbnail`, `issueSharePreviewUrl` (TTL ≤ 1 h and ≤ link expiry),
-  `withinRateLimit` (fixed window, one atomic upsert) and the hourly
-  `maintenance.cleanup_rate_limits` job (registered in `src/worker`).
-- `src/modules/preview`: preview tokens gain the `share` scope (`s: "share"`, `l: linkId`);
-  `src/app/p/[token]/[...path]/route.ts` calls `shareAllowsPreview` on every request for it.
-- APIs (no tests yet): `POST /api/artifacts/:id/share-check`, `GET/POST
-/api/artifacts/:id/shares` (`acknowledgeFindings: true` required; URL returned once),
-  `DELETE /api/shares/:id`, `PUT /api/artifacts/:id/visibility`.
-
-Remaining, in order:
-
-1. Public side: `src/app/s/_lib/access.ts` (rate limit `share:<ip>` with `SHARE_RATE_LIMIT`,
-   then `resolveShare`), `src/app/s/[token]/page.tsx` (React `cache()` so metadata and page
-   resolve once; `recordShareAccess`; reading via `ReadingBody` with a `thumbnailSrc` prop
-   replacing `artifactId`; preview via `PreviewFrame` with a `mintUrl` prop replacing
-   `artifactId`/`versionId`; download button only if allowed; no workspace data),
-   `s/[token]/download` (302 signed URL, audit `share.original.downloaded`, actor null),
-   `s/[token]/thumbnail` (add `mimeType` to `shareThumbnail`), `s/[token]/preview-token`
-   (POST → `issueSharePreviewUrl`). `/s/` is already a public prefix in `proxy.ts`.
-2. `next.config.ts`: a later rule for `/s/:path*` with `Referrer-Policy: no-referrer` and
-   `X-Robots-Tag: noindex, nofollow` (later rules override earlier keys).
-3. Share panel UI on the detail page + visibility control + i18n.
-4. Tests: unit (token/hash, scan patterns, `verifyPreviewToken` share scope — update the
-   existing test that expects `s: "share"` to be refused: it still must be refused **without**
-   `l`), integration (valid / revoked / expired / private / deleted / restricted / download
-   flag / cross-workspace / token not stored / rate limit / preview route share scope / the
-   cleanup job), API tests, E2E (create → fresh context → revoke → 404).
-5. Docs: DATA_MODEL, API_CONTRACT §8 status, SECURITY §5/§7, README, ROADMAP, task.md.
-6. Gates, mark the PR ready, Codex + independent review, fixes, merge.
-
-Original plan (DATA_MODEL §4.1 `share_links`, API_CONTRACT §8,
-SECURITY.md §5 and §7, TEST_PLAN §4). Security-sensitive: read SECURITY.md first.
-
-1. Schema: `share_links` as in DATA_MODEL (only `token_hash` stored; the token is shown once).
-   Workspace-scoped composite key to the artifact, like notes.
-2. APIs: `POST /api/artifacts/:id/share-check` (advisory scan: sensitivity, emails, keys),
-   `POST/GET /api/artifacts/:id/shares`, `DELETE /api/shares/:id` (revoke), all audited.
-3. Public reader `/s/:token`: constant-time token check, 404 for revoked, expired, deleted or
-   unknown (indistinguishable); reading mode only, preview through the preview origin with a
-   share-scoped token (SECURITY.md §5 already reserves the scope), download only if allowed.
-   No session, no workspace data beyond the artifact. Rate limited.
-4. UI: a share panel on the detail page (create with options and the check's findings,
-   copy the URL once, list and revoke).
-5. Export: share links are never exported (tokens are secrets; FR-BAK-2) — no format bump.
-6. Tests: unauthorized access, revocation, expiry, token not stored, timing-safe compare,
-   E2E create → open in a fresh context → revoke → 404. Review before merging.
-
-**Then Phase 1B:**
-
-- sharing
-- ops dashboard
-- remaining E2E
+1. **P1B-OPS (PR 18): usage dashboard.** A `/settings/ops` page (owner) with storage used
+   (originals, derived, exports; from `file_assets`/`derived_assets`/`export_runs` sums),
+   database size (`pg_database_size`), job queue counts by status and type, recent permanent
+   failures (`processing_jobs` failed, `import_items` failed), the last integrity check and
+   last export. Read-only queries in a new `src/modules/ops`; integration tests for each
+   number against seeded data; no fake numbers (anything not measurable is labelled so).
+2. **P1B-DETAIL remainder:** source-information editing and the visibility control outside
+   the share panel (the API exists: `PUT /api/artifacts/:id/visibility`).
+3. **P1B-E2E remainder:** export → restore through the UI, mobile project
+   (`*.mobile.spec.ts`), library on a phone viewport.
+4. **P1B-VERSION-SPLIT:** split a wrongly matched version into its own artifact.

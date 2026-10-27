@@ -116,6 +116,12 @@ proxy must overwrite, not append, this header. Alternatively, set `TRUSTED_PROXI
 Better Auth `advanced.ipAddress.trustedProxies`) to the platform's proxy ranges. If neither is done, clients
 can spoof IPs to evade the per-IP limit.
 
+Share links (`/s/*`) are rate limited per client address too, through the same resolver
+(`resolveClientIp`). It believes `X-Forwarded-For` only from `TRUSTED_PROXIES`, or a
+single-hop header; when it finds no trustworthy address, the request counts against one shared
+"unknown" budget (120 requests a minute for all such visitors together). Configure the proxy
+so share links are limited per visitor, not all together.
+
 ## 6. What the owner must provide to deploy
 
 1. A Neon project, with its connection strings (pooled and direct).

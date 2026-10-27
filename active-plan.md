@@ -1,13 +1,15 @@
 # Active Plan
 
-_Last updated: 2026-10-21 by the implementing agent._
+_Last updated: 2026-10-27 by the implementing agent._
 
 ## Current focus
 
-**PR 17 (this branch, draft): P1B-SHARE, share links — in progress.** Backend done
-(schema, module, preview share scope, management APIs); public `/s/:token` page, UI, tests
-and docs remain. Exact status and next steps: `docs/HANDOFF.md` §4. Do not merge until the
-remaining steps, tests and reviews are done.
+**PR 17 (this branch): P1B-SHARE, share links.** Pre-share check, links with separate
+reading / preview / download permissions, expiry and revocation, the public reader
+`/s/:token` with share-scoped previews, rate limiting, the share panel, and the visibility
+control (private revokes every link).
+
+**Next: P1B-OPS (PR 18): usage dashboard.** The exact steps are in `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.

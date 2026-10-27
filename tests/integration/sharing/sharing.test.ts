@@ -337,7 +337,9 @@ describe("shared previews (SECURITY.md §5)", () => {
     const preview = await issueSharePreviewUrl(db, capability!, version!, env);
     expect(preview!.url.startsWith(`${env.PREVIEW_ORIGIN}/p/`)).toBe(true);
     expect(preview!.expiresInSeconds).toBe(3600);
-    expect((await fetchPreview(preview!.url)).status).toBe(200);
+    const served = await fetchPreview(preview!.url);
+    expect(served.status).toBe(200);
+    expect(served.headers.get("cache-control")).toBe("private, no-cache");
 
     const target = {
       linkId: created.share.id,

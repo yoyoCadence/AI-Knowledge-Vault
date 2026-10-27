@@ -55,7 +55,7 @@
 | P1B-ORG           | Research Projects、Collections（階層）、Tags（正規化、合併）                  | ✅ Tags（PR 13）、Projects（PR 14）、Collections（PR 15）    |
 | P1B-NOTES         | Notes、Reading Status、Favorites                                              | ✅（PR 16）                                                  |
 | P1B-SEARCH        | CJK bigram 全文搜尋、篩選、排序、片段 Highlight                               | ✅（PR 12–14；筆記內容 PR 16）                               |
-| P1B-SHARE         | Share links（權限分離、到期、撤銷）、分享前檢查、公開閱讀頁                   | 📝                                                           |
+| P1B-SHARE         | Share links（權限分離、到期、撤銷）、分享前檢查、公開閱讀頁                   | ✅（PR 17）                                                  |
 | P1B-OPS           | Usage Dashboard（儲存、DB、Jobs、失敗、最後完整性檢查）                       | 📝                                                           |
 | P1B-E2E           | E2E：登入、批次上傳、進度、開啟作品、搜尋、改分類、筆記、分享、撤銷、匯出還原 | 📝                                                           |
 | P1B-VERSION-SPLIT | 將誤判的版本拆成獨立作品                                                      | 📝                                                           |

@@ -69,6 +69,9 @@ async function serve(request: Request, withBody: boolean): Promise<Response> {
       }),
       etag: `"${asset.sha256}"`,
     };
+    // A browser may keep an owner's preview for a few minutes; a shared one is revalidated on
+    // every load (a cheap 304), so a revoked link shows nothing more, even from the cache.
+    if (claims.s === "share") headers["cache-control"] = "private, no-cache";
     if (request.headers.get("if-none-match") === headers.etag) {
       return new Response(null, { status: 304, headers });
     }

@@ -323,3 +323,30 @@ peer dependencies). Anything not verified that way is marked _assumption_.
 - **Consequences:** A personal vault restores exactly. A shared workspace loses whose state
   was whose (it was never exported). Re-running a restore after deleting a note brings the
   note back; deleting it again is the remedy.
+
+## ADR-020 Share links: hashed tokens, a narrow capability, and visibility that follows links
+
+- **Status:** accepted (PR 17, share links)
+- **Context:** FR-SHR asks for links that let someone without an account read one artifact,
+  with separate reading / preview / download permissions, expiry and revocation. The vault is
+  private by default, and its preview origin serves untrusted HTML behind short path tokens.
+- **Decision:**
+  - A link's token is 32 random bytes (base64url). Only its SHA-256 is stored, so neither the
+    database nor a backup holds a usable link; the URL is shown once. Links are never
+    exported.
+  - `resolveShare` turns a token into a capability (one artifact's current version, the
+    link's permissions) only while the link is not revoked or expired and the artifact is not
+    deleted, private or restricted, re-checked on every request. The public routes take only
+    that capability; no service ever runs with an anonymous actor. Every failure is one 404.
+  - Previews reuse the preview origin with a `share` scope that carries the link id; the
+    preview route checks the link on every file, so revocation is immediate.
+  - Visibility follows links: creating one makes a private artifact `unlisted`, and making
+    it private revokes every link permanently (re-unlisting never revives old URLs).
+    `public` stays reserved for the Phase 4 showcase.
+  - The pre-share check is advisory (patterns can neither prove a document clean nor catch
+    everything); only `restricted` blocks sharing.
+  - Anonymous routes are rate limited in Postgres (`rate_limit_buckets`, fixed windows, one
+    atomic upsert), keyed by the trusted client address.
+- **Consequences:** A lost URL cannot be recovered, only replaced. Revoking is instant for
+  pages, files and previews. An unconfigured proxy makes all visitors share one rate-limit
+  budget (DEPLOYMENT §5.6). Restores bring artifacts back without links.
