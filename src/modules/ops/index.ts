@@ -1,6 +1,6 @@
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import type { DbExecutor } from "@/infrastructure/database/client";
+import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import {
   artifacts,
   artifactVersions,
@@ -14,6 +14,7 @@ import {
   type JobStatus,
 } from "@/infrastructure/database/schema";
 import type { Actor } from "@/modules/auth";
+import { JOB_RETENTION_DAYS } from "@/modules/imports";
 
 /**
  * Usage and health of a workspace (FR-OPS-2, FR-OPS-3), for its owner. Every number is read from
@@ -25,6 +26,13 @@ import type { Actor } from "@/modules/auth";
 const RECENT_FAILURES = 10;
 /** Error texts are shown, not stored again: long ones are cut. */
 const ERROR_TEXT_MAX = 300;
+/** The job counts cover only the history imports maintenance keeps (see JOB_RETENTION_DAYS). */
+export const JOB_HISTORY_DAYS = JOB_RETENTION_DAYS;
+/**
+ * Unexpected errors (no AppError) carry raw driver or filesystem messages, paths included. Like
+ * the HTTP layer, the report shows only their code; the details are in the worker's log.
+ */
+const INTERNAL_ERROR = "INTERNAL_ERROR";
 
 export interface Tally {
   count: number;
@@ -86,11 +94,25 @@ const tally = (row: { count: number; bytes: string | number | null } | undefined
 const cut = (text: string | null) =>
   text && text.length > ERROR_TEXT_MAX ? `${text.slice(0, ERROR_TEXT_MAX)}…` : text;
 
-export async function getUsageReport(
-  db: DbExecutor,
+const shownError = (row: { errorCode: string | null; error: string | null }) =>
+  row.errorCode === INTERNAL_ERROR ? null : cut(row.error);
+
+/**
+ * The report, read in one read-only REPEATABLE READ transaction, so its numbers come from one
+ * snapshot (a failed-job count and its list cannot disagree).
+ */
+export function getUsageReport(
+  database: Database,
   actor: Actor,
   now = new Date(),
 ): Promise<UsageReport> {
+  return database.transaction((tx) => readReport(tx, actor, now), {
+    isolationLevel: "repeatable read",
+    accessMode: "read only",
+  });
+}
+
+async function readReport(db: DbExecutor, actor: Actor, now: Date): Promise<UsageReport> {
   const ws = actor.workspaceId;
   const byteSum = (column: AnyPgColumn) => sql<string>`coalesce(sum(${column}), 0)::bigint`;
 
@@ -125,14 +147,17 @@ export async function getUsageReport(
       ),
     );
 
-  const [library] = await db
-    .select({
-      artifacts: sql<number>`count(distinct ${artifacts.id})::int`,
-      versions: sql<number>`count(${artifactVersions.id})::int`,
-    })
+  // Two counts: one count(distinct) over the join sorts every version (slow past ~100k).
+  const live = and(eq(artifacts.workspaceId, ws), isNull(artifacts.deletedAt));
+  const [artifactCount] = await db
+    .select({ count: sql<number>`count(*)::int` })
     .from(artifacts)
-    .leftJoin(artifactVersions, eq(artifactVersions.artifactId, artifacts.id))
-    .where(and(eq(artifacts.workspaceId, ws), isNull(artifacts.deletedAt)));
+    .where(live);
+  const [versionCount] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(artifactVersions)
+    .innerJoin(artifacts, eq(artifacts.id, artifactVersions.artifactId))
+    .where(live);
 
   const [database] = await db
     .execute<{ bytes: string }>(sql`select pg_database_size(current_database())::bigint as bytes`)
@@ -185,7 +210,13 @@ export async function getUsageReport(
   const [lastExport] = await db
     .select({ id: exportRuns.id, completedAt: exportRuns.completedAt, bytes: exportRuns.byteSize })
     .from(exportRuns)
-    .where(and(eq(exportRuns.workspaceId, ws), eq(exportRuns.status, "completed")))
+    .where(
+      and(
+        eq(exportRuns.workspaceId, ws),
+        eq(exportRuns.status, "completed"),
+        isNotNull(exportRuns.completedAt),
+      ),
+    )
     .orderBy(desc(exportRuns.completedAt))
     .limit(1);
   const [latestExport] = await db
@@ -204,7 +235,13 @@ export async function getUsageReport(
       corrupt: integrityChecks.corruptCount,
     })
     .from(integrityChecks)
-    .where(and(eq(integrityChecks.workspaceId, ws), eq(integrityChecks.status, "completed")))
+    .where(
+      and(
+        eq(integrityChecks.workspaceId, ws),
+        eq(integrityChecks.status, "completed"),
+        isNotNull(integrityChecks.completedAt),
+      ),
+    )
     .orderBy(desc(integrityChecks.completedAt))
     .limit(1);
   const [latestCheck] = await db
@@ -239,15 +276,15 @@ export async function getUsageReport(
         storage.thumbnails.bytes +
         storage.exports.bytes,
     },
-    library: { artifacts: library?.artifacts ?? 0, versions: library?.versions ?? 0 },
+    library: { artifacts: artifactCount?.count ?? 0, versions: versionCount?.count ?? 0 },
     database: { bytes: Number(database?.bytes ?? 0) },
     jobs: {
       byStatus,
-      recentFailures: failedJobs.map((job) => ({ ...job, error: cut(job.error) })),
+      recentFailures: failedJobs.map((job) => ({ ...job, error: shownError(job) })),
     },
     imports: {
       failed: failedImportCount?.count ?? 0,
-      recentFailures: failedImports.map((item) => ({ ...item, error: cut(item.error) })),
+      recentFailures: failedImports.map((item) => ({ ...item, error: shownError(item) })),
     },
     backup: {
       lastExport:

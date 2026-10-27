@@ -8,6 +8,7 @@ import {
   derivedAssets,
   exportRuns,
   fileAssets,
+  integrityChecks,
   importItems,
   processingJobs,
   workspaceMembers,
@@ -188,6 +189,24 @@ describe("usage report (FR-OPS-2/3)", () => {
     expect(report.jobs.recentFailures[0]!.error!.endsWith("…")).toBe(true);
     // Another workspace sees none of it.
     expect((await getUsageReport(db, await createTestActor())).jobs.byStatus.failed).toBe(0);
+
+    // Unexpected errors keep their raw text (paths, driver messages) out of the report.
+    const { job: crashed } = await enqueueJob(db, {
+      type: "integrity.check",
+      idempotencyKey: `usage-test:${newId()}`,
+      workspaceId: actor.workspaceId,
+    });
+    await db
+      .update(processingJobs)
+      .set({
+        status: "failed",
+        errorCode: "INTERNAL_ERROR",
+        lastError: "ENOENT: no such file or directory, open '/srv/vault/data/ws/x/originals/y'",
+        updatedAt: new Date(Date.now() + 10_000),
+      })
+      .where(eq(processingJobs.id, crashed.id));
+    const [latest] = (await getUsageReport(db, actor)).jobs.recentFailures;
+    expect(latest).toMatchObject({ id: crashed.id, errorCode: "INTERNAL_ERROR", error: null });
   });
 
   it("dates failures by when they failed, not by later bookkeeping", async () => {
@@ -264,12 +283,35 @@ describe("usage report (FR-OPS-2/3)", () => {
     expect(report.backup.lastIntegrityCheck).toMatchObject({ checked: 1, ok: 1, missing: 0 });
     expect(report.backup.latestIntegrityCheck?.id).toBe(report.backup.lastIntegrityCheck?.id);
 
+    // Another workspace's newer export and integrity check are not this one's.
+    const other = await createTestActor();
+    const later = new Date(Date.now() + 60_000);
+    await db.insert(exportRuns).values({
+      workspaceId: other.workspaceId,
+      status: "completed",
+      formatVersion: 4,
+      storageKey: `elsewhere/${newId()}`,
+      byteSize: 999,
+      createdAt: later,
+      completedAt: later,
+    });
+    await db.insert(integrityChecks).values({
+      workspaceId: other.workspaceId,
+      status: "completed",
+      checkedCount: 7,
+      okCount: 7,
+      startedAt: later,
+      completedAt: later,
+    });
+    expect((await getUsageReport(db, actor)).backup).toEqual(report.backup);
+    expect((await getUsageReport(db, actor)).storage.exports).toEqual(report.storage.exports);
+
     // A newer attempt that failed shows as the latest, while the last success stays.
     const failed = await requestExport(db, actor, meta);
     await db.update(exportRuns).set({ status: "failed" }).where(eq(exportRuns.id, failed.id));
-    const later = await getUsageReport(db, actor);
-    expect(later.backup.lastExport?.id).toBe(exported.id);
-    expect(later.backup.latestExport).toMatchObject({ id: failed.id, status: "failed" });
+    const afterFailure = await getUsageReport(db, actor);
+    expect(afterFailure.backup.lastExport?.id).toBe(exported.id);
+    expect(afterFailure.backup.latestExport).toMatchObject({ id: failed.id, status: "failed" });
 
     // An archive deleted by retention no longer counts as stored.
     await db.update(exportRuns).set({ storageKey: null }).where(eq(exportRuns.id, exported.id));

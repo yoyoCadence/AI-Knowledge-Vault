@@ -11,7 +11,7 @@ import { JOB_STATUSES } from "@/infrastructure/database/schema";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { t, tOptional } from "@/lib/i18n";
 import { roleAllows } from "@/modules/auth";
-import { getUsageReport, type Tally } from "@/modules/ops";
+import { getUsageReport, JOB_HISTORY_DAYS, type Tally } from "@/modules/ops";
 
 export const metadata: Metadata = { title: t("usage.title") };
 
@@ -49,6 +49,8 @@ function Failure({
       </span>
       {error ? (
         <span className="text-muted-foreground font-mono text-xs break-words">{error}</span>
+      ) : code === "INTERNAL_ERROR" ? (
+        <span className="text-muted-foreground text-xs">{t("usage.error.internal")}</span>
       ) : null}
     </li>
   );
@@ -213,6 +215,9 @@ export default async function UsagePage() {
                 </div>
               ))}
             </dl>
+            <p className="text-muted-foreground text-xs">
+              {t("usage.jobs.window", JOB_HISTORY_DAYS)}
+            </p>
             <div>
               <p className="text-sm font-medium">{t("usage.jobs.recentFailures")}</p>
               {jobs.recentFailures.length > 0 ? (

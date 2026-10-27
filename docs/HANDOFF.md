@@ -630,6 +630,22 @@ conversations. Update it at the end of every PR.
     owners only) and E2E (the page with real numbers after the import spec). Mutation-checked:
     the workspace scopes of storage and jobs, export retention, deleted artifacts, the
     last-successful-export filter, ordering, the error cut, and the owner permission.
+  - Codex review found, and this PR fixes with a test that fails without it: failures were
+    dated by `updatedAt`, which staging cleanup refreshes days later, so old import failures
+    showed as new and pushed recent ones off the list; they are dated by `completed_at`.
+  - An independent review found, and this PR fixes: the share E2E's "signed-out" visitor
+    context inherited the admin session (now `SIGNED_OUT`, and it is checked to land on
+    /login); job counts are limited by job-row retention, now said on the page
+    (`JOB_RETENTION_DAYS`, one constant shared with maintenance); `INTERNAL_ERROR` texts
+    (raw paths and driver messages) are no longer shown; the library count used a
+    `count(distinct)` over a join that sorted on disk at ~100k versions (two counts now);
+    exports and integrity checks lacked an isolation test (added, mutation-checked); the ops
+    E2E depended on the import spec (now creates its own failed file, work and export); the
+    report now reads one snapshot, and "last completed" ignores rows without a completion time.
+  - Known limits: `derived_assets` has no index leading with `workspace_id`, so its sums scan
+    the table (about 130 ms at a million rows; fine for an owner page). "N 天前" counts 24-hour
+    periods. Totals include the recorded size of missing or corrupt originals. The failed
+    import count is a history: a later successful re-upload does not clear it.
   - E2E now signs in **once** (`tests/e2e/auth.setup.ts`, the `setup` project) and every
     spec reuses that session (`E2E_ADMIN_STATE`); tests of anonymous access use
     `test.use({ storageState: SIGNED_OUT })`. Sign-in is limited to 5 a minute per address

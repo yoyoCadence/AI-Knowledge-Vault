@@ -61,6 +61,7 @@ export {
   cleanupImports,
   importCleanupJobDefinition,
   IMPORT_CLEANUP_JOB_TYPE,
+  JOB_RETENTION_DAYS,
   type CleanupOptions,
   type CleanupReport,
 } from "./maintenance";

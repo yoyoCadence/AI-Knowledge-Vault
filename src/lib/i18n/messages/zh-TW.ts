@@ -478,6 +478,9 @@ export const zhTW = {
   "usage.jobs.status.cancelled": "已取消",
   "usage.jobs.recentFailures": "最近失敗的工作",
   "usage.jobs.noFailures": "沒有失敗的工作。",
+  "usage.jobs.window":
+    "工作紀錄只保留一段時間（完成的 {completed} 天、失敗的 {failed} 天），數量只涵蓋這段期間。",
+  "usage.error.internal": "內部錯誤；詳細原因只記在背景工作程序的記錄中，可依時間查找。",
   "usage.jobType.import.process_item": "處理匯入檔案",
   "usage.jobType.export.create": "建立匯出",
   "usage.jobType.restore.run": "還原備份",
@@ -486,7 +489,7 @@ export const zhTW = {
   "usage.jobType.search.index_version": "建立搜尋索引",
   "usage.jobType.search.reindex_all": "補建搜尋索引",
   "usage.imports": "匯入失敗",
-  "usage.imports.count": "共 {count} 個檔案匯入失敗",
+  "usage.imports.count": "共 {count} 筆匯入失敗紀錄（之後重新上傳成功也不會消除舊紀錄）",
   "usage.imports.none": "沒有匯入失敗的檔案。",
   "usage.backup": "備份狀態",
   "usage.backup.lastExport": "最後一次成功匯出：{date}（{size}）",
