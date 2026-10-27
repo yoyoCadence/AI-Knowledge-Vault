@@ -189,6 +189,16 @@ describe("PATCH /api/artifacts/:id/versions/:versionId (source metadata)", () =>
     expect(second.artifactId).toBe(target.artifactId);
     expect((await patch({ author: "舊版作者" })).status).toBe(200);
     expect((await stored()).author).toBe("舊版作者");
+    // Search describes the current version: an older version's source is not found.
+    const searched = (await (
+      await searchRoute(
+        new Request(`${env.APP_ORIGIN}/api/search?q=${encodeURIComponent("舊版作者")}`, {
+          headers: { cookie: owner.cookie },
+        }),
+        params({}),
+      )
+    ).json()) as { items: { id: string }[] };
+    expect(searched.items).toEqual([]);
 
     const other = await importOne(owner, "other.html", "另一份作品");
     expect(

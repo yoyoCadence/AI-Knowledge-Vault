@@ -2,7 +2,9 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { Database } from "@/infrastructure/database/client";
 import { artifacts, artifactVersions, researchProjects } from "@/infrastructure/database/schema";
 import { AppError, notFound } from "@/lib/errors";
+import { isUuid } from "@/lib/ids";
 import { cleanDescription, cleanTitle } from "@/lib/text";
+import { linkableUrl } from "@/lib/url";
 import { recordAudit, type RequestMeta } from "@/modules/audit";
 import type { Actor } from "@/modules/auth";
 import { indexArtifactMetadata } from "@/modules/search";
@@ -134,30 +136,22 @@ function cleanDay(value: string): string {
 
 /** An http(s) link without credentials; shown as a link, so nothing else is accepted. */
 function cleanSourceUrl(value: string): string {
-  const text = value.trim();
-  let url: URL | null = null;
-  try {
-    url = text.length <= SOURCE_URL_MAX ? new URL(text) : null;
-  } catch {
-    url = null;
-  }
-  if (!url || !["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+  const href = value.trim().length <= SOURCE_URL_MAX ? linkableUrl(value) : null;
+  if (!href || href.length > SOURCE_URL_MAX) {
     throw new AppError(
       "VALIDATION_FAILED",
       `Source URLs are http(s) links without credentials, at most ${SOURCE_URL_MAX} characters`,
     );
   }
-  if (url.href.length > SOURCE_URL_MAX) {
-    throw new AppError("VALIDATION_FAILED", `Source URLs are at most ${SOURCE_URL_MAX} characters`);
-  }
-  return url.href;
+  return href;
 }
 
 /**
- * Edits a version's source metadata (never its file). The artifact is locked first, like every
- * artifact edit, and re-indexed in the same transaction: the current version's source fields
- * are search metadata. Out-of-workspace or deleted artifacts, and versions of another
- * artifact, are 404.
+ * Edits a version's source metadata (never its file), re-indexing the artifact in the same
+ * transaction: the current version's source fields are search metadata. Locks the version, then
+ * its artifact, the order the search index job takes (`indexVersion`); the other order deadlocks
+ * with a job for the same version. Out-of-workspace or deleted artifacts, and versions of
+ * another artifact, are 404.
  */
 export async function updateVersionSource(
   db: Database,
@@ -186,13 +180,25 @@ export async function updateVersionSource(
   if (Object.keys(changes).length === 0) {
     throw new AppError("VALIDATION_FAILED", "Nothing to update");
   }
+  if (!isUuid(input.artifactId) || !isUuid(input.versionId)) throw notFound("Version");
   return db.transaction(async (tx) => {
+    const [version] = await tx
+      .select({ id: artifactVersions.id, artifactId: artifactVersions.artifactId })
+      .from(artifactVersions)
+      .where(
+        and(
+          eq(artifactVersions.id, input.versionId),
+          eq(artifactVersions.workspaceId, actor.workspaceId),
+        ),
+      )
+      .for("update");
+    if (!version || version.artifactId !== input.artifactId) throw notFound("Version");
     const [artifact] = await tx
       .select({ id: artifacts.id })
       .from(artifacts)
       .where(
         and(
-          eq(artifacts.id, input.artifactId),
+          eq(artifacts.id, version.artifactId),
           eq(artifacts.workspaceId, actor.workspaceId),
           isNull(artifacts.deletedAt),
         ),
@@ -202,13 +208,7 @@ export async function updateVersionSource(
     const [updated] = await tx
       .update(artifactVersions)
       .set(changes)
-      .where(
-        and(
-          eq(artifactVersions.id, input.versionId),
-          eq(artifactVersions.artifactId, artifact.id),
-          eq(artifactVersions.workspaceId, actor.workspaceId),
-        ),
-      )
+      .where(eq(artifactVersions.id, version.id))
       .returning({
         id: artifactVersions.id,
         sourcePlatform: artifactVersions.sourcePlatform,

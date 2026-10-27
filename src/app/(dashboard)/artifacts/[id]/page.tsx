@@ -14,7 +14,7 @@ import { CollectionPicker } from "@/components/collections/collection-picker";
 import { SharePanel } from "@/components/sharing/share-panel";
 import { NewNote, NoteItem } from "@/components/notes/notes-panel";
 import { ReadingControls } from "@/components/notes/reading-controls";
-import { MarkdownView, safeHref } from "@/components/reader/markdown-view";
+import { MarkdownView } from "@/components/reader/markdown-view";
 import { TagEditor } from "@/components/tags/tag-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import { getDb } from "@/infrastructure/database/client";
 import { isAppError } from "@/lib/errors";
 import { formatBytes, formatDate, formatDateTime } from "@/lib/format";
 import { isUuid } from "@/lib/ids";
+import { linkableUrl } from "@/lib/url";
 import { t, tOptional } from "@/lib/i18n";
 import { firstParam, type PageSearchParams } from "@/lib/search-params";
 import {
@@ -489,15 +490,16 @@ export default async function ArtifactPage({
                       name={t("artifact.sourceUrl")}
                       value={
                         version.sourceUrl ? (
-                          // Imported URLs are untrusted: only http(s) becomes a link.
-                          safeHref(version.sourceUrl)?.startsWith("http") ? (
+                          // Imported URLs are untrusted: only a credential-free http(s) URL
+                          // becomes a link, and it shows the parsed address it goes to.
+                          linkableUrl(version.sourceUrl) ? (
                             <a
-                              href={safeHref(version.sourceUrl)!}
+                              href={linkableUrl(version.sourceUrl)!}
                               target="_blank"
                               rel="noopener noreferrer nofollow"
                               className="text-primary break-all hover:underline"
                             >
-                              {version.sourceUrl}
+                              {linkableUrl(version.sourceUrl)}
                             </a>
                           ) : (
                             <span className="break-all">{version.sourceUrl}</span>

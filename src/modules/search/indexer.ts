@@ -176,7 +176,8 @@ export async function indexArtifactMetadata(tx: DbExecutor, artifactId: string) 
  * document, in one transaction. Locks, in order: the version row (two jobs for the same
  * version never interleave), then its artifact row (jobs for different versions of one
  * artifact take turns). Nothing locks an existing version after its artifact, so this order
- * cannot deadlock with imports, restores or re-extraction.
+ * cannot deadlock with imports, restores or re-extraction; source edits (`updateVersionSource`)
+ * take the same order. Keep it that way: the reverse order deadlocks with this job.
  */
 export async function indexVersion(db: Database, versionId: string) {
   return db.transaction(async (tx) => {

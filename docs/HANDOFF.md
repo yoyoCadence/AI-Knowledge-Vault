@@ -671,6 +671,17 @@ conversations. Update it at the end of every PR.
     (`tests/e2e/source.spec.ts`: edit, display, link attributes, search and the model
     filter). Mutation-checked: the re-index, the version-belongs-to-artifact condition, the
     URL scheme and credential rules, the real-day check, the write permission.
+  - Codex review found, and this PR fixes with an E2E that fails without it: an untouched
+    imported URL the browser refuses (`http://%zz/report`; the Markdown importer keeps any
+    `http(s)://` value) blocked saving any other field; the form is `noValidate`, only
+    changed fields are sent, and the server validates them.
+  - An independent review found, and this PR fixes: the edit locked the artifact before the
+    version, the reverse of the search index job, and deadlocked with a job for the same
+    version (reproduced; a deterministic test in
+    `tests/integration/library/version-source-locks.test.ts` fails with the old order);
+    imported URLs with credentials (`https://trusted@evil/`) rendered as links (one predicate,
+    `src/lib/url.ts`, for edits and display; the link shows the parsed address); a stale
+    error reappeared after cancel; a test now checks search ignores an older version's edit.
   - Not built: `originalPrompt` and `changeSummary` editing (in the contract as planned).
 
 **Not done or not verified**

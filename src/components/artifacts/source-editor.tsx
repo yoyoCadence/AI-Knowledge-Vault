@@ -85,7 +85,10 @@ export function SourceEditor({
             size="sm"
             variant="outline"
             className="w-fit"
-            onClick={() => setEditing(true)}
+            onClick={() => {
+              setError(null);
+              setEditing(true);
+            }}
           >
             <Pencil />
             {t("source.edit")}
@@ -162,7 +165,15 @@ export function SourceEditor({
         <Button type="submit" size="sm" disabled={busy}>
           {t("edit.save")}
         </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setError(null);
+            setEditing(false);
+          }}
+        >
           {t("edit.cancel")}
         </Button>
       </div>
