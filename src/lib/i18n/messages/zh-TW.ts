@@ -135,6 +135,11 @@ export const zhTW = {
   "artifact.versions": "版本",
   "artifact.version": "V{number}",
   "artifact.current": "目前版本",
+  "split.action": "拆成獨立作品",
+  "split.confirm": "再按一次確認拆分",
+  "split.explain":
+    "V{number} 會移到一件新作品（私人，同一個研究專案）。筆記、標籤、收藏集、閱讀狀態與分享連結都留在這件作品。",
+  "split.error.only": "這是作品唯一的版本，無法拆分。",
   "artifact.download": "下載原始檔",
   "artifact.sha256": "SHA-256",
   "artifact.size": "大小",

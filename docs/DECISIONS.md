@@ -353,3 +353,35 @@ peer dependencies). Anything not verified that way is marked _assumption_.
   are only as good as the client address (DEPLOYMENT §5.6). Restores bring artifacts back
   without links. Restriction and deletion suspend links; a future undo of either must revoke
   them.
+
+## ADR-021 Version split: the version moves to an artifact made as its import would have made it
+
+- **Status:** accepted (PR 21, version split)
+- **Context:** Imports add a file as a new version of the one artifact whose identity key (the
+  normalized filename stem) it shares (IMPORT_PIPELINE §6). Two unrelated documents with
+  similar names get merged, and nothing could undo it: versions cannot be deleted, and
+  originals are immutable.
+- **Decision:**
+  - `POST /api/artifacts/:id/versions/:versionId/split` moves one version to a new artifact
+    in one transaction. The version keeps its id, files, extractions, derived files and search
+    chunks (only `content_chunks.artifact_id` is rewritten); it becomes V1 there.
+  - The new artifact is made as the import would have made it alone: title from the
+    extraction or the filename, summary from the text, identity key from the filename,
+    private, in the old artifact's project. It belongs to no collection and has no tags.
+  - Everything the owner attached to the old artifact stays there: notes, tags, collections,
+    reading state, share links. Its other versions keep their numbers (gaps are fine); if the
+    split version was current, its newest remaining one becomes current. An only version
+    cannot be split (409): that would leave an artifact without versions.
+  - Lock order is the version, then its artifact, as the search index job takes them, so a
+    split cannot deadlock with indexing, and an index job queued behind the split writes its
+    chunks to the new artifact.
+  - The import item keeps `result_artifact_id` = the old artifact: it records what the
+    import did.
+- **Consequences:** Two artifacts now share an identity key, so later files with that stem
+  match neither and become new artifacts with `AMBIGUOUS_VERSION_MATCH` (the owner can target
+  one explicitly). Share links of the old artifact keep showing its current version, which
+  may change. Notes written about the split version stay with the old artifact. An archive
+  made after a split, restored with `skip_existing` over a database saved before it, cannot
+  bring the new artifact back (its version is still in the old one, which is kept as it is);
+  the report says so and copy mode restores it as a copy. There is no merge (the reverse)
+  yet.

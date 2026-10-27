@@ -6,7 +6,13 @@ export {
   type DetectedFormat,
   type SniffResult,
 } from "./sniff";
-export { contentHash, filenameStem, normalizeWhitespace, headingAnchor } from "./normalize";
+export {
+  contentHash,
+  filenameStem,
+  normalizeWhitespace,
+  headingAnchor,
+  summaryFromText,
+} from "./normalize";
 export { detectLanguage } from "./language";
 export { decodeText } from "./text-decode";
 export { extractHtml } from "./html";

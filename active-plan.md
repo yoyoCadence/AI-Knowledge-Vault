@@ -4,12 +4,11 @@ _Last updated: 2026-10-27 by the implementing agent._
 
 ## Current focus
 
-**PR 20 (this branch): P1B-E2E, phone viewport.** A Pixel 7 spec over every main page
-(navigation drawer, library, search, reading mode, share panel, the public share reader,
-settings and usage) asserting no horizontal overflow; it found the artifact page laid out at
-918 px on a phone, fixed here.
+**PR 21 (this branch): P1B-VERSION-SPLIT.** Split a version the import matched wrongly (by
+filename) off into its own artifact: `POST /api/artifacts/:id/versions/:versionId/split`, a
+two-step action in the detail page's version list, ADR-021.
 
-**Next: P1B-VERSION-SPLIT (PR 21).** The exact steps are in `docs/HANDOFF.md` §4.
+**Next: P1B-LIBRARY statistics (PR 22).** The exact steps are in `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.
@@ -55,9 +54,12 @@ findings handled. If the review bot is unavailable, run an independent review fi
    - 🚧 search (PR 12: keyword search; filters with organization)
    - ✅ organization: tags (PR 13), projects and filters (PR 14), collections (PR 15)
    - ✅ notes and reading state (PR 16)
-   - sharing
-   - ops dashboard
-   - E2E
+   - ✅ sharing (PR 17)
+   - ✅ ops dashboard (PR 18)
+   - ✅ source metadata editing (PR 19)
+   - ✅ E2E, phone viewport (PR 20)
+   - ✅ version split (PR 21)
+   - library statistics (PR 22)
 
 ## Open questions for the owner
 

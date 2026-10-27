@@ -39,3 +39,14 @@ export function filenameStem(filename: string): string {
   const base = filename.split(/[\\/]/).pop() ?? filename;
   return base.replace(/(\.(dc|tar))?\.[a-z0-9]{1,8}$/i, "").replace(/\.(dc|tar)$/i, "") || base;
 }
+
+/**
+ * A work's summary when its file has no description: the first line of its text long enough to
+ * say something (20 characters) that is not the title, cut at 280 characters.
+ */
+export function summaryFromText(plainText: string, title?: string | null): string | null {
+  const lines = plainText.split("\n").map((line) => line.trim());
+  const first = lines.find((line) => line.length >= 20 && line !== title);
+  if (!first) return null;
+  return first.length > 280 ? `${first.slice(0, 279)}…` : first;
+}

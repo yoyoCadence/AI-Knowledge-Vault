@@ -8,6 +8,7 @@ import { KindIcon } from "@/components/library/kind-icon";
 import { PreviewFrame } from "@/components/preview/preview-frame";
 import { ArtifactMetaEditor } from "@/components/artifacts/artifact-meta-editor";
 import { SourceEditor } from "@/components/artifacts/source-editor";
+import { VersionSplit } from "@/components/artifacts/version-split";
 import { ReadingBody } from "@/components/reader/reading-body";
 import { type ReaderView, ViewSwitch } from "@/components/reader/view-switch";
 import { CollectionPicker } from "@/components/collections/collection-picker";
@@ -528,8 +529,12 @@ export default async function ArtifactPage({
             <CardContent>
               <ul className="flex flex-col gap-2">
                 {versions.map((item) => (
-                  <li key={item.id} className="flex items-center justify-between gap-2 text-sm">
-                    <span className="flex min-w-0 flex-col">
+                  <li
+                    key={item.id}
+                    className="flex flex-wrap items-center gap-x-1 gap-y-2 text-sm"
+                    data-testid="version-row"
+                  >
+                    <span className="flex min-w-0 flex-1 flex-col">
                       <span className="font-medium">
                         {t("artifact.version", { number: item.versionNumber })}
                         {item.id === artifact.currentVersionId ? (
@@ -552,6 +557,13 @@ export default async function ArtifactPage({
                         <Download />
                       </a>
                     </Button>
+                    {canEdit && versions.length > 1 ? (
+                      <VersionSplit
+                        artifactId={artifact.id}
+                        versionId={item.id}
+                        versionNumber={item.versionNumber}
+                      />
+                    ) : null}
                   </li>
                 ))}
               </ul>
