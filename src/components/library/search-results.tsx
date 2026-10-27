@@ -22,10 +22,13 @@ export function SearchResults({ items }: { items: SearchHit[] }) {
                   {label("kind", item.contentKind)}
                 </Badge>
               ) : null}
-              <span className="font-medium">{item.title}</span>
+              <span className="min-w-0 font-medium break-words">{item.title}</span>
             </span>
             {item.snippet ? (
-              <span className="text-muted-foreground text-sm leading-relaxed" data-testid="snippet">
+              <span
+                className="text-muted-foreground text-sm leading-relaxed break-words"
+                data-testid="snippet"
+              >
                 {item.snippet.truncatedStart ? "…" : ""}
                 {item.snippet.segments.map((segment, index) =>
                   segment.highlight ? (

@@ -4,12 +4,12 @@ _Last updated: 2026-10-27 by the implementing agent._
 
 ## Current focus
 
-**PR 19 (this branch): P1B-DETAIL, source metadata editing.** `PATCH
-/api/artifacts/:id/versions/:versionId` and an editor in the detail page's "來源資訊" card:
-platform, model, research date, author and source URL, validated, re-indexed and audited.
+**PR 20 (this branch): P1B-E2E, phone viewport.** A Pixel 7 spec over every main page
+(navigation drawer, library, search, reading mode, share panel, the public share reader,
+settings and usage) asserting no horizontal overflow; it found the artifact page laid out at
+918 px on a phone, fixed here.
 
-**Next: P1B-E2E remainder (PR 20): phone viewport.** The exact steps are in
-`docs/HANDOFF.md` §4.
+**Next: P1B-VERSION-SPLIT (PR 21).** The exact steps are in `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.

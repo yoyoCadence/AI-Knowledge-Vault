@@ -78,7 +78,7 @@ export default async function UsagePage() {
         </p>
       </header>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>{t("usage.storage")}</CardTitle>
