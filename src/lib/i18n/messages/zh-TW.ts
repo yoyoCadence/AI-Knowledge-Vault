@@ -145,6 +145,11 @@ export const zhTW = {
   "artifact.sourceModel": "來源模型",
   "artifact.researchDate": "研究日期",
   "artifact.author": "作者",
+  "artifact.sourceUrl": "來源網址",
+  "source.edit": "編輯來源資訊",
+  "source.unset": "未設定",
+  "source.error.invalid":
+    "來源資訊格式不符：平台最多 100 字，模型與作者最多 200 字，日期需為有效日期，網址需為 http(s) 連結且不含帳號密碼。",
   "artifact.importedAt": "匯入時間",
   "artifact.unknown": "未知",
   "artifact.processing": "處理狀態",

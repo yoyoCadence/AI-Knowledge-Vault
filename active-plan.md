@@ -4,12 +4,11 @@ _Last updated: 2026-10-27 by the implementing agent._
 
 ## Current focus
 
-**PR 18 (this branch): P1B-OPS, usage and status.** An owner-only page (`/settings/usage`)
-and API (`GET /api/ops/usage`): storage by kind, library size, database size, jobs by status
-and recent failures, failed imports, and the last export and integrity check, all read from
-the database as recorded.
+**PR 19 (this branch): P1B-DETAIL, source metadata editing.** `PATCH
+/api/artifacts/:id/versions/:versionId` and an editor in the detail page's "來源資訊" card:
+platform, model, research date, author and source URL, validated, re-indexed and audited.
 
-**Next: P1B-DETAIL remainder (PR 19): source metadata editing.** The exact steps are in
+**Next: P1B-E2E remainder (PR 20): phone viewport.** The exact steps are in
 `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its

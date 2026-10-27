@@ -18,8 +18,13 @@ export { createOriginalDownload, ORIGINAL_DOWNLOAD_TTL_SECONDS } from "./downloa
 export { getThumbnailForActor } from "./thumbnail";
 export {
   updateArtifact,
+  updateVersionSource,
   ARTIFACT_TITLE_MAX,
   ARTIFACT_DESCRIPTION_MAX,
+  SOURCE_PLATFORM_MAX,
+  SOURCE_TEXT_MAX,
+  SOURCE_URL_MAX,
   type ArtifactEdit,
+  type VersionSourceEdit,
 } from "./edit";
 export { filterConditions, hasFilters, type LibraryFilters } from "./filters";
