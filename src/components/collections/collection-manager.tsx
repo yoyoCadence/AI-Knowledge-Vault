@@ -20,7 +20,7 @@ export interface CollectionRow {
 }
 
 const field =
-  "border-border-strong bg-surface focus-visible:ring-ring rounded-md border px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:outline-none";
+  "max-w-full min-w-0 border-border-strong bg-surface focus-visible:ring-ring rounded-md border px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:outline-none";
 
 const indent = (depth: number) => "\u3000".repeat(depth);
 
@@ -215,7 +215,10 @@ function CollectionItem({
       data-testid="collection-row"
     >
       <div className="flex flex-wrap items-center gap-3">
-        <Link href={`/?collection=${row.id}`} className="hover:text-primary font-medium">
+        <Link
+          href={`/?collection=${row.id}`}
+          className="hover:text-primary min-w-0 font-medium break-words"
+        >
           {row.name}
         </Link>
         <Badge variant="outline">{t(`collections.kind.${row.kind}`)}</Badge>

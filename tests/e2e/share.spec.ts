@@ -1,20 +1,22 @@
 import { expect, test } from "@playwright/test";
 import { htmlDocument } from "../fixtures/builders";
 import { e2eEnv } from "./e2e-env";
-import { login, SIGNED_OUT } from "./helpers";
+import { attempt, login, SIGNED_OUT } from "./helpers";
 
 test.describe("share links (Scenario: share a work, then take it back)", () => {
   test("create → open signed out → revoke → 404", async ({ page, browser }) => {
+    const run = attempt();
+    const title = `分享端對端報告 ${run}`;
     await login(page);
     await page.goto("/import");
     await page.getByTestId("import-file-input").setInputFiles([
       {
-        name: "share-e2e.html",
+        name: `share-e2e-${run}.html`,
         mimeType: "text/html",
         buffer: Buffer.from(
           htmlDocument({
-            title: "分享端對端報告",
-            body: "<h2>結論</h2><p>透水鋪面降低地表溫度。聯絡 e2e@example.com</p>",
+            title,
+            body: `<h2>結論</h2><p>透水鋪面降低地表溫度。聯絡 e2e@example.com</p><p>${run}</p>`,
           }),
         ),
       },
@@ -22,7 +24,7 @@ test.describe("share links (Scenario: share a work, then take it back)", () => {
     await page.getByRole("button", { name: "開始上傳" }).click();
     await expect(page.getByTestId("import-summary")).toHaveText(/1 完成/, { timeout: 30_000 });
     await page.goto("/");
-    await page.getByRole("heading", { name: "分享端對端報告" }).click();
+    await page.getByRole("heading", { name: title }).click();
 
     // The check runs first and shows what it found; the owner then picks the options.
     const panel = page.getByTestId("share-panel");
@@ -47,7 +49,7 @@ test.describe("share links (Scenario: share a work, then take it back)", () => {
     expect(response?.status()).toBe(200);
     expect(response?.headers()["referrer-policy"]).toBe("no-referrer");
     expect(response?.headers()["x-robots-tag"]).toBe("noindex, nofollow");
-    await expect(reader.getByRole("heading", { level: 1 })).toHaveText("分享端對端報告");
+    await expect(reader.getByRole("heading", { level: 1 })).toHaveText(title);
     await expect(reader.getByTestId("preview-frame")).toHaveAttribute(
       "src",
       new RegExp(`^${e2eEnv.PREVIEW_ORIGIN}/p/`),

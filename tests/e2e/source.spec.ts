@@ -10,7 +10,13 @@ test.describe("source metadata (FR-LIB-6)", () => {
       {
         name: "source-e2e.html",
         mimeType: "text/html",
-        buffer: Buffer.from(htmlDocument({ title: "來源資訊端對端" })),
+        // Distinct bytes per attempt: a retry's upload must not be a duplicate.
+        buffer: Buffer.from(
+          htmlDocument({
+            title: "來源資訊端對端",
+            body: `<p>來源內容 attempt ${test.info().retry}</p>`,
+          }),
+        ),
       },
     ]);
     await page.getByRole("button", { name: "開始上傳" }).click();
@@ -51,7 +57,7 @@ test.describe("source metadata (FR-LIB-6)", () => {
         name: "front-matter.md",
         mimeType: "text/markdown",
         buffer: Buffer.from(
-          "---\nsource_url: http://%zz/report\nauthor: 原作者\n---\n# 前置資料測試\n\n內容。\n",
+          `---\nsource_url: http://%zz/report\nauthor: 原作者\n---\n# 前置資料測試\n\n內容 attempt ${test.info().retry}。\n`,
         ),
       },
     ]);

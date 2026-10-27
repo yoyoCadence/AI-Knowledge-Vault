@@ -27,6 +27,7 @@ export default defineConfig({
     {
       name: "desktop",
       use: { ...devices["Desktop Chrome"], storageState: E2E_ADMIN_STATE },
+      testIgnore: "**/*.mobile.spec.ts",
       dependencies: ["setup"],
     },
     {

@@ -49,7 +49,7 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactCardData }) {
         )}
       </div>
       <div className="flex flex-1 flex-col gap-2 p-4">
-        <h3 className="group-hover:text-primary line-clamp-2 text-sm leading-snug font-semibold">
+        <h3 className="group-hover:text-primary line-clamp-2 text-sm leading-snug font-semibold break-words">
           {artifact.isFavorite ? (
             <>
               <Star

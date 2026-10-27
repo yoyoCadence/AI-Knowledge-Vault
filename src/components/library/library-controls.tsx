@@ -29,8 +29,10 @@ export interface TreeOption extends Option {
 
 const indent = (depth: number) => "\u3000".repeat(depth);
 
+// A select is as wide as its longest option (names run to 1,000 characters): capped, it
+// never pushes the filter row past a phone screen.
 const field =
-  "border-border-strong bg-surface focus-visible:ring-ring h-9 rounded-md border px-2 text-sm focus-visible:ring-2 focus-visible:outline-none";
+  "max-w-full min-w-0 border-border-strong bg-surface focus-visible:ring-ring h-9 rounded-md border px-2 text-sm focus-visible:ring-2 focus-visible:outline-none";
 
 /**
  * Search box plus filters and sort, as one plain GET form: it works without client JavaScript
@@ -60,7 +62,7 @@ export function LibraryControls({
   clearHref: string;
 }) {
   return (
-    <form action="/" method="get" role="search" className="flex w-full flex-col gap-3">
+    <form action="/" method="get" role="search" className="flex w-full min-w-0 flex-col gap-3">
       {values.tag ? <input type="hidden" name="tag" value={values.tag} /> : null}
       <div className="flex w-full max-w-xl gap-2">
         <label className="sr-only" htmlFor="library-search">
@@ -86,7 +88,7 @@ export function LibraryControls({
           {t("filters.title")}
         </summary>
         <div className="mt-3 flex flex-wrap items-end gap-3">
-          <label className="flex flex-col gap-1">
+          <label className="flex max-w-full min-w-0 flex-col gap-1">
             <span className="text-muted-foreground text-xs">{t("filters.project")}</span>
             <select name="project" defaultValue={values.project ?? ""} className={field}>
               <option value="">{t("filters.anyProject")}</option>
@@ -98,7 +100,7 @@ export function LibraryControls({
             </select>
           </label>
           {collections.length > 0 ? (
-            <label className="flex flex-col gap-1">
+            <label className="flex max-w-full min-w-0 flex-col gap-1">
               <span className="text-muted-foreground text-xs">{t("filters.collection")}</span>
               <select name="collection" defaultValue={values.collection ?? ""} className={field}>
                 <option value="">{t("filters.anyCollection")}</option>
@@ -110,7 +112,7 @@ export function LibraryControls({
               </select>
             </label>
           ) : null}
-          <label className="flex flex-col gap-1">
+          <label className="flex max-w-full min-w-0 flex-col gap-1">
             <span className="text-muted-foreground text-xs">{t("filters.kind")}</span>
             <select name="kind" defaultValue={values.kind ?? ""} className={field}>
               <option value="">{t("filters.anyKind")}</option>
@@ -122,7 +124,7 @@ export function LibraryControls({
             </select>
           </label>
           {models.length > 0 ? (
-            <label className="flex flex-col gap-1">
+            <label className="flex max-w-full min-w-0 flex-col gap-1">
               <span className="text-muted-foreground text-xs">{t("filters.model")}</span>
               <select name="model" defaultValue={values.model ?? ""} className={field}>
                 <option value="">{t("filters.anyModel")}</option>
@@ -134,15 +136,15 @@ export function LibraryControls({
               </select>
             </label>
           ) : null}
-          <label className="flex flex-col gap-1">
+          <label className="flex max-w-full min-w-0 flex-col gap-1">
             <span className="text-muted-foreground text-xs">{t("filters.from")}</span>
             <input type="date" name="from" defaultValue={values.from ?? ""} className={field} />
           </label>
-          <label className="flex flex-col gap-1">
+          <label className="flex max-w-full min-w-0 flex-col gap-1">
             <span className="text-muted-foreground text-xs">{t("filters.to")}</span>
             <input type="date" name="to" defaultValue={values.to ?? ""} className={field} />
           </label>
-          <label className="flex flex-col gap-1">
+          <label className="flex max-w-full min-w-0 flex-col gap-1">
             <span className="text-muted-foreground text-xs">{t("filters.status")}</span>
             <select name="status" defaultValue={values.status ?? ""} className={field}>
               <option value="">{t("filters.anyStatus")}</option>
@@ -163,7 +165,7 @@ export function LibraryControls({
             />
             <span>{t("filters.favorite")}</span>
           </label>
-          <label className="flex flex-col gap-1">
+          <label className="flex max-w-full min-w-0 flex-col gap-1">
             <span className="text-muted-foreground text-xs">{t("filters.sort")}</span>
             <select name="sort" defaultValue={values.sort ?? sorts[0]?.value} className={field}>
               {sorts.map((sort) => (

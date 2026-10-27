@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-27, after PR 19: source metadata editing)
+## 1. Snapshot (2026-10-27, after PR 20: phone viewport)
 
 **Merged and tested**
 
@@ -684,6 +684,38 @@ conversations. Update it at the end of every PR.
     error reappeared after cancel; a test now checks search ignores an older version's edit.
   - Not built: `originalPrompt` and `changeSummary` editing (in the contract as planned).
 
+- **PR 20, P1B-E2E: phone viewport** (`tests/e2e/library.mobile.spec.ts`, the `mobile`
+  project; the desktop project now ignores `*.mobile.spec.ts`, which it used to run too):
+  - On a Pixel 7: import (a long hyphenated filename, a long CJK title, an unbroken Latin
+    title, a long URL in the text), the navigation drawer, the library, search, an artifact
+    (preview and reading), the share panel, the public share reader (with the download card's
+    filename and SHA-256), collections, projects, settings and usage. Every page must not
+    scroll sideways: `scrollWidth <= screen.width`. Not `innerWidth`: a mobile browser zooms
+    out to fit wide content, so the layout viewport grows with it and that check always passes.
+  - It found, and this PR fixes: the artifact page laid out at 918 px on a phone (its grid's
+    implicit `auto` column grew to the widest unbreakable text, and the sidebar lacked
+    `min-w-0`; now `grid-cols-1` and `min-w-0`), and search snippets with long URLs (now
+    `break-words`). The usage page's grid and library card titles got the same treatment.
+    Removing the grid fix fails the spec.
+  - An independent review found that the first version still passed falsely: a card click
+    navigates on the client and returns at once, so the check measured the library again. Each
+    measurement now waits for something only the measured page has; the spec also creates a
+    long collection and project name, opens the library filters, measures both views of an
+    artifact and waits for search indexing. That found, and this
+    PR fixes: the artifact and share-reader `<h1>`, outline links, the project link, manager
+    and picker names (now `break-words`), and selects and filter labels that grew to their
+    longest option or name (`max-w-full min-w-0`). A failing check names the culprits (the
+    deepest elements whose content is wider than their box). Removing the `<h1>` fix fails
+    the spec and names the `<h1>`.
+  - Codex found that a CI retry (`retries: 1`, same database) could never pass: the
+    first attempt's work, collection and share were still there (a second work with the same
+    title, a 409 on the collection name, a second share row). `attempt()` in
+    `tests/e2e/helpers.ts` names the attempt; the phone and share specs put it in every
+    filename, title, name and search term they create. Checked by failing the first attempt
+    on purpose with `--retries=1`: the retry failed before and passes now. `source.spec`
+    already passed its retry (its filename makes the retry a new version of the same work).
+    Older specs (`import.spec`, …) were not checked for this.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -764,10 +796,27 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 **Then Phase 1B** (ROADMAP; one PR each):
 
-1. **P1B-E2E remainder (PR 20): phone viewport.** Export → restore through the UI is
-   already covered (`import.spec.ts`). Add `tests/e2e/library.mobile.spec.ts` (the `mobile`
-   project, Pixel 7, starts from the shared session): the app shell's navigation on a narrow
-   screen, the library grid, search, an artifact's reading mode and the share panel, with no
-   horizontal overflow (`document.documentElement.scrollWidth <= innerWidth`). Fix what it
-   finds (the 16 px gutter rule, long titles and SHA-256 strings that must wrap).
-2. **P1B-VERSION-SPLIT:** split a wrongly matched version into its own artifact.
+1. **P1B-VERSION-SPLIT (PR 21): split a wrongly matched version into its own artifact.**
+   Imports match versions by filename stem (`match_reason`), which can be wrong.
+   `POST /api/artifacts/:id/versions/:versionId/split` (`library:write`, A) moves the version
+   (and only it) to a new artifact in the same workspace, in one transaction:
+   - lock order: the version, then its artifact (the search index job's order), then insert
+     the new artifact (title from the version's extraction title or its filename; private;
+     the same project); refuse when it is the artifact's only version (409, nothing to split);
+   - the version gets `artifact_id` = the new one and `version_number` 1; the old artifact
+     keeps its other versions' numbers (gaps are fine) and, if the split version was current,
+     its newest remaining version becomes current;
+   - `content_chunks`, `derived_assets`, `extracted_documents` follow the version
+     (`artifact_id` columns where they exist) — check every table with an `artifact_id` or a
+     composite `(workspace_id, artifact_id)` FK; `file_assets` never change (immutable);
+   - notes, tags, collections, reading state and share links stay with the old artifact;
+   - re-index both artifacts' metadata documents; audit `artifact_version.split` with both
+     ids; the import item's `result_artifact_id` is left as the historical record.
+     UI: a "拆成獨立作品" action per version in the detail page's version list (two-step
+     confirm), then go to the new artifact. Tests: the move, numbering, current version,
+     chunks and search on both sides, the only-version refusal, isolation, viewer 403, a lock
+     test against `indexVersion` like PR 19's, and export/restore of the result.
+2. **P1B-LIBRARY remainder:** library statistics (counts by kind, storage used) on the
+   library page, read from the same queries as the usage page.
+3. **Phase 1A leftovers:** P1A-ENC (`age` encryption for exports) and verifying the S3 adapter
+   against real R2 (needs the owner's credentials).

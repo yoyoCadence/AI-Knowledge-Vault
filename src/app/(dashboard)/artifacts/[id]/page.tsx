@@ -186,7 +186,7 @@ export default async function ArtifactPage({
             <Badge variant="outline">{t("library.versions", { count: versions.length })}</Badge>
           ) : null}
         </div>
-        <h1 className="text-2xl leading-tight font-semibold tracking-tight sm:text-3xl">
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight break-words sm:text-3xl">
           {artifact.title}
         </h1>
         {artifact.summary ? (
@@ -208,7 +208,9 @@ export default async function ArtifactPage({
         ) : null}
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+      {/* grid-cols-1 (minmax(0, 1fr)): an implicit auto column would grow to the widest
+          unbreakable text and push the page sideways on a phone. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="flex min-w-0 flex-col gap-6">
           {version ? (
             <Card>
@@ -265,7 +267,7 @@ export default async function ArtifactPage({
                     >
                       <a
                         href={`?view=read#${encodeURIComponent(section.anchor)}`}
-                        className="hover:text-primary hover:underline"
+                        className="hover:text-primary break-words hover:underline"
                       >
                         {section.heading}
                       </a>
@@ -346,7 +348,7 @@ export default async function ArtifactPage({
           ) : null}
         </div>
 
-        <aside className="flex flex-col gap-4">
+        <aside className="flex min-w-0 flex-col gap-4">
           {overview && version ? (
             <Card>
               <CardContent className="flex flex-col gap-4 pt-5">

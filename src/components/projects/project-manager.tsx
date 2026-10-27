@@ -17,7 +17,7 @@ export interface ProjectRow {
 }
 
 const field =
-  "border-border-strong bg-surface focus-visible:ring-ring rounded-md border px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:outline-none";
+  "max-w-full min-w-0 border-border-strong bg-surface focus-visible:ring-ring rounded-md border px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:outline-none";
 
 function useAction() {
   const router = useRouter();
@@ -126,7 +126,10 @@ function ProjectItem({ project, canEdit }: { project: ProjectRow; canEdit: boole
   return (
     <li className="flex flex-col gap-2 px-4 py-3" data-testid="project-row">
       <div className="flex flex-wrap items-center gap-3">
-        <Link href={`/?project=${project.id}`} className="hover:text-primary font-medium">
+        <Link
+          href={`/?project=${project.id}`}
+          className="hover:text-primary min-w-0 font-medium break-words"
+        >
           {project.title}
         </Link>
         {project.status === "archived" ? (

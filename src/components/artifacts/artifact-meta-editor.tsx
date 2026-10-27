@@ -122,7 +122,10 @@ export function ArtifactMetaEditor({
       <div className="flex flex-col gap-0.5">
         <span className="text-muted-foreground text-xs">{t("projects.label")}</span>
         {project ? (
-          <Link href={`/?project=${project.id}`} className="hover:text-primary font-medium">
+          <Link
+            href={`/?project=${project.id}`}
+            className="hover:text-primary font-medium break-words"
+          >
             {project.title}
           </Link>
         ) : (

@@ -120,7 +120,7 @@ export default async function SharedArtifactPage({
             </span>
           ) : null}
         </div>
-        <h1 className="text-2xl leading-tight font-semibold tracking-tight sm:text-3xl">
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight break-words sm:text-3xl">
           {capability.title}
         </h1>
         {capability.summary ? (
