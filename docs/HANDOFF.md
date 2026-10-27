@@ -701,13 +701,20 @@ conversations. Update it at the end of every PR.
     navigates on the client and returns at once, so the check measured the library again. Each
     measurement now waits for something only the measured page has; the spec also creates a
     long collection and project name, opens the library filters, measures both views of an
-    artifact, waits for search indexing, and puts a per-attempt nonce in uploads (so a CI
-    retry is not a duplicate; also in `share.spec` and `source.spec`). That found, and this
+    artifact and waits for search indexing. That found, and this
     PR fixes: the artifact and share-reader `<h1>`, outline links, the project link, manager
     and picker names (now `break-words`), and selects and filter labels that grew to their
     longest option or name (`max-w-full min-w-0`). A failing check names the culprits (the
     deepest elements whose content is wider than their box). Removing the `<h1>` fix fails
     the spec and names the `<h1>`.
+  - Codex found that a CI retry (`retries: 1`, same database) could never pass: the
+    first attempt's work, collection and share were still there (a second work with the same
+    title, a 409 on the collection name, a second share row). `attempt()` in
+    `tests/e2e/helpers.ts` names the attempt; the phone and share specs put it in every
+    filename, title, name and search term they create. Checked by failing the first attempt
+    on purpose with `--retries=1`: the retry failed before and passes now. `source.spec`
+    already passed its retry (its filename makes the retry a new version of the same work).
+    Older specs (`import.spec`, …) were not checked for this.
 
 **Not done or not verified**
 

@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { type Page, test } from "@playwright/test";
 import { E2E_ADMIN } from "./e2e-env";
 
 /** A browser state with no session, for tests of what anonymous visitors get. */
@@ -20,4 +20,15 @@ export async function signIn(page: Page) {
 export async function login(page: Page) {
   await page.goto("/");
   if (new URL(page.url()).pathname.startsWith("/login")) await signIn(page);
+}
+
+/**
+ * Names the running attempt of a test, for whatever it creates. CI retries a failed test against
+ * the same database (global-setup resets it once per run), so a retry must not meet the first
+ * attempt's leftovers: the same bytes are a duplicate import, a known filename becomes a new
+ * version of the earlier work (its shares included), a taken collection name is a conflict, and
+ * two works with one title make a locator match twice.
+ */
+export function attempt() {
+  return `attempt${test.info().retry}`;
 }

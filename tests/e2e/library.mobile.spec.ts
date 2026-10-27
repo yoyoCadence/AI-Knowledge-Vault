@@ -1,7 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 import { htmlDocument } from "../fixtures/builders";
 import { e2eEnv } from "./e2e-env";
-import { login } from "./helpers";
+import { attempt, login } from "./helpers";
 
 /**
  * No page may scroll sideways on a phone: everything wraps inside the 16 px gutters. Compared
@@ -39,36 +39,41 @@ async function expectNoHorizontalOverflow(page: Page, where: string) {
 }
 
 // Long unbroken text is what usually overflows a phone screen: filenames, titles, names, URLs.
-const LONG_NAME = `mobile-${"very-long-filename-without-spaces-".repeat(3)}report.html`;
-const TITLE = "手機版排版測試：一個相當長的研究報告標題，用來確認在窄螢幕上會正確換行";
-const LATIN_TITLE = `Unbroken${"Supercalifragilisticexpialidocious".repeat(2)}Title`;
-const COLLECTION = `Collection${"Unbroken".repeat(11)}`;
-const PROJECT = `Project${"Unbroken".repeat(18)}`;
+// Every one is the attempt's own (see attempt()).
+function longNames(run: string) {
+  return {
+    longName: `mobile-${run}-${"very-long-filename-without-spaces-".repeat(3)}report.html`,
+    title: `手機版排版測試 ${run}：一個相當長的研究報告標題，用來確認在窄螢幕上會正確換行`,
+    latinTitle: `Unbroken${"Supercalifragilisticexpialidocious".repeat(2)}Title${run}`,
+    collection: `Collection${"Unbroken".repeat(10)}${run}`,
+    project: `Project${"Unbroken".repeat(18)}${run}`,
+  };
+}
 
 test.describe("on a phone (Pixel 7)", () => {
   test("navigation, library, search, reading and sharing fit the screen", async ({ page }) => {
-    // Distinct bytes per attempt: a retry's upload must not be a duplicate of the first's.
-    const attempt = `attempt-${test.info().retry}`;
+    const run = attempt();
+    const { longName, title, latinTitle, collection, project } = longNames(run);
     await login(page);
     await page.goto("/import");
     await page.getByTestId("import-file-input").setInputFiles([
       {
-        name: LONG_NAME,
+        name: longName,
         mimeType: "text/html",
         buffer: Buffer.from(
           htmlDocument({
-            title: TITLE,
-            body: `<h2>結論</h2><p>窄螢幕閱讀測試 ${attempt}。${"https://example.org/".repeat(4)}a-long-path-segment-without-breaks</p>`,
+            title,
+            body: `<h2>結論</h2><p>窄螢幕閱讀測試 ${run}。${"https://example.org/".repeat(4)}a-long-path-segment-without-breaks</p>`,
           }),
         ),
       },
       {
-        name: "latin.html",
+        name: `latin-${run}.html`,
         mimeType: "text/html",
         buffer: Buffer.from(
           htmlDocument({
-            title: LATIN_TITLE,
-            body: `<p>${LATIN_TITLE} 窄螢幕閱讀 ${attempt}。</p>`,
+            title: latinTitle,
+            body: `<p>${latinTitle} 窄螢幕閱讀 ${run}。</p>`,
           }),
         ),
       },
@@ -79,17 +84,17 @@ test.describe("on a phone (Pixel 7)", () => {
 
     // Long names: a collection and a project holding the Latin-titled work.
     await page.goto("/");
-    await page.getByRole("heading", { name: LATIN_TITLE }).click();
-    await expect(page.getByRole("heading", { level: 1, name: LATIN_TITLE })).toBeVisible();
+    await page.getByRole("heading", { name: latinTitle }).click();
+    await expect(page.getByRole("heading", { level: 1, name: latinTitle })).toBeVisible();
     const latinId = new URL(page.url()).pathname.split("/")[2]!;
     const origin = { origin: e2eEnv.APP_ORIGIN! };
-    const collection = await page.request.post("/api/collections", {
+    const collectionResponse = await page.request.post("/api/collections", {
       headers: origin,
-      data: { name: COLLECTION },
+      data: { name: collection },
     });
-    expect(collection.status()).toBe(201);
-    const collectionId = ((await collection.json()) as { collection: { id: string } }).collection
-      .id;
+    expect(collectionResponse.status()).toBe(201);
+    const collectionId = ((await collectionResponse.json()) as { collection: { id: string } })
+      .collection.id;
     expect(
       (
         await page.request.put(`/api/collections/${collectionId}/items/${latinId}`, {
@@ -97,12 +102,12 @@ test.describe("on a phone (Pixel 7)", () => {
         })
       ).ok(),
     ).toBe(true);
-    const project = await page.request.post("/api/projects", {
+    const projectResponse = await page.request.post("/api/projects", {
       headers: origin,
-      data: { title: PROJECT },
+      data: { title: project },
     });
-    expect(project.status()).toBe(201);
-    const projectId = ((await project.json()) as { project: { id: string } }).project.id;
+    expect(projectResponse.status()).toBe(201);
+    const projectId = ((await projectResponse.json()) as { project: { id: string } }).project.id;
     expect(
       (
         await page.request.patch(`/api/artifacts/${latinId}`, {
@@ -114,8 +119,8 @@ test.describe("on a phone (Pixel 7)", () => {
 
     // The artifact page with its long title, project and collection (preview, then reading).
     await page.reload();
-    await expect(page.getByRole("heading", { level: 1, name: LATIN_TITLE })).toBeVisible();
-    await expect(page.getByTestId("collection-picker")).toContainText(COLLECTION);
+    await expect(page.getByRole("heading", { level: 1, name: latinTitle })).toBeVisible();
+    await expect(page.getByTestId("collection-picker")).toContainText(collection);
     await expectNoHorizontalOverflow(page, "an artifact with long title, project and collection");
     await page.getByRole("link", { name: "閱讀", exact: true }).click();
     await expect(page.getByTestId("reader")).toContainText("窄螢幕閱讀");
@@ -133,22 +138,22 @@ test.describe("on a phone (Pixel 7)", () => {
     // The library with the filters open (their selects hold the long names).
     await page.goto(`/?project=${projectId}`);
     await expect(page.getByTestId("library-filters")).toHaveAttribute("open", "");
-    await expect(page.getByRole("heading", { name: LATIN_TITLE })).toBeVisible();
+    await expect(page.getByRole("heading", { name: latinTitle })).toBeVisible();
     await expectNoHorizontalOverflow(page, "the library with filters open");
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: TITLE })).toBeVisible();
+    await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await expectNoHorizontalOverflow(page, "the library");
 
     // Search, once both are indexed (indexing runs right after the import).
     await expect(async () => {
-      await page.goto(`/?q=${encodeURIComponent("窄螢幕閱讀")}`);
+      await page.goto(`/?q=${encodeURIComponent(`窄螢幕閱讀 ${run}`)}`);
       await expect(page.getByTestId("snippet")).toHaveCount(2, { timeout: 1_000 });
     }).toPass({ timeout: 30_000 });
     await expectNoHorizontalOverflow(page, "search results");
 
     await page.goto("/");
-    await page.getByRole("heading", { name: TITLE }).click();
-    await expect(page.getByRole("heading", { level: 1, name: TITLE })).toBeVisible();
+    await page.getByRole("heading", { name: title }).click();
+    await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
     await expectNoHorizontalOverflow(page, "the long-filename artifact (preview)");
     await page.getByRole("link", { name: "閱讀", exact: true }).click();
     await expect(page.getByTestId("reader")).toContainText("窄螢幕閱讀測試");
@@ -173,8 +178,8 @@ test.describe("on a phone (Pixel 7)", () => {
     await expectNoHorizontalOverflow(page, "the public share reader");
 
     for (const [path, name] of [
-      ["/collections", COLLECTION],
-      ["/projects", PROJECT],
+      ["/collections", collection],
+      ["/projects", project],
     ] as const) {
       await page.goto(path);
       await expect(page.getByRole("link", { name })).toBeVisible();
