@@ -8,6 +8,7 @@ import { KindIcon } from "@/components/library/kind-icon";
 import { PreviewFrame } from "@/components/preview/preview-frame";
 import { ArtifactMetaEditor } from "@/components/artifacts/artifact-meta-editor";
 import { ReadingBody } from "@/components/reader/reading-body";
+import { type ReaderView, ViewSwitch } from "@/components/reader/view-switch";
 import { CollectionPicker } from "@/components/collections/collection-picker";
 import { NewNote, NoteItem } from "@/components/notes/notes-panel";
 import { ReadingControls } from "@/components/notes/reading-controls";
@@ -36,7 +37,7 @@ import { listNotes, readingStateOf } from "@/modules/notes";
 import { findProject, listProjects } from "@/modules/projects";
 import { listTags } from "@/modules/tags";
 
-type View = "read" | "preview";
+type View = ReaderView;
 
 async function load(id: string, requested?: string) {
   const actor = await requirePageActor();
@@ -109,27 +110,6 @@ function previewNotice(version: { previewKind: string; previewStatus: string }):
   // PDF, image and text versions are shown by reading mode, not this frame.
   if (["pdf", "image", "text_only"].includes(version.previewKind)) return t("preview.notYet");
   return t("preview.unavailable");
-}
-
-function ViewSwitch({ view }: { view: View }) {
-  const tab = (value: View, text: string) => (
-    <Link
-      href={`?view=${value}`}
-      aria-current={view === value ? "page" : undefined}
-      className={`rounded px-3 py-1 ${view === value ? "bg-surface-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
-    >
-      {text}
-    </Link>
-  );
-  return (
-    <nav
-      aria-label={t("reader.title")}
-      className="border-border flex w-fit gap-1 rounded-md border p-0.5 text-sm"
-    >
-      {tab("read", t("reader.tabRead"))}
-      {tab("preview", t("reader.tabPreview"))}
-    </nav>
-  );
 }
 
 function Field({ name, value }: { name: string; value: React.ReactNode }) {
@@ -236,7 +216,7 @@ export default async function ArtifactPage({
               <CardContent>
                 {view === "read" ? (
                   <ReadingBody
-                    artifactId={artifact.id}
+                    thumbnailSrc={`/api/artifacts/${artifact.id}/thumbnail`}
                     title={artifact.title}
                     version={version}
                     hasThumbnail={overview?.hasThumbnail ?? false}
@@ -244,8 +224,7 @@ export default async function ArtifactPage({
                   />
                 ) : preview ? (
                   <PreviewFrame
-                    artifactId={artifact.id}
-                    versionId={version.id}
+                    mintUrl={`/api/artifacts/${artifact.id}/versions/${version.id}/preview-token`}
                     title={artifact.title}
                     initial={{
                       url: preview.url,

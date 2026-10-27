@@ -14,7 +14,8 @@ import {
 import { AppError, notFound } from "@/lib/errors";
 import { isUuid } from "@/lib/ids";
 import { cleanTitle } from "@/lib/text";
-import { getArtifactForActor } from "@/modules/artifacts";
+import type { StorageAdapter } from "@/infrastructure/storage";
+import { getArtifactForActor, ORIGINAL_DOWNLOAD_TTL_SECONDS } from "@/modules/artifacts";
 import { recordAudit, type RequestMeta } from "@/modules/audit";
 import type { Actor } from "@/modules/auth";
 import type { JobDefinition } from "@/modules/jobs";
@@ -218,6 +219,7 @@ export async function createShare(
 
 /** Revokes a link (idempotent); it stops working at once, previews included. */
 export async function revokeShare(db: Database, actor: Actor, shareId: string, meta: RequestMeta) {
+  if (!isUuid(shareId)) throw notFound("Share link");
   return db.transaction(async (tx) => {
     const [link] = await tx
       .select({
@@ -527,10 +529,10 @@ export async function shareVersion(db: DbExecutor, capability: ShareCapability) 
 }
 
 /** Reading content of the shared version (the same shape reading mode takes), or null. */
-export async function shareContent(
+export async function shareContent<Kind extends string>(
   db: DbExecutor,
   capability: ShareCapability,
-  version: { contentKind: string; activeExtractionId: string | null },
+  version: { contentKind: Kind; activeExtractionId: string | null },
 ) {
   if (!capability.allowReading || !version.activeExtractionId) return null;
   const [document] = await db
@@ -565,13 +567,43 @@ export async function shareContent(
   return { contentKind: version.contentKind, extraction, sections };
 }
 
+/**
+ * A 5-minute signed URL for the shared version's original, for links that allow downloads, or
+ * null. Audited like a member's download, with the link instead of a user.
+ */
+export async function createSharedDownload(
+  db: DbExecutor,
+  storage: StorageAdapter,
+  capability: ShareCapability,
+  meta: RequestMeta,
+): Promise<{ url: string; sha256: string } | null> {
+  if (!capability.allowDownload) return null;
+  const version = await shareVersion(db, capability);
+  if (!version) return null;
+  const signed = await storage.createSignedDownloadUrl(version.storageKey, {
+    expiresInSeconds: ORIGINAL_DOWNLOAD_TTL_SECONDS,
+    filename: version.originalFilename,
+    contentType: version.mimeType,
+  });
+  await recordAudit(db, {
+    action: "share.original.downloaded",
+    workspaceId: capability.workspaceId,
+    actorUserId: null,
+    targetType: "artifact_version",
+    targetId: version.id,
+    metadata: { shareId: capability.linkId, sha256: version.sha256 },
+    ...meta,
+  });
+  return { url: signed.url, sha256: version.sha256 };
+}
+
 /** The shared version's thumbnail (our own WebP), for reading or preview links. */
 export async function shareThumbnail(db: DbExecutor, capability: ShareCapability) {
   if (!capability.versionId || !(capability.allowReading || capability.allowPreview)) return null;
   const [thumbnail] = await db
     .select({
       storageKey: derivedAssets.storageKey,
-      byteSize: derivedAssets.byteSize,
+      mimeType: derivedAssets.mimeType,
       sha256: derivedAssets.sha256,
     })
     .from(derivedAssets)
