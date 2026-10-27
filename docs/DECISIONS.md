@@ -367,21 +367,34 @@ peer dependencies). Anything not verified that way is marked _assumption_.
     chunks (only `content_chunks.artifact_id` is rewritten); it becomes V1 there.
   - The new artifact is made as the import would have made it alone: title from the
     extraction or the filename, summary from the text, identity key from the filename,
-    private, in the old artifact's project. It belongs to no collection and has no tags.
+    private, in the old artifact's project. It keeps the old artifact's sensitivity (a
+    restricted work's version must not become shareable by being split off). It belongs to no
+    collection and has no tags.
   - Everything the owner attached to the old artifact stays there: notes, tags, collections,
     reading state, share links. Its other versions keep their numbers (gaps are fine); if the
-    split version was current, its newest remaining one becomes current. An only version
-    cannot be split (409): that would leave an artifact without versions.
-  - Lock order is the version, then its artifact, as the search index job takes them, so a
-    split cannot deadlock with indexing, and an index job queued behind the split writes its
-    chunks to the new artifact.
+    split version was current, its newest remaining one becomes current, and otherwise the
+    current version stays. An only version cannot be split (409): that would leave an artifact
+    without versions.
+  - Versions are locked before their artifact, as the search index job takes them: the moved
+    version, and the newest remaining one, which becomes current (pointing the artifact at it
+    takes a key-share lock on it, which must not wait while the artifact is held). The two are
+    locked in id order, and the remaining one is checked again once the artifact is locked;
+    if versions changed in between, the split starts over (at most three times). So a split
+    cannot deadlock with indexing, and an index job queued behind it writes its chunks to the
+    new artifact.
+  - The new artifact's name and identity key come from the name the version was uploaded
+    under (`artifact_files.display_name`), not the stored original's, which can be an earlier
+    upload's when the same bytes came in before.
   - The import item keeps `result_artifact_id` = the old artifact: it records what the
     import did.
-- **Consequences:** Two artifacts now share an identity key, so later files with that stem
+- **Consequences:** Version numbers are positions, not ids: after the newest version is split
+  off, the next import takes its number again (the audit log records version ids). Two
+  artifacts now share an identity key, so later files with that stem
   match neither and become new artifacts with `AMBIGUOUS_VERSION_MATCH` (the owner can target
   one explicitly). Share links of the old artifact keep showing its current version, which
   may change. Notes written about the split version stay with the old artifact. An archive
   made after a split, restored with `skip_existing` over a database saved before it, cannot
   bring the new artifact back (its version is still in the old one, which is kept as it is);
-  the report says so and copy mode restores it as a copy. There is no merge (the reverse)
-  yet.
+  the report says so and copy mode restores it as a copy. In that restore, a version added
+  under the reused number is skipped too ("already has a different version"). There is no
+  merge (the reverse) yet.

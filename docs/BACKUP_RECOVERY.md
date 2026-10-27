@@ -156,6 +156,8 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
      restored with `skip_existing` over a database saved before it, finds the version still in
      its old artifact, which is kept as it is; the split-off artifact therefore cannot come
      back with it and fails with a reason that names copy mode, which restores it as a copy.
+     A version imported afterwards under the split one's number (the newest's number is
+     reused) is skipped the same way, as "already has a different version".
 
    Workspace IDs are always remapped to the target workspace. User references
    (`created_by`, `author_id`) map to the restoring user.

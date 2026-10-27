@@ -113,13 +113,15 @@ describe("filenameStem", () => {
 
 describe("summaryFromText", () => {
   it("takes the first line long enough to say something, other than the title", () => {
-    const title = "一份相當長的研究報告標題：都市熱島";
+    // Long enough to be a summary itself: only being the title rules it out.
+    const title = "一份相當長的研究報告標題：都市熱島的成因與對策總整理";
+    expect(title.length).toBeGreaterThanOrEqual(20);
     const text = `${title}\n短句\n  都市熱島效應使市中心比郊區更熱，本報告整理成因與對策。  \n其他`;
     expect(summaryFromText(text, title)).toBe(
       "都市熱島效應使市中心比郊區更熱，本報告整理成因與對策。",
     );
+    expect(summaryFromText(text, null)).toBe(title);
     expect(summaryFromText(`${title}\n短句`, title)).toBeNull();
-    expect(summaryFromText(`${title}${title}`, null)).toBe(`${title}${title}`);
     expect(summaryFromText("長".repeat(300))).toBe(`${"長".repeat(279)}…`);
   });
 });

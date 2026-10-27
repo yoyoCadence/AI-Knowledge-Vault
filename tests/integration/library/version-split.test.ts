@@ -2,7 +2,7 @@ import { createWriteStream } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { POST as splitRoute } from "@/app/api/artifacts/[id]/versions/[versionId]/split/route";
@@ -20,6 +20,7 @@ import {
   importItems,
   shareLinks,
   workspaceMembers,
+  workspaces,
 } from "@/infrastructure/database/schema";
 import { newId } from "@/lib/ids";
 import { getStorage } from "@/infrastructure/storage";
@@ -64,10 +65,17 @@ type Owner = Awaited<ReturnType<typeof loggedIn>>;
 type Ids = { artifactId: string; versionId: string };
 
 /** Imports one file and waits for it (and its search index) to finish. */
-async function importOne(owner: Owner, filename: string, title: string, body: string) {
+async function importOne(
+  owner: Owner,
+  filename: string,
+  title: string,
+  body: string,
+  targetArtifactId?: string,
+) {
   const item = await uploadFile(owner.actor, (await newBatch(owner.actor)).id, {
     filename,
     bytes: htmlDocument({ title, body }),
+    targetArtifactId,
   });
   await drainJobs();
   const [version] = await db
@@ -138,6 +146,8 @@ describe("POST /api/artifacts/:id/versions/:versionId/split", () => {
       { allowPreview: false, allowReading: true, allowDownload: false, expiresInDays: 1 },
       meta,
     );
+    // Restricted since (its link is suspended, not gone): the split-off work must stay so.
+    await db.update(artifacts).set({ sensitivity: "restricted" }).where(eq(artifacts.id, old));
     // The current version is the wrong one: its text is what search finds for the old artifact.
     expect(await search(owner, "betaword")).toEqual([old]);
     expect(await search(owner, "alphaword")).toEqual([]);
@@ -169,10 +179,20 @@ describe("POST /api/artifacts/:id/versions/:versionId/split", () => {
       identityKey: identityKeyFor("harbour-survey (1).html"),
       projectId: project.id,
       visibility: "private",
+      sensitivity: "restricted",
       currentVersionId: second.versionId,
       createdBy: owner.userId,
       deletedAt: null,
     });
+    await expect(
+      createShare(
+        db,
+        owner.actor,
+        artifact.id,
+        { allowPreview: true, allowReading: true, allowDownload: true, expiresInDays: 1 },
+        meta,
+      ),
+    ).rejects.toThrow();
     const chunks = await db
       .select({ artifactId: contentChunks.artifactId })
       .from(contentChunks)
@@ -189,9 +209,12 @@ describe("POST /api/artifacts/:id/versions/:versionId/split", () => {
     const [audit] = await db
       .select({ metadata: auditLogs.metadata, actor: auditLogs.actorUserId })
       .from(auditLogs)
-      .where(eq(auditLogs.action, "artifact_version.split"))
-      .orderBy(asc(auditLogs.createdAt))
-      .limit(1);
+      .where(
+        and(
+          eq(auditLogs.action, "artifact_version.split"),
+          eq(auditLogs.targetId, second.versionId),
+        ),
+      );
     expect(audit).toEqual({
       actor: owner.userId,
       metadata: { fromArtifactId: old, fromVersionNumber: 2, toArtifactId: artifact.id },
@@ -229,6 +252,81 @@ describe("POST /api/artifacts/:id/versions/:versionId/split", () => {
       true,
     );
     expect(await versionsOf(v1.artifactId)).toHaveLength(2);
+
+    // A current version that is not the newest stays current when another is split off.
+    const v4 = await importOne(
+      owner,
+      "tidal-notes (4).html",
+      "潮汐筆記",
+      "<p>第五版。</p>",
+      v1.artifactId,
+    );
+    await db
+      .update(artifacts)
+      .set({ currentVersionId: v1.versionId })
+      .where(eq(artifacts.id, v1.artifactId));
+    expect((await split(v4, owner.cookie)).status).toBe(201);
+    expect((await artifactRow(v1.artifactId)).currentVersionId).toBe(v1.versionId);
+    // The newest was split off: the next version takes its number again (ADR-021).
+    const v5 = await importOne(
+      owner,
+      "tidal-notes (5).html",
+      "潮汐筆記",
+      "<p>第六版。</p>",
+      v1.artifactId,
+    );
+    expect(await versionsOf(v1.artifactId)).toEqual([
+      { id: v1.versionId, number: 1 },
+      { id: v3.versionId, number: 3 },
+      { id: v5.versionId, number: 4 },
+    ]);
+  });
+
+  it("names the new artifact after the version's own upload, not an earlier one of its bytes", async () => {
+    const owner = await loggedIn();
+    const bytes = `沙丘調查的另一份文字，內容與第一版無關，長度足以成為摘要。 ${newId()}`;
+    // The same bytes came in before under another name, in a work since deleted: the import
+    // reuses that stored original, which keeps the earlier name.
+    const earlier = await uploadFile(owner.actor, (await newBatch(owner.actor)).id, {
+      filename: "unrelated-name.txt",
+      bytes,
+    });
+    await drainJobs();
+    const [gone] = await db
+      .select({ artifactId: importItems.resultArtifactId })
+      .from(importItems)
+      .where(eq(importItems.id, earlier.id));
+    await db
+      .update(artifacts)
+      .set({ deletedAt: new Date() })
+      .where(eq(artifacts.id, gone!.artifactId!));
+    const first = await importOne(owner, "dune-survey.html", "沙丘調查", "<p>第一版。</p>");
+    const item = await uploadFile(owner.actor, (await newBatch(owner.actor)).id, {
+      filename: "dune-survey (1).txt",
+      bytes,
+    });
+    await drainJobs();
+    const [version] = await db
+      .select({
+        id: artifactVersions.id,
+        artifactId: artifactVersions.artifactId,
+        storedName: fileAssets.originalFilename,
+      })
+      .from(artifactVersions)
+      .innerJoin(fileAssets, eq(fileAssets.id, artifactVersions.primaryFileId))
+      .where(eq(artifactVersions.importItemId, item.id));
+    expect(version!.artifactId).toBe(first.artifactId);
+    expect(version!.storedName).toBe("unrelated-name.txt");
+
+    const { artifact } = await splitVersion(
+      db,
+      owner.actor,
+      { artifactId: first.artifactId, versionId: version!.id },
+      meta,
+    );
+    expect((await artifactRow(artifact.id)).identityKey).toBe(
+      identityKeyFor("dune-survey (1).txt"),
+    );
   });
 
   it("refuses an only version (409) and anything outside the artifact, workspace or role", async () => {
@@ -277,55 +375,109 @@ async function lockWaiters(watcher: Client, count: number) {
 }
 
 describe("a split and the search index job (lock order)", () => {
-  for (const first of ["split", "index"] as const) {
-    it(`cannot deadlock, and the chunks end with the new artifact (${first} first)`, async () => {
-      const owner = await loggedIn();
-      await importOne(owner, "reef-study.html", "珊瑚礁", "<p>甲。</p>");
-      const moved = await importOne(owner, "reef-study (1).html", "珊瑚礁", "<p>乙。</p>");
+  // The index job locks its version, then the artifact. The split moves one version (and its
+  // chunks) and points the artifact at its newest remaining version: both are locked before
+  // the artifact, so an index job for either cannot deadlock with it.
+  for (const indexed of ["moved", "remaining"] as const) {
+    for (const first of ["split", "index"] as const) {
+      it(`cannot deadlock with the ${indexed} version's index job (${first} first)`, async () => {
+        const owner = await loggedIn();
+        const remaining = await importOne(owner, "reef-study.html", "珊瑚礁", "<p>甲。</p>");
+        // The current version is the one split off, so the remaining one becomes current.
+        const moved = await importOne(owner, "reef-study (1).html", "珊瑚礁", "<p>乙。</p>");
+        const target = indexed === "moved" ? moved : remaining;
 
-      const blocker = new Client({ connectionString: process.env.DATABASE_URL });
-      const watcher = new Client({ connectionString: process.env.DATABASE_URL });
-      await blocker.connect();
-      await watcher.connect();
-      try {
-        // Another artifact writer (a note, a tag) holds the artifact for a moment; the split
-        // and the index job for the moved version (as after a re-extraction) queue behind it.
-        await blocker.query("begin");
-        await blocker.query("select id from artifacts where id = $1 for update", [
-          moved.artifactId,
-        ]);
-        const run = {
-          split: () => splitVersion(db, owner.actor, moved, meta),
-          index: () => indexVersion(db, moved.versionId),
-        };
-        const firstRun = run[first]();
-        await lockWaiters(watcher, 1);
-        const secondRun = run[first === "split" ? "index" : "split"]();
-        await lockWaiters(watcher, 2);
-        await blocker.query("rollback");
-        // In the other lock order one of them fails with "deadlock detected".
-        const results = await Promise.allSettled([firstRun, secondRun]);
-        expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
-      } finally {
-        await blocker.end();
-        await watcher.end();
-      }
+        const blocker = new Client({ connectionString: process.env.DATABASE_URL });
+        const watcher = new Client({ connectionString: process.env.DATABASE_URL });
+        await blocker.connect();
+        await watcher.connect();
+        try {
+          // Another artifact writer (a note, a tag) holds the artifact for a moment; the split
+          // and the index job (as after a re-extraction) queue behind it.
+          await blocker.query("begin");
+          await blocker.query("select id from artifacts where id = $1 for update", [
+            moved.artifactId,
+          ]);
+          const run = {
+            split: () => splitVersion(db, owner.actor, moved, meta),
+            index: () => indexVersion(db, target.versionId),
+          };
+          const firstRun = run[first]();
+          await lockWaiters(watcher, 1);
+          const secondRun = run[first === "split" ? "index" : "split"]();
+          await lockWaiters(watcher, 2);
+          await blocker.query("rollback");
+          // In another lock order one of them fails with "deadlock detected".
+          const results = await Promise.allSettled([firstRun, secondRun]);
+          expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+        } finally {
+          await blocker.end();
+          await watcher.end();
+        }
 
-      const [version] = await db
-        .select({ artifactId: artifactVersions.artifactId })
-        .from(artifactVersions)
-        .where(eq(artifactVersions.id, moved.versionId));
-      expect(version!.artifactId).not.toBe(moved.artifactId);
-      const chunks = await db
-        .select({ artifactId: contentChunks.artifactId })
-        .from(contentChunks)
-        .where(eq(contentChunks.artifactVersionId, moved.versionId));
-      expect(chunks.length).toBeGreaterThan(0);
-      expect(new Set(chunks.map((chunk) => chunk.artifactId))).toEqual(
-        new Set([version!.artifactId]),
-      );
-    });
+        const [version] = await db
+          .select({ artifactId: artifactVersions.artifactId })
+          .from(artifactVersions)
+          .where(eq(artifactVersions.id, moved.versionId));
+        expect(version!.artifactId).not.toBe(moved.artifactId);
+        expect((await artifactRow(moved.artifactId)).currentVersionId).toBe(remaining.versionId);
+        // Each version's chunks are with the artifact it now belongs to.
+        for (const [versionId, artifactId] of [
+          [moved.versionId, version!.artifactId],
+          [remaining.versionId, remaining.artifactId],
+        ] as const) {
+          const chunks = await db
+            .select({ artifactId: contentChunks.artifactId })
+            .from(contentChunks)
+            .where(eq(contentChunks.artifactVersionId, versionId));
+          expect(chunks.length).toBeGreaterThan(0);
+          expect(new Set(chunks.map((chunk) => chunk.artifactId))).toEqual(new Set([artifactId]));
+        }
+      });
+    }
   }
+  it("starts over when a version is added before the artifact is locked", async () => {
+    const owner = await loggedIn();
+    const remaining = await importOne(owner, "atoll-study.html", "環礁", "<p>甲。</p>");
+    const moved = await importOne(owner, "atoll-study (1).html", "環礁", "<p>乙。</p>");
+    const added = newId();
+
+    const blocker = new Client({ connectionString: process.env.DATABASE_URL });
+    const importer = new Client({ connectionString: process.env.DATABASE_URL });
+    const watcher = new Client({ connectionString: process.env.DATABASE_URL });
+    await Promise.all([blocker.connect(), importer.connect(), watcher.connect()]);
+    try {
+      // A writer that lets versions be added (no key update) but keeps the split waiting.
+      await blocker.query("begin");
+      await blocker.query("select id from artifacts where id = $1 for no key update", [
+        moved.artifactId,
+      ]);
+      const splitting = splitVersion(db, owner.actor, moved, meta);
+      await lockWaiters(watcher, 1);
+      // Meanwhile an import adds a newer version, and its index job takes it and waits for
+      // the artifact. The split read the older version as the one to make current.
+      await importer.query(
+        `insert into artifact_versions (id, workspace_id, artifact_id, version_number, primary_file_id, content_kind, preview_kind)
+         select $1, workspace_id, artifact_id, 3, primary_file_id, content_kind, preview_kind
+         from artifact_versions where id = $2`,
+        [added, remaining.versionId],
+      );
+      const indexing = indexVersion(db, added);
+      await lockWaiters(watcher, 2);
+      await blocker.query("rollback");
+      // Pointing the artifact at the added version while holding the artifact would wait on
+      // the index job, which waits for the artifact: the split must start over instead.
+      const results = await Promise.allSettled([splitting, indexing]);
+      expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+    } finally {
+      await Promise.all([blocker.end(), importer.end(), watcher.end()]);
+    }
+    expect((await artifactRow(moved.artifactId)).currentVersionId).toBe(added);
+    expect(await versionsOf(moved.artifactId)).toEqual([
+      { id: remaining.versionId, number: 1 },
+      { id: added, number: 3 },
+    ]);
+  });
 });
 
 describe("export and restore of split artifacts", () => {
@@ -351,7 +503,10 @@ describe("export and restore of split artifacts", () => {
       restoreId: crypto.randomUUID(),
       limits: restoreLimitsFromEnv(getEnv()),
     });
-  /** Each artifact's title with its versions: number, original's hash, and which is current. */
+  /**
+   * One line per artifact, sorted: its title and versions (number, original's hash, which is
+   * current). Ids are left out, so a workspace and its restored copy compare equal.
+   */
   async function shapeOf(workspaceId: string) {
     const rows = await db
       .select({
@@ -366,16 +521,15 @@ describe("export and restore of split artifacts", () => {
       .innerJoin(artifactVersions, eq(artifactVersions.artifactId, artifacts.id))
       .innerJoin(fileAssets, eq(fileAssets.id, artifactVersions.primaryFileId))
       .where(eq(artifacts.workspaceId, workspaceId))
-      .orderBy(asc(artifacts.title), asc(artifactVersions.versionNumber));
-    const shape = new Map<string, string[]>();
+      .orderBy(asc(artifactVersions.versionNumber));
+    const byArtifact = new Map<string, string[]>();
     for (const row of rows) {
       const current = row.versionId === row.currentVersionId ? " (current)" : "";
-      shape.set(row.title, [
-        ...(shape.get(row.title) ?? []),
-        `V${row.number} ${row.sha256.slice(0, 12)}${current}`,
-      ]);
+      const versions = byArtifact.get(row.artifactId) ?? [row.title];
+      versions.push(`V${row.number} ${row.sha256.slice(0, 12)}${current}`);
+      byArtifact.set(row.artifactId, versions);
     }
-    return Object.fromEntries(shape);
+    return [...byArtifact.values()].map((parts) => parts.join(" | ")).sort();
   }
 
   it("come back as they are, the old artifact's numbers with their gap", async () => {
@@ -385,15 +539,31 @@ describe("export and restore of split artifacts", () => {
     await importOne(owner, "estuary-log (2).html", "河口紀錄", "<p>第三版。</p>");
     await splitVersion(db, owner.actor, wrong, meta);
     const shape = await shapeOf(owner.workspaceId);
-    expect(Object.keys(shape)).toEqual(["河口紀錄", "錯配的報告"]);
-    expect(shape["河口紀錄"]!.map((line) => line.split(" ")[0])).toEqual(["V1", "V3"]);
+    expect(shape).toHaveLength(2);
+    expect(shape[0]).toMatch(/^河口紀錄 \| V1 \w+ \| V3 \w+ \(current\)$/);
+    expect(shape[1]).toMatch(/^錯配的報告 \| V1 \w+ \(current\)$/);
+    const archive = await exportOf(owner.workspaceId);
 
+    // Into another workspace while the source still holds the ids: copies, same shape.
     const target = await loggedIn();
-    const report = await restore(await exportOf(owner.workspaceId), target);
-    // Copies: the source workspace still holds the archived ids.
+    const report = await restore(archive, target);
     expect(report.counts.artifacts).toMatchObject({ copied: 2, failed: 0 });
     expect(report.counts.artifactVersions).toMatchObject({ copied: 3, failed: 0 });
     expect(await shapeOf(target.workspaceId)).toEqual(shape);
+
+    // After losing the workspace: everything comes back under its own ids.
+    await db.delete(workspaces).where(eq(workspaces.id, owner.workspaceId));
+    const rebuilt = await loggedIn();
+    const again = await restore(archive, rebuilt);
+    expect(again.counts.artifacts).toMatchObject({ restored: 2, failed: 0 });
+    expect(again.counts.artifactVersions).toMatchObject({ restored: 3, failed: 0 });
+    expect(await shapeOf(rebuilt.workspaceId)).toEqual(shape);
+    const [moved] = await db
+      .select({ artifactId: artifactVersions.artifactId, number: artifactVersions.versionNumber })
+      .from(artifactVersions)
+      .where(eq(artifactVersions.id, wrong.versionId));
+    expect(moved!.number).toBe(1);
+    expect((await artifactRow(moved!.artifactId)).workspaceId).toBe(rebuilt.workspaceId);
   });
 
   it("over a database saved before the split: refused clearly, and a copy restore works", async () => {
@@ -408,7 +578,8 @@ describe("export and restore of split artifacts", () => {
     const target = await loggedIn();
     await restore(before, target);
     const kept = await shapeOf(target.workspaceId);
-    expect(Object.keys(kept)).toEqual(["紅樹林圖鑑"]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toMatch(/^紅樹林圖鑑 \| V1 \w+ \| V2 \w+ \(current\)$/);
     const report = await restore(after, target);
     // skip_existing keeps the existing artifact as it is (its version stays), so the split-off
     // artifact cannot come back with that version: it fails with a reason, not a raw error.
@@ -427,6 +598,12 @@ describe("export and restore of split artifacts", () => {
       limits: restoreLimitsFromEnv(getEnv()),
     });
     expect(copied.counts.artifacts).toMatchObject({ failed: 0 });
-    expect((await shapeOf(target.workspaceId))["另一本圖鑑"]).toHaveLength(1);
+    // A copy of each archived artifact joins the two already there.
+    const merged = await shapeOf(target.workspaceId);
+    expect(merged).toHaveLength(3);
+    expect(merged.filter((line) => line.startsWith("紅樹林圖鑑 | V1 "))).toHaveLength(2);
+    expect(merged.filter((line) => /^另一本圖鑑 \| V1 \w+ \(current\)$/.test(line))).toHaveLength(
+      1,
+    );
   });
 });

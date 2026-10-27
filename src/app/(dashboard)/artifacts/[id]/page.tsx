@@ -562,6 +562,7 @@ export default async function ArtifactPage({
                         artifactId={artifact.id}
                         versionId={item.id}
                         versionNumber={item.versionNumber}
+                        current={item.id === artifact.currentVersionId}
                       />
                     ) : null}
                   </li>

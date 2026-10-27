@@ -34,10 +34,14 @@ test.describe("version split (P1B-VERSION-SPLIT)", () => {
     await expect(rows).toHaveCount(2);
     const wrong = rows.filter({ hasText: `${stem} (1).html` });
 
-    // The first press explains; on a narrow screen that wraps under the row.
+    // The scissors explain, and confirming is a button of its own: a double-click on the
+    // scissors only opens the explanation. On a narrow screen it wraps under the row.
     await page.setViewportSize({ width: 360, height: 800 });
-    await wrong.getByRole("button", { name: "拆成獨立作品 V2" }).click();
+    await wrong.getByRole("button", { name: "拆成獨立作品 V2" }).dblclick();
     await expect(wrong).toContainText("分享連結都留在這件作品");
+    // The split one is current: the explanation says the work will show another version.
+    await expect(wrong).toContainText("這是目前版本");
+    await expect(rows).toHaveCount(2);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
     ).toBeLessThanOrEqual(0);
@@ -45,7 +49,7 @@ test.describe("version split (P1B-VERSION-SPLIT)", () => {
     await expect(wrong).not.toContainText("分享連結都留在這件作品");
 
     await wrong.getByRole("button", { name: "拆成獨立作品 V2" }).click();
-    await wrong.getByRole("button", { name: "再按一次確認拆分" }).click();
+    await wrong.getByRole("button", { name: "確認拆分 V2" }).click();
     // The new work opens, with the moved version as its only one.
     await expect(page.getByRole("heading", { level: 1, name: other })).toBeVisible();
     await expect(page.getByTestId("version-row")).toHaveCount(1);

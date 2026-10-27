@@ -10,18 +10,22 @@ import { jsonRequest } from "./api";
 const messages = { conflict: t("split.error.only"), gone: t("edit.error.gone") };
 
 /**
- * Splits a version off into an artifact of its own (a wrong filename match undone): the first
- * press says what will happen, the second does it and opens the new artifact. Rendered inside
- * the version's list row, which wraps the explanation onto a line of its own.
+ * Splits a version off into an artifact of its own (a wrong filename match undone). The scissors
+ * open a line that says what will happen, with its own confirm button (so a double-click cannot
+ * split), which splits and opens the new artifact. Rendered inside the version's list row, which
+ * wraps that line onto a row of its own.
  */
 export function VersionSplit({
   artifactId,
   versionId,
   versionNumber,
+  current,
 }: {
   artifactId: string;
   versionId: string;
   versionNumber: number;
+  /** The artifact's current version: once it is split off, an earlier one is shown instead. */
+  current: boolean;
 }) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
@@ -37,6 +41,8 @@ export function VersionSplit({
         { method: "POST" },
         messages,
       );
+      // The old artifact's page changed too: going back must not show the moved version.
+      router.refresh();
       router.push(`/artifacts/${artifact.id}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("edit.error.generic"));
@@ -50,21 +56,33 @@ export function VersionSplit({
     <>
       <Button
         type="button"
-        size={confirming ? "sm" : "icon"}
-        variant={confirming ? "danger" : "ghost"}
-        disabled={busy}
-        aria-label={confirming ? undefined : label}
-        title={confirming ? undefined : label}
-        onClick={() => (confirming ? void split() : setConfirming(true))}
+        size="icon"
+        variant="ghost"
+        disabled={busy || confirming}
+        aria-label={label}
+        title={label}
+        onClick={() => {
+          setError(null);
+          setConfirming(true);
+        }}
       >
         <Scissors />
-        {confirming ? t("split.confirm") : null}
       </Button>
       {confirming ? (
         <span className="flex basis-full flex-wrap items-center gap-2">
-          <span className="text-muted-foreground min-w-0 flex-1 text-xs">
+          <span className="text-muted-foreground min-w-0 flex-1 basis-48 text-xs">
             {t("split.explain", { number: versionNumber })}
+            {current ? ` ${t("split.explainCurrent")}` : null}
           </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="danger"
+            disabled={busy}
+            onClick={() => void split()}
+          >
+            {t("split.confirm", { number: versionNumber })}
+          </Button>
           <Button
             type="button"
             size="sm"

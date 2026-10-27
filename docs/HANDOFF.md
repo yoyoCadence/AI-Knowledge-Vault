@@ -725,12 +725,15 @@ conversations. Update it at the end of every PR.
     Notes, tags, collections, reading state and share links stay; the old artifact's other
     versions keep their numbers and its newest becomes current. 409 for an only version.
     Both metadata documents are re-indexed; `artifact_version.split` is audited.
-  - Locks the version, then the artifact. `tests/integration/library/version-split.test.ts`
-    runs a split and an `indexVersion` for the same version queued behind a held artifact
-    lock, in both orders: locking the artifact first deadlocks, and an index job that runs
-    after the split writes the chunks to the new artifact. Mutation-checked: the reversed
-    lock order, chunks left behind and a current version left pointing at the moved one each
-    fail a test.
+  - Locks the moved version and the newest remaining one (id order), then the artifact, and
+    starts over if versions changed in between. `tests/integration/library/version-split.test.ts`
+    runs a split and an `indexVersion` of either version queued behind a held artifact lock, in
+    both orders, plus a version added (and being indexed) between the split's first read and its
+    artifact lock. Codex found the remaining version's case (pointing the artifact at it
+    deadlocked with its index job); reproduced, then fixed. Mutation-checked: the artifact
+    locked first, the remaining version not locked first, no re-check, chunks left behind,
+    a current version left on the moved one, and the stored original's name each fail a
+    test.
   - Export/restore: the result round-trips (the old artifact's numbering gap included).
     Restoring an archive made after a split over a database saved before it used to fail the
     split-off artifact with a raw primary-key error; it now fails with a reason that points
@@ -739,6 +742,17 @@ conversations. Update it at the end of every PR.
     a new artifact with `AMBIGUOUS_VERSION_MATCH` (tested, IMPORT_PIPELINE §6).
   - E2E `tests/e2e/split.spec.ts`: two imports matched by filename, split, the new artifact
     opens with V1, the old one keeps V1; the explanation row fits a 360 px screen.
+  - An independent review found, and this PR fixes: the new artifact lost a `restricted` or
+    `sensitive` flag (it now keeps the old artifact's sensitivity; a share on it is refused);
+    a double-click on the split button skipped the confirmation (confirming is now its own
+    button, "確認拆分 V{n}", and the explanation says when the current version is split, since
+    the work and its links then show another one); the current version moved even when the
+    split one was not current; tests that passed vacuously (an audit row from another test, a
+    title too short for the unit test's title rule, restored copies merged by title). The
+    archive also restores into a clean database under its own ids (tested).
+  - Known: version numbers are reused after the newest is split off (ADR-021). The import
+    report still links a split version's file to the old artifact (`result_artifact_id`, the
+    import's record).
   - Not built: merging artifacts (the reverse), moving notes along with a version.
 
 **Not done or not verified**
