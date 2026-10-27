@@ -26,13 +26,19 @@ test.describe("library summary (FR-LIB-1)", () => {
       .getByRole("region", { name: "知識庫", exact: true })
       .getByRole("heading", { level: 3 });
     await expect(cards.first()).toBeVisible();
-    await expect(summary).toContainText(`${await cards.count()} 份作品`);
+    await expect(summary.getByTestId("library-count")).toHaveText(`${await cards.count()} 份作品`);
     await expect(page.getByTestId("library-preservation")).toContainText("保存狀態");
-    // The owner can open the details.
-    await expect(summary.getByRole("link", { name: "查看用量與狀態" })).toHaveAttribute(
+    // The owner can open the details, and sees when the last export was made (or that none was).
+    await expect(summary.getByRole("link", { name: "查看使用量與狀態" })).toHaveAttribute(
       "href",
       "/settings/usage",
     );
+    await expect(page.getByTestId("library-preservation")).toContainText(/建立匯出/);
+
+    // A sort shows the same whole library, so the summary stays.
+    await page.goto("/?sort=oldest");
+    await expect(page.getByTestId("library-summary")).toBeVisible();
+    await page.goto("/");
 
     // A kind narrows the library to it; a narrowed library shows no summary.
     await summary.getByRole("link", { name: /^Markdown \d+$/ }).click();

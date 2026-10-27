@@ -768,8 +768,24 @@ conversations. Update it at the end of every PR.
     snapshot. `tests/integration/ops/library-summary.test.ts` checks the numbers, deleted
     works, kinds by the current version, isolation, and that both read the same; the kind
     count by every version instead of the current one fails it.
-  - E2E `tests/e2e/summary.spec.ts` (the count equals the cards, the details link, a kind
-    link narrows and hides the summary); the phone spec now measures the library with it.
+  - E2E `tests/e2e/summary.spec.ts` (the count equals the cards, the details link, a sorted
+    view keeps the summary, a kind link narrows and hides it); the phone spec now measures the
+    library with it. `tests/unit/library/library-summary.test.ts` covers the wording rules.
+  - An independent review found, and this PR fixes: "no missing or corrupt originals" was
+    claimed before any integrity check had completed (now 尚未執行完整性檢查); 「上次匯出備份」
+    implied a backup still existed after retention deleted the archive (now 上次建立匯出);
+    viewers saw the last export date, which only roles with `backup:export` may read (now
+    hidden from them); zero counts were spelled out; a sorted view hid the summary; the
+    summary ran after the grid query instead of alongside it, and a failure in it took the
+    whole page down (now logged, and the page shows without it); its region name contained
+    the grid's (知識庫), a trap for `getByRole` substring matches.
+  - Measured by the review at 98,000 works (146,000 versions): about 200 ms per summary (the
+    kind count scans `artifact_versions`), alongside about 65 ms for the grid. NFR-PERF-1
+    (1,000 works) is met with a few ms. If a library that large shows up: one statement with
+    scalar subqueries, or a short cache.
+  - Known: a live work without a current version (not produced by imports, splits or
+    restores) is in the work count but in no kind. On a phone the summary pushes the first
+    card down by about 150–200 px; there is no collapsed variant.
 
 **Not done or not verified**
 

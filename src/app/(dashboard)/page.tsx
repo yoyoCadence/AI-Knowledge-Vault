@@ -8,6 +8,7 @@ import { SearchResults } from "@/components/library/search-results";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/states";
 import { getDb } from "@/infrastructure/database/client";
+import { getLogger } from "@/infrastructure/observability/logger";
 import { CONTENT_KINDS, READING_STATUSES } from "@/infrastructure/database/schema";
 import { decodeCursorOrFirstPage, encodeCursor } from "@/lib/cursor";
 import { t } from "@/lib/i18n";
@@ -304,13 +305,24 @@ export default async function LibraryPage({
   }
 
   const cursor = firstParam(params.cursor);
-  const { items, nextCursor } = await listArtifacts(db, actor, {
-    limit: PAGE_SIZE,
-    cursor: decodeCursorOrFirstPage(cursor),
-    filters,
-    sort: sort as LibrarySort | undefined,
-  });
   const anyFilter = hasFilters(filters);
+  // The whole library's numbers, on its first page with nothing narrowing it (a sort does not),
+  // read alongside the page. It is extra: if it fails, the library shows without it.
+  const wholeLibrary = !anyFilter && sort !== "opened" && !cursor;
+  const [{ items, nextCursor }, summary] = await Promise.all([
+    listArtifacts(db, actor, {
+      limit: PAGE_SIZE,
+      cursor: decodeCursorOrFirstPage(cursor),
+      filters,
+      sort: sort as LibrarySort | undefined,
+    }),
+    wholeLibrary
+      ? getLibrarySummary(db, actor).catch((error: unknown) => {
+          getLogger({ route: "/" }).error({ err: error }, "library summary failed");
+          return null;
+        })
+      : null,
+  ]);
   // Which shortcut this page is exactly (none once other filters are added).
   const only = (key: keyof LibraryFilters) =>
     Object.entries(filters).every(([name, value]) => name === key || value === undefined);
@@ -324,9 +336,6 @@ export default async function LibraryPage({
           : sort === undefined && !anyFilter
             ? "all"
             : null;
-  // The whole library's numbers, on its first page with nothing narrowing it.
-  const summary =
-    view === "all" && !cursor && items.length > 0 ? await getLibrarySummary(db, actor) : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -346,8 +355,12 @@ export default async function LibraryPage({
         {activeFilters}
       </header>
 
-      {summary ? (
-        <LibrarySummary summary={summary} canSeeUsage={roleAllows(actor.role, "workspace:admin")} />
+      {summary && items.length > 0 ? (
+        <LibrarySummary
+          summary={summary}
+          canSeeUsage={roleAllows(actor.role, "workspace:admin")}
+          canSeeExports={roleAllows(actor.role, "backup:export")}
+        />
       ) : null}
 
       {items.length === 0 && !cursor && sort === "opened" && !anyFilter ? (
