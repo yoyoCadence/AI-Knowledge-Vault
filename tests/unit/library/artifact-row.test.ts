@@ -18,7 +18,7 @@ const artifact: ArtifactCardData = {
   hasThumbnail: true,
   contentKind: "pdf",
   sourcePlatform: "claude",
-  sourceModel: null,
+  sourceModel: "example-model-9",
   tags: ["城市", "氣候", "熱島", "第四個"],
   readingStatus: "reading",
   isFavorite: true,
@@ -35,7 +35,11 @@ describe("library layouts", () => {
       expect(html).toContain("3 個版本");
       expect(html).toContain("#城市");
       expect(html).toContain('data-testid="reading-badge"');
-      expect(html).toContain("sr-only");
+      expect(html).toContain("Claude"); // the platform
+      expect(html).toContain("example-model-9"); // the source model (FR-LIB-2)
+      expect(html).toContain("2026年10月1日");
+      expect(html).toContain("私人");
+      expect(html).toMatch(/<span class="sr-only">收藏: <\/span>/);
     }
     expect(card).toContain("/thumbnail");
     expect(card).toContain("只在卡片上顯示的摘要");

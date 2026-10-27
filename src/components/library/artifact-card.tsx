@@ -61,7 +61,10 @@ function ArtifactBadges({
         {label("kind", kind)}
       </Badge>
       {artifact.sourcePlatform ? (
-        <Badge variant="accent">{label("platform", artifact.sourcePlatform)}</Badge>
+        // Imported platforms are free text (up to 100 characters): wrap, never widen the page.
+        <Badge variant="accent" className="max-w-full wrap-anywhere whitespace-normal">
+          {label("platform", artifact.sourcePlatform)}
+        </Badge>
       ) : null}
       {artifact.readingStatus !== "unread" ? (
         <Badge variant="outline" data-testid="reading-badge">
@@ -80,7 +83,7 @@ function ArtifactTags({ tags }: { tags: string[] }) {
   return tags.length > 0 ? (
     <p className="text-muted-foreground flex flex-wrap gap-x-2 gap-y-0.5 text-[11px]">
       {tags.slice(0, SHOWN_TAGS).map((name) => (
-        <span key={name} className="break-all">
+        <span key={name} className="wrap-anywhere">
           #{name}
         </span>
       ))}
@@ -91,7 +94,8 @@ function ArtifactTags({ tags }: { tags: string[] }) {
   ) : null;
 }
 
-function ArtifactDate({
+/** The source model (FR-LIB-2), the date and the visibility. */
+function ArtifactMeta({
   artifact,
   className = "",
 }: {
@@ -99,7 +103,8 @@ function ArtifactDate({
   className?: string;
 }) {
   return (
-    <p className={`text-muted-foreground text-[11px] ${className}`}>
+    <p className={`text-muted-foreground text-[11px] wrap-anywhere ${className}`}>
+      {artifact.sourceModel ? `${artifact.sourceModel} · ` : null}
       {formatDate(artifact.createdAt)} · {label("visibility", artifact.visibility)}
     </p>
   );
@@ -136,7 +141,7 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactCardData }) {
         </p>
         <ArtifactBadges artifact={artifact} className="mt-auto pt-1" />
         <ArtifactTags tags={artifact.tags} />
-        <ArtifactDate artifact={artifact} />
+        <ArtifactMeta artifact={artifact} />
       </div>
     </Link>
   );
@@ -144,21 +149,22 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactCardData }) {
 
 /**
  * The same work as one row of the list layout: no thumbnail or summary, so more works fit on a
- * screen. On a phone its parts stack; from `sm` up the badges and date sit beside the title.
+ * screen. Its parts stack until `lg`; from there the badges and the date line sit beside the
+ * title, each capped so the title keeps most of the row however long a platform or model is.
  */
 export function ArtifactRow({ artifact }: { artifact: ArtifactCardData }) {
   return (
     <Link
       href={`/artifacts/${artifact.id}`}
       data-testid="artifact-row"
-      className={`${linkClass} flex min-w-0 flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4`}
+      className={`${linkClass} flex min-w-0 flex-col gap-2 px-4 py-3 lg:flex-row lg:items-center lg:gap-4`}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <ArtifactTitle artifact={artifact} className="leading-snug" />
         <ArtifactTags tags={artifact.tags} />
       </div>
-      <ArtifactBadges artifact={artifact} className="sm:justify-end" />
-      <ArtifactDate artifact={artifact} className="shrink-0" />
+      <ArtifactBadges artifact={artifact} className="min-w-0 lg:max-w-[35%] lg:justify-end" />
+      <ArtifactMeta artifact={artifact} className="min-w-0 lg:max-w-[20%] lg:text-right" />
     </Link>
   );
 }

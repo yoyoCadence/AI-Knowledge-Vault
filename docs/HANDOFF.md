@@ -799,8 +799,20 @@ conversations. Update it at the end of every PR.
     each, and it persists. The search results keep their own list.
   - Tests: `tests/unit/library/artifact-row.test.ts` (a row shows what a card shows, without
     thumbnail and summary; the cookie reads anything but `list` as the grid);
-    `tests/e2e/layout.spec.ts` (switch, same works one row each, kept after a reload and on
-    another view, back to cards); the phone spec measures the list for overflow.
+    `tests/e2e/layout.spec.ts` (switch, same works one row each with no images while the grid
+    has a thumbnail, kept after a reload and on another view, back to cards); the phone spec
+    measures the list for overflow, now with a 90-character platform, a long model and a long
+    tag.
+  - An independent review found, and this PR fixes: from `sm` up the row's badges squeezed
+    the title to a few pixels (0 with a long platform); a long imported platform (free text,
+    up to 100 characters, `nowrap`) made the phone page scroll sideways in the list (the card
+    clipped it). Rows now stack until `lg`, badges and the date line are capped beside the
+    title, and the platform badge wraps. Restoring the old markup fails both E2E checks (the
+    title's width, the phone overflow). Also: tags wrap at spaces (`wrap-anywhere`, not
+    `break-all`); the switch always writes the cookie (a stale tab can choose the grid again)
+    and is disabled while the page refreshes; it is hidden when no works are shown; the list
+    has `role="list"` (Safari drops it otherwise). Cards and rows now show the source model,
+    which FR-LIB-2 lists and the card never showed.
 
 **Not done or not verified**
 

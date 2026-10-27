@@ -377,7 +377,7 @@ export default async function LibraryPage({
         </Button>
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
           <LibraryViews current={view} />
-          <LayoutSwitch current={layout} />
+          {items.length > 0 ? <LayoutSwitch current={layout} /> : null}
         </div>
         {controls}
         {activeFilters}
@@ -415,7 +415,8 @@ export default async function LibraryPage({
       ) : (
         <section aria-label={t("library.title")}>
           {layout === "list" ? (
-            <ul className="flex flex-col gap-2">
+            // role="list": Safari drops list semantics from a list styled without markers.
+            <ul role="list" className="flex flex-col gap-2">
               {cards.map((card) => (
                 <li key={card.id}>
                   <ArtifactRow artifact={card} />
