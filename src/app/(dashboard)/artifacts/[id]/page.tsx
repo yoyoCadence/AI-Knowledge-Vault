@@ -7,13 +7,14 @@ import { label } from "@/components/library/artifact-card";
 import { KindIcon } from "@/components/library/kind-icon";
 import { PreviewFrame } from "@/components/preview/preview-frame";
 import { ArtifactMetaEditor } from "@/components/artifacts/artifact-meta-editor";
+import { SourceEditor } from "@/components/artifacts/source-editor";
 import { ReadingBody } from "@/components/reader/reading-body";
 import { type ReaderView, ViewSwitch } from "@/components/reader/view-switch";
 import { CollectionPicker } from "@/components/collections/collection-picker";
 import { SharePanel } from "@/components/sharing/share-panel";
 import { NewNote, NoteItem } from "@/components/notes/notes-panel";
 import { ReadingControls } from "@/components/notes/reading-controls";
-import { MarkdownView } from "@/components/reader/markdown-view";
+import { MarkdownView, safeHref } from "@/components/reader/markdown-view";
 import { TagEditor } from "@/components/tags/tag-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -456,24 +457,62 @@ export default async function ArtifactPage({
                 <CardTitle>{t("artifact.source")}</CardTitle>
               </CardHeader>
               <CardContent>
-                <dl className="flex flex-col gap-3">
-                  <Field
-                    name={t("artifact.sourcePlatform")}
-                    value={
-                      version.sourcePlatform ? label("platform", version.sourcePlatform) : unknown
-                    }
-                  />
-                  <Field name={t("artifact.sourceModel")} value={version.sourceModel ?? unknown} />
-                  <Field
-                    name={t("artifact.researchDate")}
-                    value={version.researchDate ?? unknown}
-                  />
-                  <Field name={t("artifact.author")} value={version.author ?? unknown} />
-                  <Field
-                    name={t("artifact.importedAt")}
-                    value={formatDateTime(version.createdAt)}
-                  />
-                </dl>
+                <SourceEditor
+                  artifactId={artifact.id}
+                  versionId={version.id}
+                  source={{
+                    sourcePlatform: version.sourcePlatform,
+                    sourceModel: version.sourceModel,
+                    researchDate: version.researchDate,
+                    author: version.author,
+                    sourceUrl: version.sourceUrl,
+                  }}
+                  canEdit={canEdit}
+                >
+                  <dl className="flex flex-col gap-3" data-testid="source">
+                    <Field
+                      name={t("artifact.sourcePlatform")}
+                      value={
+                        version.sourcePlatform ? label("platform", version.sourcePlatform) : unknown
+                      }
+                    />
+                    <Field
+                      name={t("artifact.sourceModel")}
+                      value={version.sourceModel ?? unknown}
+                    />
+                    <Field
+                      name={t("artifact.researchDate")}
+                      value={version.researchDate ?? unknown}
+                    />
+                    <Field name={t("artifact.author")} value={version.author ?? unknown} />
+                    <Field
+                      name={t("artifact.sourceUrl")}
+                      value={
+                        version.sourceUrl ? (
+                          // Imported URLs are untrusted: only http(s) becomes a link.
+                          safeHref(version.sourceUrl)?.startsWith("http") ? (
+                            <a
+                              href={safeHref(version.sourceUrl)!}
+                              target="_blank"
+                              rel="noopener noreferrer nofollow"
+                              className="text-primary break-all hover:underline"
+                            >
+                              {version.sourceUrl}
+                            </a>
+                          ) : (
+                            <span className="break-all">{version.sourceUrl}</span>
+                          )
+                        ) : (
+                          unknown
+                        )
+                      }
+                    />
+                    <Field
+                      name={t("artifact.importedAt")}
+                      value={formatDateTime(version.createdAt)}
+                    />
+                  </dl>
+                </SourceEditor>
               </CardContent>
             </Card>
           ) : null}

@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-27, after PR 18: usage and status)
+## 1. Snapshot (2026-10-27, after PR 19: source metadata editing)
 
 **Merged and tested**
 
@@ -652,6 +652,27 @@ conversations. Update it at the end of every PR.
     and the run already used all 5, so one more spec signing in failed. Do not add sign-ins
     to specs; `login(page)` only signs in again if the session is gone.
 
+- **PR 19, P1B-DETAIL: source metadata editing** (`updateVersionSource` in
+  `src/modules/artifacts/edit.ts`, API_CONTRACT §5):
+  - `PATCH /api/artifacts/:id/versions/:versionId` (`library:write`, strict body):
+    platform (≤ 100), model and author (≤ 200; the title text rules: visible, NFC, one line),
+    research date (a real `YYYY-MM-DD`, year ≥ 1), source URL (http(s), no credentials,
+    ≤ 2,048, normalized); `null` or empty clears. The artifact is locked first, the version
+    must belong to it, the artifact is re-indexed in the same transaction (the current
+    version's source fields are search metadata) and `artifact_version.updated` is audited
+    with the field names. Only import and restore wrote these fields before; nothing
+    rewrites an edit later, and exports carry them as before.
+  - The detail page's "來源資訊" card shows the source URL (a link only when it is http(s),
+    with `noopener noreferrer nofollow`) and, for editors, a form (platform picker with the
+    known platforms plus an imported unknown value, model, date, author, URL).
+  - Tests: `tests/integration/api/version-source-api.test.ts` (cleaning, clearing, search
+    finds the new model, the audit fields, every validation rule, older versions, another
+    artifact's version, stranger 404, viewer 403, deleted artifact) and E2E
+    (`tests/e2e/source.spec.ts`: edit, display, link attributes, search and the model
+    filter). Mutation-checked: the re-index, the version-belongs-to-artifact condition, the
+    URL scheme and credential rules, the real-day check, the write permission.
+  - Not built: `originalPrompt` and `changeSummary` editing (in the contract as planned).
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -732,14 +753,10 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 **Then Phase 1B** (ROADMAP; one PR each):
 
-1. **P1B-DETAIL remainder (PR 19): source metadata editing.** The version's source fields
-   (`source_platform`, `source_model`, `research_date`, `author` on `artifact_versions`) are
-   shown on the detail page but not editable. Add `PATCH
-/api/artifacts/:id/versions/:versionId` (`library:write`, strict body, the same text rules
-   as import: `cleanTitle` lengths, a real date ≥ year 1, a known platform), lock the artifact
-   first and re-index it in the same transaction (source fields are search metadata), audit
-   `artifact_version.updated`, and an editor in the detail page's "來源" card. Tests: API
-   validation, isolation, viewer 403, search finds the new model name, export carries it.
-2. **P1B-E2E remainder:** export → restore through the UI, mobile project
-   (`*.mobile.spec.ts`), library on a phone viewport.
-3. **P1B-VERSION-SPLIT:** split a wrongly matched version into its own artifact.
+1. **P1B-E2E remainder (PR 20): phone viewport.** Export → restore through the UI is
+   already covered (`import.spec.ts`). Add `tests/e2e/library.mobile.spec.ts` (the `mobile`
+   project, Pixel 7, starts from the shared session): the app shell's navigation on a narrow
+   screen, the library grid, search, an artifact's reading mode and the share panel, with no
+   horizontal overflow (`document.documentElement.scrollWidth <= innerWidth`). Fix what it
+   finds (the 16 px gutter rule, long titles and SHA-256 strings that must wrap).
+2. **P1B-VERSION-SPLIT:** split a wrongly matched version into its own artifact.
