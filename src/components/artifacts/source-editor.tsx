@@ -106,7 +106,9 @@ export function SourceEditor({
     </label>
   );
   return (
-    <form onSubmit={save} className="flex flex-col gap-3" data-testid="source-editor">
+    // noValidate: an imported value the browser would refuse (a URL with a space) must not block
+    // saving other fields. Only changed fields are sent, and the server validates those.
+    <form onSubmit={save} noValidate className="flex flex-col gap-3" data-testid="source-editor">
       {labelled(
         "artifact.sourcePlatform",
         <select name="sourcePlatform" defaultValue={source.sourcePlatform ?? ""} className={field}>

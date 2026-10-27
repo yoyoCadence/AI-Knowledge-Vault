@@ -40,4 +40,33 @@ test.describe("source metadata (FR-LIB-6)", () => {
     await expect(page.getByRole("link", { name: /來源資訊端對端/ })).toBeVisible();
     await expect(page.getByRole("option", { name: "潮汐模型 Z9" })).toBeAttached();
   });
+
+  test("an imported value the browser would refuse does not block other edits", async ({
+    page,
+  }) => {
+    await login(page);
+    await page.goto("/import");
+    await page.getByTestId("import-file-input").setInputFiles([
+      {
+        name: "front-matter.md",
+        mimeType: "text/markdown",
+        buffer: Buffer.from(
+          "---\nsource_url: http://%zz/report\nauthor: 原作者\n---\n# 前置資料測試\n\n內容。\n",
+        ),
+      },
+    ]);
+    await page.getByRole("button", { name: "開始上傳" }).click();
+    await expect(page.getByTestId("import-summary")).toHaveText(/1 完成/, { timeout: 30_000 });
+    await page.goto("/");
+    await page.getByRole("heading", { name: "前置資料測試" }).click();
+    const source = page.getByTestId("source");
+    await expect(source).toContainText("原作者");
+
+    await page.getByRole("button", { name: "編輯來源資訊" }).click();
+    const editor = page.getByTestId("source-editor");
+    await editor.getByRole("textbox", { name: "來源模型" }).fill("只改模型");
+    await editor.getByRole("button", { name: "儲存" }).click();
+    await expect(source).toContainText("只改模型");
+    await expect(source).toContainText("http://%zz/report");
+  });
 });
