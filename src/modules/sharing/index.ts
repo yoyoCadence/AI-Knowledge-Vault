@@ -19,6 +19,9 @@ import { getArtifactForActor, ORIGINAL_DOWNLOAD_TTL_SECONDS } from "@/modules/ar
 import { recordAudit, type RequestMeta } from "@/modules/audit";
 import type { Actor } from "@/modules/auth";
 import type { JobDefinition } from "@/modules/jobs";
+import { scanShareText, suspiciousFiles, type ShareFinding } from "./scan";
+
+export { scanShareText, suspiciousFiles, type ShareFinding };
 import { createPreviewToken, findPreviewFile, SITE_PREVIEW_KINDS } from "@/modules/preview";
 
 /**
@@ -291,45 +294,8 @@ export async function setVisibility(
 
 // ---------- pre-share check (FR-SHR-3) ----------
 
-export interface ShareFinding {
-  kind: "sensitive" | "secret" | "email" | "private_url" | "suspicious_file";
-  count: number;
-  /** Up to three masked examples, so the owner can find them. */
-  samples: string[];
-}
-
 /** The checked text is capped: the scan is advisory, and must stay fast. */
 const SCAN_MAX_CHARS = 2_000_000;
-
-const SECRET_PATTERNS = [
-  /-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----/g,
-  /\b(?:sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,200}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,255}|glpat-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,200}|AIza[0-9A-Za-z_-]{35})\b/g,
-  /\beyJ[A-Za-z0-9_-]{8,2000}\.[A-Za-z0-9_-]{8,4000}\.[A-Za-z0-9_-]{8,2000}/g,
-];
-const EMAIL = /[A-Za-z0-9._%+-]{1,64}@(?:[A-Za-z0-9-]{1,63}\.){1,8}[A-Za-z]{2,24}/g;
-const PRIVATE_URL =
-  /\bhttps?:\/\/(?:localhost|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|(?:[A-Za-z0-9-]{1,63}\.){1,8}(?:local|internal|corp|lan|intranet))(?::\d{1,5})?\b/gi;
-const SUSPICIOUS_FILE =
-  /(?:^|\/)(?:\.env(?:\.[^/]*)?|\.git\/.*|\.npmrc|\.netrc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^/]*\.(?:pem|key|p12|pfx|keystore|jks)|credentials(?:\.[^/]*)?|secrets?\.(?:json|ya?ml|toml|env))$/i;
-
-/** Keeps the start and end of a match: enough to find it, not enough to reuse it. */
-function mask(text: string): string {
-  const chars = Array.from(text);
-  if (chars.length <= 8) return `${chars[0] ?? ""}…`;
-  return `${chars.slice(0, 4).join("")}…${chars.slice(-2).join("")}`;
-}
-
-function scan(kind: ShareFinding["kind"], text: string, patterns: RegExp[]): ShareFinding | null {
-  const samples: string[] = [];
-  let count = 0;
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      count += 1;
-      if (samples.length < 3) samples.push(mask(match[0]));
-    }
-  }
-  return count > 0 ? { kind, count, samples } : null;
-}
 
 /**
  * Advisory scan before sharing (FR-SHR-3): the artifact's text and metadata for what looks like
@@ -370,24 +336,10 @@ export async function checkShare(
           eq(derivedAssets.kind, "preview_file"),
         ),
       );
-    const suspicious = files
-      .map((file) => file.path ?? "")
-      .filter((path) => SUSPICIOUS_FILE.test(path));
-    if (suspicious.length > 0) {
-      findings.push({
-        kind: "suspicious_file",
-        count: suspicious.length,
-        samples: suspicious.slice(0, 3),
-      });
-    }
+    const suspicious = suspiciousFiles(files.map((file) => file.path ?? ""));
+    if (suspicious) findings.push(suspicious);
   }
-  for (const finding of [
-    scan("secret", text, SECRET_PATTERNS),
-    scan("email", text, [EMAIL]),
-    scan("private_url", text, [PRIVATE_URL]),
-  ]) {
-    if (finding) findings.push(finding);
-  }
+  findings.push(...scanShareText(text));
   return {
     findings,
     blocked: artifact.sensitivity === "restricted",

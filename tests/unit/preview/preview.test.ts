@@ -42,13 +42,28 @@ describe("preview tokens (SECURITY.md §5.3)", () => {
     expect(verifyPreviewToken(SECRET, storageToken, NOW)).toBeNull();
   });
 
+  it("binds a share-scoped token to its link", () => {
+    const linkId = newId();
+    const { token } = createPreviewToken(SECRET, { ...target, shareLinkId: linkId }, NOW, 60);
+    expect(verifyPreviewToken(SECRET, token, NOW)).toMatchObject({ s: "share", l: linkId });
+    const owner = createPreviewToken(SECRET, target, NOW).token;
+    expect(verifyPreviewToken(SECRET, owner, NOW)).toMatchObject({ s: "owner" });
+    expect(verifyPreviewToken(SECRET, owner, NOW)).not.toHaveProperty("l");
+  });
+
   it("rejects well-signed tokens with unexpected claims", () => {
     const exp = Math.floor(NOW.getTime() / 1000) + 60;
     const sign = (claims: Record<string, unknown>) =>
       signToken(SECRET, { purpose: "preview", exp, ...claims });
     const { versionId: v, workspaceId: w } = target;
+    const l = newId();
     expect(verifyPreviewToken(SECRET, sign({ v, w, s: "owner" }), NOW)).not.toBeNull();
+    expect(verifyPreviewToken(SECRET, sign({ v, w, s: "share", l }), NOW)).not.toBeNull();
+    // A share token names its link; an owner token names none; nothing else is a scope.
     expect(verifyPreviewToken(SECRET, sign({ v, w, s: "share" }), NOW)).toBeNull();
+    expect(verifyPreviewToken(SECRET, sign({ v, w, s: "share", l: "x" }), NOW)).toBeNull();
+    expect(verifyPreviewToken(SECRET, sign({ v, w, s: "owner", l }), NOW)).toBeNull();
+    expect(verifyPreviewToken(SECRET, sign({ v, w, s: "public", l }), NOW)).toBeNull();
     expect(verifyPreviewToken(SECRET, sign({ v: "../x", w, s: "owner" }), NOW)).toBeNull();
     expect(verifyPreviewToken(SECRET, sign({ v, w: 42, s: "owner" }), NOW)).toBeNull();
   });
