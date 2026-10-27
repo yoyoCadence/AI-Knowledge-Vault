@@ -8,6 +8,7 @@
 
 export interface ShareFinding {
   kind: "sensitive" | "secret" | "email" | "private_url" | "suspicious_file";
+  /** Distinct values found (the same address twice counts once). */
   count: number;
   /** Up to three masked examples, so the owner can find them. */
   samples: string[];
@@ -46,36 +47,29 @@ function mask(text: string): string {
   return `${chars.slice(0, 4).join("")}…${chars.slice(-2).join("")}`;
 }
 
+/** Distinct matches: the same address in a link's label and its destination counts once. */
 function scan(kind: ShareFinding["kind"], text: string, patterns: RegExp[]): ShareFinding | null {
-  const samples: string[] = [];
-  let count = 0;
+  const seen = new Set<string>();
   for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      count += 1;
-      if (samples.length < 3) samples.push(mask(match[0]));
-    }
+    for (const match of text.matchAll(pattern)) seen.add(match[0]);
   }
-  return count > 0 ? { kind, count, samples } : null;
+  if (seen.size === 0) return null;
+  return { kind, count: seen.size, samples: Array.from(seen, mask).slice(0, 3) };
 }
 
-// Destinations in our normalized Markdown: inline links and images `](url)`, autolinks
-// `<scheme:…>`, and reference definitions `[id]: url`. Every part is bounded and starts at a
-// literal, so extraction stays linear.
-const LINK_DESTINATION =
-  /\]\(\s{0,8}<?([^\s<>()]{1,2048})|<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]{1,2048})>|^ {0,3}\[[^\]\n]{1,999}\]:[ \t]{0,8}<?([^\s<>]{1,2048})/gm;
+/** CommonMark backslash escapes (`\_`, `\*`, …), undone so they cannot split a token. */
+const MARKDOWN_ESCAPE = /\\([!-/:-@[-`{-~])/g;
 
 /**
- * The link and image destinations of normalized Markdown. Extracted text keeps only link
- * labels, but the reader renders these as links, so the scan must see them too.
+ * Text as the reader shows it: normalized Markdown, unescaped. Extracted plain text alone is not
+ * enough: it keeps link labels without their destinations, and leaves out raw HTML blocks,
+ * which reading mode shows as text.
  */
-export function linkDestinations(markdown: string): string[] {
-  return Array.from(
-    markdown.matchAll(LINK_DESTINATION),
-    (match) => match[1] ?? match[2] ?? match[3] ?? "",
-  );
+export function readableMarkdown(markdown: string): string {
+  return markdown.replace(MARKDOWN_ESCAPE, "$1");
 }
 
-/** What in `text` looks like secrets, email addresses or private URLs. */
+/** What in `text` looks like secrets, email addresses or private URLs (distinct values). */
 export function scanShareText(text: string): ShareFinding[] {
   return [
     scan("secret", text, SECRET_PATTERNS),

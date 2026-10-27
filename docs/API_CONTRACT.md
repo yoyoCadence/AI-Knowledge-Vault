@@ -155,7 +155,7 @@ writes `library:write`; another workspace's tag or artifact is `404`.
 
 | Method | Path                             | Description                                                                                                                                                            | Status |
 | ------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| POST   | `/api/artifacts/:id/share-check` | pre-share safety scan → `{findings: [{kind, count, samples}], blocked, visibility}` (advisory; samples masked)                                                         | ✅     |
+| POST   | `/api/artifacts/:id/share-check` | pre-share safety scan of the text as the reader shows it → `{findings: [{kind, count (distinct values), samples}], blocked, visibility}` (advisory; samples masked)    | ✅     |
 | POST   | `/api/artifacts/:id/shares`      | `{label?, allowPreview, allowReading, allowDownload, expiresAt? \| expiresInDays?, acknowledgeFindings: true}` → `201 {share, url, madeUnlisted}` (URL shown once) (A) | ✅     |
 | GET    | `/api/artifacts/:id/shares`      | `{items: share[]}` newest first (no tokens: they are not stored)                                                                                                       | ✅     |
 | DELETE | `/api/shares/:shareId`           | revoke → `{revoked: true}` (A, idempotent)                                                                                                                             | ✅     |

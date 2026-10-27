@@ -360,6 +360,17 @@ describe("share links (FR-SHR, SECURITY.md §7)", () => {
     expect(result.findings.map((finding) => finding.kind).sort()).toEqual(["email", "private_url"]);
   });
 
+  it("checks raw HTML blocks of Markdown, which reading mode shows as text", async () => {
+    const owner = await createTestActor();
+    const note = await importOne(
+      owner,
+      "raw-html.md",
+      "# 筆記\n\n一般段落。\n\n<div>聯絡 dave@example.com，系統 http://10.0.0.8/admin</div>\n",
+    );
+    const result = await checkShare(db, owner, note.artifactId);
+    expect(result.findings.map((finding) => finding.kind).sort()).toEqual(["email", "private_url"]);
+  });
+
   it("counts page views", async () => {
     const owner = await createTestActor();
     const note = await importOne(owner, "views.html", htmlDocument({ title: "瀏覽" }));

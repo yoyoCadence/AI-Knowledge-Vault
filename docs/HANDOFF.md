@@ -598,10 +598,12 @@ conversations. Update it at the end of every PR.
   - Found while testing, fixed here: the email pattern cost ~64 steps per character on long
     letter runs (1.2 s per 2 MB; now anchored, ~20 ms), and `localhost.example.com` was
     reported as an intranet URL.
-  - Codex review found, and this PR fixes with a test that fails without it: the scan read
-    only extracted text, which keeps link labels, so `[報告](https://wiki.internal/…)` or a
-    `mailto:` went unreported; link and image destinations of the normalized Markdown are
-    scanned too.
+  - Codex review found, and this PR fixes with tests that fail without the fix: the scan read
+    only extracted text, which keeps link labels and drops raw HTML blocks, so
+    `[報告](https://wiki.internal/…)`, a `mailto:` or `<div>…@…</div>` in Markdown went
+    unreported although the reader shows them. The scan now reads the normalized Markdown as
+    the reader shows it (escapes undone) plus the extracted text, and counts distinct values,
+    so a label and its destination count once.
   - An independent review found, and this PR fixes, each with a test that fails without the
     fix: the JWT pattern (and other token patterns) restarted inside long runs (`-eyJ`×500k
     blocked the server 8 s; all now anchored); IPv6 clients could rotate inside their /64

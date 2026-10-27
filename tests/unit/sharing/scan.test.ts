@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { linkDestinations, scanShareText, suspiciousFiles } from "@/modules/sharing/scan";
+import { readableMarkdown, scanShareText, suspiciousFiles } from "@/modules/sharing/scan";
 
 // Built at run time, so no secret scanner mistakes the fixtures for real credentials.
 const fake = {
@@ -92,23 +92,29 @@ describe("pre-share scan (FR-SHR-3)", () => {
     expect(suspiciousFiles(harmless)).toBeNull();
   });
 
-  it("extracts link and image destinations from normalized Markdown", () => {
+  it("reads Markdown as the reader shows it: escapes undone, destinations and raw HTML kept", () => {
+    // Fine-grained GitHub tokens contain underscores, which Markdown escapes.
+    const token = `git${"hub_pat_"}${"Ab1_".repeat(8)}`;
+    const escaped = token.replace(/_/g, "\\_");
+    expect(readableMarkdown(`金鑰 ${escaped} 與 \\*星號\\*`)).toBe(`金鑰 ${token} 與 *星號*`);
     const markdown = [
-      '見[內部報告](https://wiki.internal/report "標題")與![圖](http://10.0.0.5/a.png)。',
-      "寫信給<mailto:alice@example.com>，或 <https://example.org/x>。",
-      "[ref]: http://jira.corp/browse/A-1",
-      "  [two]: <https://intranet.local/b>",
-      "[純文字] (不是連結) 與 [空的]()",
+      `見[內部報告](https://wiki.internal/report)，金鑰 ${escaped}`,
+      "<div>聯絡 dave@example.com</div>",
+      "[ref]: mailto:erin@example.com",
     ].join("\n");
-    expect(linkDestinations(markdown)).toEqual([
-      "https://wiki.internal/report",
-      "http://10.0.0.5/a.png",
-      "mailto:alice@example.com",
-      "https://example.org/x",
-      "http://jira.corp/browse/A-1",
-      "https://intranet.local/b",
+    expect(scanShareText(readableMarkdown(markdown)).map((finding) => finding.kind)).toEqual([
+      "secret",
+      "email",
+      "private_url",
     ]);
-    expect(linkDestinations("沒有連結的段落。")).toEqual([]);
+  });
+
+  it("counts distinct values: a label and its destination, or a repeat, count once", () => {
+    const text =
+      "寫信給 alice@example.com（mailto:alice@example.com），或 bob@example.com。alice@example.com";
+    expect(scanShareText(text)).toEqual([
+      { kind: "email", count: 2, samples: expect.any(Array) as unknown },
+    ]);
   });
 
   it("stays fast on adversarial text of the maximum scanned size", { timeout: 30_000 }, () => {
@@ -136,11 +142,12 @@ describe("pre-share scan (FR-SHR-3)", () => {
       "<a:",
       "<aaaaaaaa",
       "[a]",
+      "\\_",
+      "\\",
     ]) {
       const text = unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
       const started = performance.now();
-      scanShareText(text);
-      linkDestinations(text);
+      scanShareText(readableMarkdown(text));
       // Seconds before the patterns were anchored (1.2 s for "a", 7.8 s for "-eyJ").
       expect(performance.now() - started, unit).toBeLessThan(600);
     }

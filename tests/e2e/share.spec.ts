@@ -28,7 +28,7 @@ test.describe("share links (Scenario: share a work, then take it back)", () => {
     const panel = page.getByTestId("share-panel");
     await expect(panel.getByTestId("share-visibility")).toContainText("私人");
     await panel.getByRole("button", { name: "建立分享連結" }).click();
-    await expect(panel.getByTestId("share-findings")).toContainText("Email 地址 1 處");
+    await expect(panel.getByTestId("share-findings")).toContainText("Email 地址 1 個");
     await expect(panel).toContainText("改為「不公開列出」");
     await panel.getByRole("checkbox", { name: "允許下載原始檔" }).check();
     await panel.getByRole("button", { name: "確認建立" }).click();

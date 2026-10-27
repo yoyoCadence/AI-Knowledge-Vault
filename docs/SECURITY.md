@@ -191,9 +191,11 @@ assignment.
     always runs). Restricted artifacts cannot be shared. Restriction and deletion suspend
     links rather than revoke them; nothing can undo either today, and a future undo must
     revoke them.
-  - Before creating a link the owner sees an advisory scan (`checkShare`): sensitivity,
-    well-known key and token formats, private keys, email addresses, intranet URLs, preview
-    files that usually hold secrets. It is advisory: it cannot prove a document clean.
+  - Before creating a link the owner sees an advisory scan (`checkShare`) of what the reader
+    shows (the normalized Markdown with escapes undone, so link destinations and raw HTML
+    blocks are included, plus the extracted text): sensitivity, well-known key and token
+    formats, private keys, email addresses, intranet URLs, and preview files that usually
+    hold secrets. Counts are distinct values. It is advisory: it cannot prove a document clean.
   - `/s/*` responses send `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex,
 nofollow`, are never cached, and are rate limited per client address
     (`rate_limit_buckets`, 120 requests a minute, unknown tokens included); share-scoped
