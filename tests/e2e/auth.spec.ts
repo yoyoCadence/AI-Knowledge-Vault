@@ -1,7 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { E2E_ADMIN } from "./e2e-env";
+import { SIGNED_OUT } from "./helpers";
 
 test.describe("admin authentication", () => {
+  // These test signing in itself, so they start signed out.
+  test.use({ storageState: SIGNED_OUT });
+
   test("anonymous visitors are redirected to the login page", async ({ page }) => {
     await page.goto("/settings");
     await expect(page).toHaveURL(/\/login\?next=%2Fsettings/);

@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-27, after PR 17: share links)
+## 1. Snapshot (2026-10-27, after PR 18: usage and status)
 
 **Merged and tested**
 
@@ -615,6 +615,27 @@ conversations. Update it at the end of every PR.
     "private". The docs no longer claim downloads stop at once (a handed-out URL lasts 5
     minutes).
 
+- **PR 18, P1B-OPS: usage and status** (`src/modules/ops`, API_CONTRACT §9.1, FR-OPS-2/3):
+  - `/settings/usage` (owners; linked from settings) and `GET /api/ops/usage`
+    (`workspace:admin`): originals (count, bytes, missing, corrupt), preview files,
+    thumbnails, stored export archives, their total; artifacts and versions (deleted
+    artifacts excluded; their originals still count as stored); the database's size; jobs by
+    status and the 10 latest failures; failed imports and the 10 latest; the last successful
+    export and integrity check and the latest attempts of each. Every number is a query over
+    the workspace's rows (sizes as recorded when stored, the provider is not asked); AI usage
+    says Phase 2.
+  - Tests: `tests/integration/ops/usage.test.ts` (an empty workspace, sums against the
+    tables, isolation from another workspace, deleted artifacts, missing/corrupt, failed
+    jobs newest first and cut, export and integrity state, a newer failed export, retention,
+    owners only) and E2E (the page with real numbers after the import spec). Mutation-checked:
+    the workspace scopes of storage and jobs, export retention, deleted artifacts, the
+    last-successful-export filter, ordering, the error cut, and the owner permission.
+  - E2E now signs in **once** (`tests/e2e/auth.setup.ts`, the `setup` project) and every
+    spec reuses that session (`E2E_ADMIN_STATE`); tests of anonymous access use
+    `test.use({ storageState: SIGNED_OUT })`. Sign-in is limited to 5 a minute per address
+    and the run already used all 5, so one more spec signing in failed. Do not add sign-ins
+    to specs; `login(page)` only signs in again if the session is gone.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -695,14 +716,14 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 **Then Phase 1B** (ROADMAP; one PR each):
 
-1. **P1B-OPS (PR 18): usage dashboard.** A `/settings/ops` page (owner) with storage used
-   (originals, derived, exports; from `file_assets`/`derived_assets`/`export_runs` sums),
-   database size (`pg_database_size`), job queue counts by status and type, recent permanent
-   failures (`processing_jobs` failed, `import_items` failed), the last integrity check and
-   last export. Read-only queries in a new `src/modules/ops`; integration tests for each
-   number against seeded data; no fake numbers (anything not measurable is labelled so).
-2. **P1B-DETAIL remainder:** source-information editing and the visibility control outside
-   the share panel (the API exists: `PUT /api/artifacts/:id/visibility`).
-3. **P1B-E2E remainder:** export → restore through the UI, mobile project
+1. **P1B-DETAIL remainder (PR 19): source metadata editing.** The version's source fields
+   (`source_platform`, `source_model`, `research_date`, `author` on `artifact_versions`) are
+   shown on the detail page but not editable. Add `PATCH
+/api/artifacts/:id/versions/:versionId` (`library:write`, strict body, the same text rules
+   as import: `cleanTitle` lengths, a real date ≥ year 1, a known platform), lock the artifact
+   first and re-index it in the same transaction (source fields are search metadata), audit
+   `artifact_version.updated`, and an editor in the detail page's "來源" card. Tests: API
+   validation, isolation, viewer 403, search finds the new model name, export carries it.
+2. **P1B-E2E remainder:** export → restore through the UI, mobile project
    (`*.mobile.spec.ts`), library on a phone viewport.
-4. **P1B-VERSION-SPLIT:** split a wrongly matched version into its own artifact.
+3. **P1B-VERSION-SPLIT:** split a wrongly matched version into its own artifact.

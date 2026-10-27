@@ -187,6 +187,17 @@ same way.
 | GET    | `/api/restores/:id`                                          | status and report                                                | ✅     |
 | POST   | `/api/integrity-checks` · GET `/api/integrity-checks/latest` | `202 {check}` (A, one pending per workspace) · `{check \| null}` | ✅     |
 
+### 9.1 Usage (Phase 1B)
+
+| Method | Path             | Description                                                                                                                                                                                                                                                                        | Status |
+| ------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| GET    | `/api/ops/usage` | owners (`workspace:admin`): `{generatedAt, storage: {originals: {count, bytes, missing, corrupt}, previewFiles, thumbnails, exports, totalBytes}, library: {artifacts, versions}, database: {bytes}, jobs: {byStatus, recentFailures}, imports: {failed, recentFailures}, backup}` | ✅     |
+
+Sizes are those recorded when each object was stored (the storage provider is not asked);
+`database.bytes` is the whole database's. Failures list the 10 most recent, with error texts
+cut to 300 characters. `backup` holds `lastExport` / `lastIntegrityCheck` (the last
+successful ones) and `latestExport` / `latestIntegrityCheck` (the latest attempts, any status).
+
 ## 10. Storage (local adapter only)
 
 | Method | Path                                 | Description                                                               | Status |

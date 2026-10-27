@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 import { claudeDesignZipEntries, htmlDocument } from "../fixtures/builders";
 import { buildZip } from "../fixtures/zip";
 import { e2eEnv } from "./e2e-env";
-import { login } from "./helpers";
+import { login, SIGNED_OUT } from "./helpers";
 
 test.describe("import → library → artifact (Scenario A)", () => {
   test("batch upload shows progress and a per-file report; works appear in the library", async ({
@@ -272,8 +272,12 @@ test.describe("import → library → artifact (Scenario A)", () => {
     expect(creates).toHaveLength(1);
   });
 
-  test("anonymous visitors cannot reach import or artifact APIs", async ({ request }) => {
-    expect((await request.get("/api/artifacts")).status()).toBe(401);
-    expect((await request.get("/api/imports")).status()).toBe(401);
+  test.describe("signed out", () => {
+    test.use({ storageState: SIGNED_OUT });
+
+    test("anonymous visitors cannot reach import or artifact APIs", async ({ request }) => {
+      expect((await request.get("/api/artifacts")).status()).toBe(401);
+      expect((await request.get("/api/imports")).status()).toBe(401);
+    });
   });
 });
