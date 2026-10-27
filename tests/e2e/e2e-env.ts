@@ -4,6 +4,12 @@ const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..",
 
 export const E2E_PORT = 3100;
 export const E2E_WORKER_HEALTH_PORT = 3191;
+/**
+ * The admin's signed-in browser state, written once by `auth.setup.ts`. Specs reuse it instead
+ * of signing in again: sign-in is rate limited per address (5 a minute), and every spec runs
+ * from the same one.
+ */
+export const E2E_ADMIN_STATE = path.join(root, "test-results", ".auth", "admin.json");
 export const E2E_ADMIN = {
   email: "e2e-admin@example.test",
   name: "E2E Admin",

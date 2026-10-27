@@ -17,6 +17,8 @@ import { IMPORT_JOB_TYPE, refreshBatchStatus, transitionItem } from "./service";
  * 4. Prune old finished job rows so the queue table stays small.
  */
 export const IMPORT_CLEANUP_JOB_TYPE = "maintenance.cleanup_imports";
+/** How long finished job rows are kept; failed and cancelled ones go by their last update. */
+export const JOB_RETENTION_DAYS = { completed: 30, failed: 90 } as const;
 
 export interface CleanupOptions {
   now?: Date;
@@ -147,11 +149,17 @@ export async function cleanupImports(
       or(
         and(
           eq(processingJobs.status, "completed"),
-          lt(processingJobs.completedAt, ago(options.completedJobRetentionMs ?? 30 * DAY)),
+          lt(
+            processingJobs.completedAt,
+            ago(options.completedJobRetentionMs ?? JOB_RETENTION_DAYS.completed * DAY),
+          ),
         ),
         and(
           inArray(processingJobs.status, ["failed", "cancelled"]),
-          lt(processingJobs.updatedAt, ago(options.failedJobRetentionMs ?? 90 * DAY)),
+          lt(
+            processingJobs.updatedAt,
+            ago(options.failedJobRetentionMs ?? JOB_RETENTION_DAYS.failed * DAY),
+          ),
         ),
       ),
     )

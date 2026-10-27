@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { e2eEnv, E2E_PORT, E2E_WORKER_HEALTH_PORT } from "./tests/e2e/e2e-env";
+import { E2E_ADMIN_STATE, e2eEnv, E2E_PORT, E2E_WORKER_HEALTH_PORT } from "./tests/e2e/e2e-env";
 
 /**
  * E2E against a production build (`pnpm build` first) on port 3100 with its own database.
@@ -22,8 +22,19 @@ export default defineConfig({
     timezoneId: "Asia/Taipei",
   },
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
-    { name: "mobile", use: { ...devices["Pixel 7"] }, testMatch: "**/*.mobile.spec.ts" },
+    // Signs in once; the other projects start from that session (see E2E_ADMIN_STATE).
+    { name: "setup", testMatch: "**/*.setup.ts" },
+    {
+      name: "desktop",
+      use: { ...devices["Desktop Chrome"], storageState: E2E_ADMIN_STATE },
+      dependencies: ["setup"],
+    },
+    {
+      name: "mobile",
+      use: { ...devices["Pixel 7"], storageState: E2E_ADMIN_STATE },
+      testMatch: "**/*.mobile.spec.ts",
+      dependencies: ["setup"],
+    },
   ],
   webServer: [
     {

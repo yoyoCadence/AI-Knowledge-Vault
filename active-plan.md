@@ -4,12 +4,13 @@ _Last updated: 2026-10-27 by the implementing agent._
 
 ## Current focus
 
-**PR 17 (this branch): P1B-SHARE, share links.** Pre-share check, links with separate
-reading / preview / download permissions, expiry and revocation, the public reader
-`/s/:token` with share-scoped previews, rate limiting, the share panel, and the visibility
-control (private revokes every link).
+**PR 18 (this branch): P1B-OPS, usage and status.** An owner-only page (`/settings/usage`)
+and API (`GET /api/ops/usage`): storage by kind, library size, database size, jobs by status
+and recent failures, failed imports, and the last export and integrity check, all read from
+the database as recorded.
 
-**Next: P1B-OPS (PR 18): usage dashboard.** The exact steps are in `docs/HANDOFF.md` §4.
+**Next: P1B-DETAIL remainder (PR 19): source metadata editing.** The exact steps are in
+`docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.

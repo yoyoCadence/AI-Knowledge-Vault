@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { htmlDocument } from "../fixtures/builders";
 import { e2eEnv } from "./e2e-env";
-import { login } from "./helpers";
+import { login, SIGNED_OUT } from "./helpers";
 
 test.describe("share links (Scenario: share a work, then take it back)", () => {
   test("create → open signed out → revoke → 404", async ({ page, browser }) => {
@@ -38,8 +38,11 @@ test.describe("share links (Scenario: share a work, then take it back)", () => {
     await expect(panel.getByTestId("share-visibility")).toContainText("不公開列出");
 
     // A visitor with no session sees the work, and nothing else of the workspace.
-    const visitor = await browser.newContext();
+    // browser.newContext() would inherit the project's signed-in storageState.
+    const visitor = await browser.newContext({ storageState: SIGNED_OUT });
     const reader = await visitor.newPage();
+    await reader.goto("/");
+    await expect(reader).toHaveURL(/\/login/);
     const response = await reader.goto(url);
     expect(response?.status()).toBe(200);
     expect(response?.headers()["referrer-policy"]).toBe("no-referrer");
