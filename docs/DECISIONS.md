@@ -452,7 +452,10 @@ peer dependencies). Anything not verified that way is marked _assumption_.
       directory, removed when the restore ends. A wrong secret or a damaged file fails
       before the restore starts.
     - A passphrase comes only from an environment variable the operator names: never argv,
-      which `ps` shows. The CLI deletes the variable once it has read it.
+      which `ps` shows. The CLI deletes the variable once it has read it, which keeps it from
+      the CLI's children only; the docs set it in a subshell.
+    - On SIGINT, SIGTERM or SIGHUP the CLIs remove their temporary and unfinished files
+      before exiting, because Node's default would skip every `finally`.
 - **Consequences:** Encrypted backups decrypt with any age tool (`age -d`), so the vault is
   not needed to read them (CI checks interoperability with the `age` CLI). The vault never
   holds a key and cannot recover a lost passphrase. The plain archive exists in the app's

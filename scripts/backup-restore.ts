@@ -6,9 +6,10 @@
  *
  * An age-encrypted backup (§4) is decrypted first, with the passphrase in the environment
  * variable named (never on the command line) or the identities of an age identity file,
- * into a private temporary file that is removed when the restore ends. Every checksum is
- * verified before anything is written. Re-extraction of the restored versions runs in the
- * worker (`restore.reextract_version` jobs), so start the worker after.
+ * into a private temporary file (TMPDIR needs room for the whole archive). It is removed
+ * when the restore ends, and on Ctrl-C, SIGTERM or SIGHUP. Every checksum is verified before
+ * anything is written. Re-extraction of the restored versions runs in the worker
+ * (`restore.reextract_version` jobs), so start the worker after.
  */
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
@@ -27,6 +28,7 @@ import { isAppError } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import {
   ageFormatOfFile,
+  cleanUpOnInterrupt,
   decryptToTempFile,
   identitiesFrom,
   restoreArchive,
@@ -53,6 +55,13 @@ async function main(): Promise<void> {
       "usage: backup:restore <archive.zip | archive.zip.age> --workspace <slug> [--mode skip_existing|copy] [--passphrase-env <VAR> | --identity-file <file>]",
     );
   }
+  cleanUpOnInterrupt();
+  const format = await ageFormatOfFile(file);
+  if (format === "armored") {
+    throw new Error(
+      `${file} is ASCII-armored: decrypt it with age -d first, then restore the .zip`,
+    );
+  }
   const secret = await secretFrom(values);
   const mode = (values.mode ?? "skip_existing") as RestoreMode;
   if (!RESTORE_MODES.includes(mode))
@@ -70,7 +79,7 @@ async function main(): Promise<void> {
     .from(workspaceMembers)
     .where(and(eq(workspaceMembers.workspaceId, workspace.id), eq(workspaceMembers.role, "owner")));
 
-  const encrypted = (await ageFormatOfFile(file)) !== null;
+  const encrypted = format !== null;
   if (encrypted && !secret) {
     throw new Error(
       `${file} is encrypted with age: give --passphrase-env <VAR> or --identity-file <file>`,

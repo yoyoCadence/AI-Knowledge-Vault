@@ -12,6 +12,7 @@ import type { StorageAdapter } from "@/infrastructure/storage";
 import { AppError } from "@/lib/errors";
 import { ageFormatOf, encryptStream, type EncryptionOptions } from "./encryption";
 import { writeExport, type ExportSummary } from "./export";
+import { removeIfInterrupted } from "./interrupt-cleanup";
 import { manifestSummaryOf, sidecarOf } from "./sidecar";
 
 /**
@@ -21,15 +22,25 @@ import { manifestSummaryOf, sidecarOf } from "./sidecar";
  * in it exists only in a fresh 0700 directory, as a 0600 file, until the restore ends.
  */
 
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 /**
  * The secret held by environment variable `name`, never one given on the command line
  * (`ps` shows every process's arguments). The variable is then removed from this process's
- * environment, so no child process inherits it.
+ * environment, so the processes it starts do not inherit it; the shell that set it keeps it
+ * (set it in a subshell, BACKUP_RECOVERY §4). Something that is not a variable's name may be
+ * the passphrase typed in its place, so it is never echoed.
  */
 export function secretFromEnv(
   name: string,
   env: Record<string, string | undefined> = process.env,
 ): string {
+  if (!ENV_NAME.test(name)) {
+    throw new AppError(
+      "VALIDATION_FAILED",
+      "--passphrase-env takes the name of an environment variable (letters, digits, _), not the passphrase",
+    );
+  }
   const value = env[name];
   if (!value) throw new AppError("VALIDATION_FAILED", `Environment variable ${name} is not set`);
   delete env[name];
@@ -105,9 +116,14 @@ export async function exportToFile(
 ): Promise<ExportFileResult> {
   const sidecarPath = encryption ? `${out}.manifest.json` : null;
   const archiveFile = await createPrivate(out);
+  const releaseOut = removeIfInterrupted(out);
   let sidecarFile: FileHandle | null = null;
+  let releaseSidecar = () => {};
   try {
-    if (sidecarPath) sidecarFile = await createPrivate(sidecarPath);
+    if (sidecarPath) {
+      sidecarFile = await createPrivate(sidecarPath);
+      releaseSidecar = removeIfInterrupted(sidecarPath);
+    }
     const hash = createHash("sha256");
     let byteSize = 0;
     const counted = new Transform({
@@ -122,10 +138,10 @@ export async function exportToFile(
           (encrypted) =>
             pipeline(
               Readable.fromWeb(encrypted as unknown as NodeReadableStream<Uint8Array>),
-              archiveFile.createWriteStream(),
+              archiveFile.createWriteStream({ flush: true }),
             ),
         )
-      : pipeline(counted, archiveFile.createWriteStream());
+      : pipeline(counted, archiveFile.createWriteStream({ flush: true }));
     // Whichever side fails first stops the other, so neither waits forever.
     const writing = written.catch((error: unknown) => {
       counted.destroy(error as Error);
@@ -152,15 +168,20 @@ export async function exportToFile(
         manifest: manifestSummaryOf(summary.manifest),
       });
       await sidecarFile.writeFile(`${JSON.stringify(sidecar, null, 2)}\n`);
+      await sidecarFile.sync();
       await sidecarFile.close();
     }
     return { ...summary, out, sha256, byteSize, sidecar: sidecarPath };
   } catch (error) {
+    // Remove what this call created; a failure to do so never hides the reason it failed.
     await archiveFile.close().catch(() => undefined);
     await sidecarFile?.close().catch(() => undefined);
-    await rm(out, { force: true });
-    if (sidecarFile && sidecarPath) await rm(sidecarPath, { force: true });
+    await rm(out, { force: true }).catch(() => undefined);
+    if (sidecarFile && sidecarPath) await rm(sidecarPath, { force: true }).catch(() => undefined);
     throw error;
+  } finally {
+    releaseOut();
+    releaseSidecar();
   }
 }
 
@@ -186,10 +207,40 @@ export interface DecryptedFile {
 }
 
 /**
+ * Why decrypting into `dir` failed: the backup (wrong secret, damaged, truncated), or the
+ * disk it was being written to (a system error such as ENOSPC, EACCES or EIO). /tmp is often
+ * a RAM disk, too small for a large archive: an operator must not be told the backup is
+ * damaged when the disk is full.
+ */
+export function decryptionFailure(error: unknown, dir: string, stage: "header" | "body"): Error {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (typeof code === "string" && /^E[A-Z]+$/.test(code)) {
+    return new Error(
+      `Could not write the decrypted copy in ${path.dirname(dir)} (${code}): restoring an encrypted backup needs free space there for the whole archive; set TMPDIR to another directory`,
+      { cause: error },
+    );
+  }
+  // typage's reasons name no secret ("no identity matched any of the file's recipients").
+  const details = { reason: error instanceof Error ? error.message : String(error) };
+  return stage === "header"
+    ? new AppError(
+        "DECRYPTION_FAILED",
+        "Could not decrypt the backup: wrong passphrase or identity, or not a file for them",
+        { details },
+      )
+    : new AppError(
+        "DECRYPTION_FAILED",
+        "The encrypted backup is damaged or incomplete: it does not decrypt to the end",
+        { details },
+      );
+}
+
+/**
  * Decrypts the age file `file` into a private temporary file, for restore to read. A wrong
- * passphrase or identity is refused before any byte is written; a damaged or truncated file
- * fails before the end (age authenticates every chunk and the last one is marked), and
- * nothing is left behind. The caller disposes of the result once the restore has ended.
+ * passphrase or identity is refused while reading the header, before the file is created; a
+ * damaged or truncated file fails before the end (age authenticates every chunk and marks the
+ * last). Nothing is left behind on failure, nor on SIGINT, SIGTERM or SIGHUP in a CLI
+ * (`cleanUpOnInterrupt`). The caller disposes of the result once the restore has ended.
  */
 export async function decryptToTempFile(
   file: string,
@@ -210,37 +261,32 @@ export async function decryptToTempFile(
   else for (const identity of secret.identities) decrypter.addIdentity(identity);
 
   const dir = await mkdtemp(path.join(tmpdir(), "vault-restore-"));
-  const dispose = () => rm(dir, { recursive: true, force: true });
+  const release = removeIfInterrupted(dir);
+  const dispose = async () => {
+    await rm(dir, { recursive: true, force: true });
+    release();
+  };
+  const input = createReadStream(file);
   try {
-    const input = createReadStream(file);
     let plaintext;
     try {
       plaintext = await decrypter.decrypt(Readable.toWeb(input) as ReadableStream<Uint8Array>);
     } catch (error) {
-      input.destroy();
-      // typage's reasons name no secret ("no identity matched any of the file's recipients").
-      throw new AppError(
-        "DECRYPTION_FAILED",
-        "Could not decrypt the backup: wrong passphrase or identity, or not a file for them",
-        { details: { reason: error instanceof Error ? error.message : String(error) } },
-      );
+      throw decryptionFailure(error, dir, "header");
     }
     const target = path.join(dir, "export.zip");
     const output = await createPrivate(target);
     try {
       await pipeline(
         Readable.fromWeb(plaintext as unknown as NodeReadableStream<Uint8Array>),
-        output.createWriteStream(),
+        output.createWriteStream({ flush: true }),
       );
     } catch (error) {
-      throw new AppError(
-        "DECRYPTION_FAILED",
-        "The encrypted backup is damaged or incomplete: it does not decrypt to the end",
-        { details: { reason: error instanceof Error ? error.message : String(error) } },
-      );
+      throw decryptionFailure(error, dir, "body");
     }
     return { path: target, dispose };
   } catch (error) {
+    input.destroy();
     await dispose();
     throw error;
   }

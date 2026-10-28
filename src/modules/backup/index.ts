@@ -57,6 +57,7 @@ export {
   exportToFile,
   ageFormatOfFile,
   decryptToTempFile,
+  decryptionFailure,
   secretFromEnv,
   identitiesFrom,
   recipientsFileFrom,
@@ -65,6 +66,7 @@ export {
   type ExportFileResult,
 } from "./encrypted-files";
 export { manifestSummaryOf, sidecarOf } from "./sidecar";
+export { cleanUpOnInterrupt, removeIfInterrupted } from "./interrupt-cleanup";
 
 export {
   encryptionOptions,

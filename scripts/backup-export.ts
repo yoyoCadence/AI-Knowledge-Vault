@@ -6,10 +6,11 @@
  *       [--passphrase-env <VAR> | --recipient age1… (repeatable) | --recipients-file <file>]
  *
  * A passphrase is read from the environment variable named, never from the command line,
- * which `ps` shows to every user: `read -rs VAULT_BACKUP_PASSPHRASE; export
- * VAULT_BACKUP_PASSPHRASE`, then `--passphrase-env VAULT_BACKUP_PASSPHRASE`. An encrypted
- * export gets its sidecar beside it (`<out>.manifest.json`). Without any of these options the
- * archive is NOT encrypted.
+ * which `ps` shows to every user. Set it in a subshell, so the shell does not keep it:
+ *   ( read -rs VAULT_BACKUP_PASSPHRASE && export VAULT_BACKUP_PASSPHRASE &&
+ *     pnpm backup:export --workspace <slug> --out backup.zip.age --passphrase-env VAULT_BACKUP_PASSPHRASE )
+ * An encrypted export gets its sidecar beside it (`<out>.manifest.json`). Without any of these
+ * options the archive is NOT encrypted. Interrupted (Ctrl-C), it removes what it had written.
  */
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
@@ -19,6 +20,7 @@ import { closeDb, getDb } from "@/infrastructure/database/client";
 import { workspaces } from "@/infrastructure/database/schema";
 import { getStorage } from "@/infrastructure/storage";
 import {
+  cleanUpOnInterrupt,
   encryptionOptions,
   exportToFile,
   recipientsFileFrom,
@@ -31,21 +33,29 @@ async function encryptionFrom(values: {
   recipient?: string[];
   "recipients-file"?: string;
 }): Promise<EncryptionOptions | null> {
-  const recipients = [
-    ...(values.recipient ?? []),
-    ...(values["recipients-file"]
-      ? recipientsFileFrom(await readFile(values["recipients-file"], "utf8"))
-      : []),
-  ];
-  const asked = values["recipients-file"] !== undefined || recipients.length > 0;
+  const asked = values["recipients-file"] !== undefined || values.recipient !== undefined;
   if (values["passphrase-env"] !== undefined && asked) {
     throw new Error("use --passphrase-env or recipients, not both");
   }
   if (values["passphrase-env"] !== undefined) {
     return encryptionOptions({ passphrase: secretFromEnv(values["passphrase-env"]) });
   }
-  return asked ? encryptionOptions({ recipients }) : null;
+  if (!asked) return null;
+  const recipients = [
+    ...(values.recipient ?? []),
+    ...(values["recipients-file"]
+      ? recipientsFileFrom(await readFile(values["recipients-file"], "utf8"))
+      : []),
+  ].filter((recipient) => recipient.trim() !== "");
+  if (recipients.length === 0) {
+    throw new Error("no recipients: --recipient is empty, or --recipients-file lists none");
+  }
+  return encryptionOptions({ recipients });
 }
+
+/** `value` quoted for a POSIX shell, when it needs to be. */
+const shellQuoted = (value: string) =>
+  /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
@@ -58,6 +68,7 @@ async function main(): Promise<void> {
     },
   });
   if (!values.workspace) throw new Error("--workspace <slug> is required");
+  cleanUpOnInterrupt();
   const encryption = await encryptionFrom(values);
   getEnv();
   const db = getDb();
@@ -76,7 +87,9 @@ async function main(): Promise<void> {
     console.log(
       `  encrypted with age (${encryption.kind === "passphrase" ? "passphrase" : `${encryption.recipients.length} recipient(s)`}); sidecar ${result.sidecar}`,
     );
-    console.log(`  decrypt: age -d -o export.zip ${out}   (then check the sha256 above)`);
+    console.log(
+      `  decrypt: age -d -o export.zip ${shellQuoted(out)}   (then check the sha256 above)`,
+    );
   } else {
     console.log("  WARNING: the archive is not encrypted (see --passphrase-env, --recipient).");
   }

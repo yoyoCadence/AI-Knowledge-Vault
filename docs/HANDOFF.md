@@ -886,6 +886,26 @@ conversations. Update it at the end of every PR.
         missing or wrong secrets are refused before any work; passphrase plus recipients
         is refused.
     - The age CLI helpers moved to `tests/integration/helpers/age.ts`.
+  - Review fixes:
+    - Codex and the independent review both found that Ctrl-C left the decrypted archive in
+      TMPDIR. Now `interrupt-cleanup.ts` handles it: `removeIfInterrupted(path)` registers
+      a path, and `cleanUpOnInterrupt()`, which only the CLIs call, removes those paths on
+      SIGINT, SIGTERM and SIGHUP. The paths are the decrypted archive's directory,
+      `restoreArchive`'s extraction directory, and an unfinished export's files.
+    - A disk error while decrypting (ENOSPC on a RAM `/tmp`) is reported as one, with
+      `set TMPDIR` (`decryptionFailure`), instead of as a damaged backup.
+    - `--passphrase-env` refuses a value that is not a variable name, without echoing it.
+    - "No recipients" is reported as such.
+    - A failing `rm` no longer hides why an export failed.
+    - Outputs are flushed (fsync) before success.
+    - An armored file is refused before asking for a secret.
+    - The decrypt hint quotes the path, and the input stream is closed on every failure.
+    - The tests:
+      - use a source over several age chunks, cut mid-chunk and at a chunk boundary;
+      - decrypt with an identity;
+      - run `--recipients-file` and `--identity-file` through the scripts;
+      - interrupt a restore and an export, holding each on a table lock, and check that
+        nothing is left.
 
 **Not done or not verified**
 

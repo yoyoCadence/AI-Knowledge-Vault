@@ -1,6 +1,6 @@
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, truncate, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -48,6 +48,12 @@ beforeAll(async () => {
       bytes: htmlDocument({ title: `備份 ${name}`, body: `<p>${name} 的內容。</p>` }),
     });
   }
+  // Text that barely compresses: the archive spans several 64 KiB age chunks.
+  const words = Array.from({ length: 15_000 }, () => randomBytes(6).toString("base64url"));
+  await uploadFile(source, batch.id, {
+    filename: "large.html",
+    bytes: htmlDocument({ title: "備份 large", body: `<p>${words.join(" ")}</p>` }),
+  });
   await drainJobs();
   slug = await slugOf(source.workspaceId);
 });
@@ -178,6 +184,29 @@ describe("exportToFile (backup:export)", () => {
     ).rejects.toThrow(/storage went away/);
     expect(await entries(dir, "failed.zip.age")).toEqual([]);
   });
+
+  it("reports why it failed even when removing a file fails too", async () => {
+    const out = path.join(dir, "swapped.zip.age");
+    // The output is replaced by a directory, which `rm` without `recursive` refuses.
+    const failing: StorageAdapter = Object.create(getStorage(), {
+      getObject: {
+        value: async () => {
+          await rm(out);
+          await mkdir(out);
+          throw new Error("storage went away");
+        },
+      },
+    });
+    await expect(
+      exportToFile(db, failing, source.workspaceId, out, {
+        kind: "passphrase",
+        passphrase: PASSPHRASE,
+      }),
+    ).rejects.toThrow(/storage went away/);
+    // The sidecar is still removed.
+    expect(await entries(dir, "swapped.zip.age")).toEqual(["swapped.zip.age"]);
+    await rm(out, { recursive: true });
+  });
 });
 
 describe("decryptToTempFile (backup:restore)", () => {
@@ -225,7 +254,22 @@ describe("decryptToTempFile (backup:restore)", () => {
     expect(await readdir(tmp)).toEqual([]);
   });
 
-  it("refuses the wrong passphrase or identity before writing, and leaves nothing", async () => {
+  it("decrypts with the identity of a recipient", async () => {
+    const identity = await generateIdentity();
+    const file = path.join(dir, "for-identity.zip.age");
+    const { sha256: expected } = await exportToFile(db, getStorage(), source.workspaceId, file, {
+      kind: "recipients",
+      recipients: [await identityToRecipient(identity)],
+    });
+    const decrypted = await decryptToTempFile(file, {
+      identities: [await generateIdentity(), identity],
+    });
+    expect(sha256(await readFile(decrypted.path))).toBe(expected);
+    await decrypted.dispose();
+    expect(await readdir(tmp)).toEqual([]);
+  });
+
+  it("refuses the wrong passphrase or identity, and leaves nothing", async () => {
     await expect(
       decryptToTempFile(encrypted, { passphrase: "not the passphrase at all" }),
     ).rejects.toMatchObject({ code: "DECRYPTION_FAILED", message: /wrong passphrase/ });
@@ -236,14 +280,23 @@ describe("decryptToTempFile (backup:restore)", () => {
   });
 
   it("refuses a truncated file, removing what it had decrypted", async () => {
-    const cut = path.join(dir, "truncated.zip.age");
-    await writeFile(cut, await readFile(encrypted));
-    await truncate(cut, (await stat(cut)).size - 100);
-    await expect(decryptToTempFile(cut, { passphrase: PASSPHRASE })).rejects.toMatchObject({
-      code: "DECRYPTION_FAILED",
-      message: /damaged or incomplete/,
-    });
-    expect(await readdir(tmp)).toEqual([]);
+    const whole = await readFile(encrypted);
+    // age: header, a 16-byte nonce, then chunks of 64 KiB + a 16-byte tag, the last one marked.
+    const payload = whole.indexOf("\n", whole.indexOf("\n---")) + 1 + 16;
+    const chunk = 64 * 1024 + 16;
+    expect(whole.length).toBeGreaterThan(payload + 2 * chunk); // several chunks
+    for (const [name, length] of [
+      ["mid-chunk", whole.length - 100],
+      ["at a chunk boundary", payload + chunk],
+    ] as const) {
+      const cut = path.join(dir, `truncated-${name.replaceAll(" ", "-")}.zip.age`);
+      await writeFile(cut, whole.subarray(0, length));
+      await expect(decryptToTempFile(cut, { passphrase: PASSPHRASE }), name).rejects.toMatchObject({
+        code: "DECRYPTION_FAILED",
+        message: expect.stringMatching(/damaged or incomplete/),
+      });
+      expect(await readdir(tmp), name).toEqual([]);
+    }
   });
 
   it("refuses files it does not read: armored age, and not age at all", async () => {
@@ -253,7 +306,8 @@ describe("decryptToTempFile (backup:restore)", () => {
       code: "UNSUPPORTED_EXPORT_FORMAT",
       message: /age -d first/,
     });
-    const plain = path.join(dir, "plain.zip");
+    const plain = path.join(dir, "not-age.zip");
+    await writeFile(plain, Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]));
     await expect(decryptToTempFile(plain, { passphrase: PASSPHRASE })).rejects.toMatchObject({
       code: "UNSUPPORTED_EXPORT_FORMAT",
     });
@@ -261,8 +315,32 @@ describe("decryptToTempFile (backup:restore)", () => {
   });
 });
 
-describe("the scripts (pnpm backup:export / backup:restore)", () => {
+describe("the scripts (pnpm backup:export / backup:restore)", { timeout: 90_000 }, () => {
   const tsx = path.join(root, "node_modules/.bin/tsx");
+  const secretEnv = { VAULT_TEST_BACKUP_PASSPHRASE: PASSPHRASE };
+
+  /** A script started in its own process group, as from a terminal; `exited` resolves at its end. */
+  function started(script: string, args: string[], env: Record<string, string>) {
+    const child = spawn(tsx, [path.join(root, "scripts", script), ...args], {
+      cwd: root,
+      env: { ...process.env, ...env },
+      detached: true,
+      stdio: "ignore",
+    });
+    const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+      child.on("exit", (code, signal) => resolve({ code, signal })),
+    );
+    return { group: child.pid!, exited };
+  }
+
+  async function until(condition: () => Promise<boolean>, what: string) {
+    const deadline = Date.now() + 60_000;
+    while (!(await condition())) {
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
   const cli = (script: string, args: string[], env: Record<string, string> = {}) =>
     run(tsx, [path.join(root, "scripts", script), ...args], {
       cwd: root,
@@ -280,7 +358,6 @@ describe("the scripts (pnpm backup:export / backup:restore)", () => {
   it("export → restore with a passphrase from the environment, never echoed", async () => {
     const folder = await mkdtemp(path.join(dir, "scripts-"));
     const out = path.join(folder, "backup.zip.age");
-    const secretEnv = { VAULT_TEST_BACKUP_PASSPHRASE: PASSPHRASE };
 
     const exported = await cli(
       "backup-export.ts",
@@ -331,7 +408,87 @@ describe("the scripts (pnpm backup:export / backup:restore)", () => {
     expect(rows.map((row) => row.source_sha256)).toEqual([sidecar.archive.sha256]);
   });
 
-  it("refuses a passphrase given with recipients, and an unset variable, before any work", async () => {
+  it("export to a recipients file, restore with the identity file", async () => {
+    const folder = await mkdtemp(path.join(dir, "keys-"));
+    const identity = await generateIdentity();
+    const recipients = path.join(folder, "recipients.txt");
+    const key = path.join(folder, "key.txt");
+    await writeFile(recipients, `# the owner's key\n${await identityToRecipient(identity)}\n`);
+    await writeFile(key, `# created: 2026-10-28T00:00:00Z\n${identity}\n`, { mode: 0o600 });
+    const out = path.join(folder, "backup.zip.age");
+
+    const exported = await cli("backup-export.ts", [
+      ...["--workspace", slug, "--out", out, "--recipients-file", recipients],
+    ]);
+    expect(exported, exported.stderr).toMatchObject({ code: 0 });
+    expect(exported.stdout).toContain("encrypted with age (1 recipient(s))");
+
+    const target = await createTestActor();
+    const restored = await cli("backup-restore.ts", [
+      ...[out, "--workspace", await slugOf(target.workspaceId), "--identity-file", key],
+    ]);
+    expect(restored, restored.stderr).toMatchObject({ code: 0 });
+    expect(`${restored.stdout}${restored.stderr}`).not.toContain(identity);
+    expect(await workCount(target.workspaceId)).toBe(await workCount(source.workspaceId));
+  });
+
+  it("removes the decrypted archive when a restore is interrupted (Ctrl-C)", async () => {
+    const folder = await mkdtemp(path.join(dir, "interrupted-restore-"));
+    const tmp = path.join(folder, "tmp");
+    await mkdir(tmp);
+    const out = path.join(folder, "backup.zip.age");
+    const { byteSize } = await exportToFile(db, getStorage(), source.workspaceId, out, {
+      kind: "passphrase",
+      passphrase: PASSPHRASE,
+    });
+    const target = await createTestActor();
+    const targetSlug = await slugOf(target.workspaceId);
+    // Both temporary directories: the decrypted archive's, and the restore's own.
+    const restoringFromTmp = async () => {
+      const dirs = await entries(tmp, "vault-restore-");
+      for (const name of dirs) {
+        const file = await stat(path.join(tmp, name, "export.zip")).catch(() => null);
+        if (file?.size === byteSize) return dirs.length === 2;
+      }
+      return false;
+    };
+    const ended = await db.transaction(async (tx) => {
+      // Holds the restore once it has begun: it waits here to write the works.
+      await tx.execute(sql`lock table artifacts in access exclusive mode`);
+      const { group, exited } = started(
+        "backup-restore.ts",
+        [out, "--workspace", targetSlug, "--passphrase-env", "VAULT_TEST_BACKUP_PASSPHRASE"],
+        { ...secretEnv, TMPDIR: tmp },
+      );
+      await until(restoringFromTmp, "the decrypted archive and the restore's directory");
+      process.kill(-group, "SIGINT");
+      return exited;
+    });
+    expect(ended.code ?? ended.signal).not.toBe(0);
+    expect(await entries(tmp, "vault-")).toEqual([]); // tsx keeps its own cache there
+    expect(await workCount(target.workspaceId)).toBe(0);
+  });
+
+  it("removes its unfinished files when an export is interrupted (SIGTERM)", async () => {
+    const folder = await mkdtemp(path.join(dir, "interrupted-export-"));
+    const out = path.join(folder, "backup.zip.age");
+    const ended = await db.transaction(async (tx) => {
+      // Holds the export once its files exist: it waits here to read the works.
+      await tx.execute(sql`lock table artifacts in access exclusive mode`);
+      const { group, exited } = started(
+        "backup-export.ts",
+        ["--workspace", slug, "--out", out, "--passphrase-env", "VAULT_TEST_BACKUP_PASSPHRASE"],
+        secretEnv,
+      );
+      await until(async () => (await readdir(folder)).length === 2, "the export's files");
+      process.kill(-group, "SIGTERM");
+      return exited;
+    });
+    expect(ended.code ?? ended.signal).not.toBe(0);
+    expect(await readdir(folder)).toEqual([]);
+  });
+
+  it("refuses unusable secrets and recipients before any work, echoing none", async () => {
     const folder = await mkdtemp(path.join(dir, "refusals-"));
     const recipient = await identityToRecipient(await generateIdentity());
     const both = await cli(
@@ -360,6 +517,29 @@ describe("the scripts (pnpm backup:export / backup:restore)", () => {
     ]);
     expect(unset.code).toBe(1);
     expect(unset.stderr).toContain("VAULT_TEST_UNSET_VARIABLE is not set");
+    // The passphrase typed where the variable's name goes: refused, and not echoed.
+    const typed = await cli("backup-export.ts", [
+      ...["--workspace", slug, "--out", path.join(folder, "x.zip.age")],
+      ...["--passphrase-env", PASSPHRASE],
+    ]);
+    expect(typed.code).toBe(1);
+    expect(typed.stderr).toContain("name of an environment variable");
+    expect(`${typed.stdout}${typed.stderr}`).not.toContain(PASSPHRASE);
+    // Recipients asked for, none given: refused, not taken for a passphrase.
+    const empty = path.join(dir, "no-recipients.txt");
+    await writeFile(empty, "# nobody yet\n");
+    const none = await cli("backup-export.ts", [
+      ...["--workspace", slug, "--out", path.join(folder, "x.zip.age")],
+      ...["--recipients-file", empty],
+    ]);
+    expect(none.code).toBe(1);
+    expect(none.stderr).toContain("no recipients");
     expect(await readdir(folder)).toEqual([]);
+    // An armored file is refused as such, not first asked for a secret it would not use.
+    const armored = path.join(dir, "armored-backup.zip.age");
+    await writeFile(armored, "-----BEGIN AGE ENCRYPTED FILE-----\nYWdl\n");
+    const restoringArmored = await cli("backup-restore.ts", [armored, "--workspace", slug]);
+    expect(restoringArmored.code).toBe(1);
+    expect(restoringArmored.stderr).toContain("ASCII-armored");
   });
 });

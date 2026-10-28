@@ -108,16 +108,23 @@ Properties:
 - **From the CLI (PR 25):** `pnpm backup:export` encrypts while it writes, so the plain
   archive never touches the disk, and writes the same sidecar beside the file:
   ```bash
-  read -rs VAULT_BACKUP_PASSPHRASE; export VAULT_BACKUP_PASSPHRASE   # never on the command line
-  pnpm backup:export --workspace <slug> --out backup.zip.age --passphrase-env VAULT_BACKUP_PASSPHRASE
+  # a passphrase, read into a subshell's environment (never on the command line, which `ps` shows)
+  ( read -rs VAULT_BACKUP_PASSPHRASE && export VAULT_BACKUP_PASSPHRASE &&
+    pnpm backup:export --workspace <slug> --out backup.zip.age --passphrase-env VAULT_BACKUP_PASSPHRASE )
   pnpm backup:export --workspace <slug> --out backup.zip.age --recipient age1… [--recipient age1…]
   pnpm backup:export --workspace <slug> --out backup.zip.age --recipients-file recipients.txt
   ```
-  - The passphrase comes from the environment variable named: `ps` shows every
-    process's arguments to every user. The CLI removes the variable once it has read it.
+  - `--passphrase-env` takes the variable's **name**. Something that is not a name may be the
+    passphrase typed by mistake, so it is refused without being echoed.
+  - The CLI deletes the variable from its own environment, so the processes it starts do not
+    inherit it. That protects less than it sounds:
+    - the shell that set the variable keeps it, so set it in a subshell, as above;
+    - tsx's parent process keeps it too;
+    - so does `/proc/<pid>/environ`, which only the same user (and root) can read.
   - The same rules as the web apply: printable ASCII, 12–1,024 characters, X25519 recipients.
-  - Neither file may exist yet: `--out` never overwrites. Both are 0600, and a failed export
-    removes what it created.
+  - Neither file may exist yet: `--out` never overwrites. Both are 0600 and are flushed to
+    disk before "Exported" is printed. A failed or interrupted export (Ctrl-C, SIGTERM,
+    SIGHUP) removes what it created.
 - **Decrypting** needs no app: `age -d -o export.zip export.zip.age` (asks for the
   passphrase), or `age -d -i key.txt …` for a recipient's identity. Or let the CLI do it
   (`pnpm backup:restore backup.zip.age … --passphrase-env NAME | --identity-file key.txt`,
@@ -279,8 +286,15 @@ pnpm backup:restore ./backup.zip.age --workspace <slug> --identity-file key.txt
 # production image: node dist/backup-restore.mjs …
 ```
 
-An age file (§4) is decrypted first into a 0600 file in a fresh 0700 temporary directory,
-which is removed when the restore ends, however it ends:
+An age file (§4) is decrypted first, into a 0600 file in a fresh 0700 temporary directory:
+
+- **TMPDIR needs free space for the whole archive.** `/tmp` is often a RAM disk; point
+  `TMPDIR` elsewhere for a large backup. A full or unwritable disk is reported as such,
+  not as a damaged backup.
+- The directory is removed when the restore ends: normally, on an error, or on Ctrl-C,
+  SIGTERM or SIGHUP. The restore's own extraction directory is removed in the same cases.
+  Only SIGKILL, a power cut or a crash can leave either behind, as `vault-restore-*` in
+  TMPDIR.
 
 - A wrong passphrase or identity is refused before anything is written (`DECRYPTION_FAILED`).
 - So is a damaged or truncated file: age authenticates every chunk and marks the last.
