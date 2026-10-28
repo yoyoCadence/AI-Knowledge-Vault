@@ -8,6 +8,8 @@ import pino, { type Logger } from "pino";
 const REDACT_PATHS = [
   "password",
   "*.password",
+  "passphrase",
+  "*.passphrase",
   "token",
   "*.token",
   "secret",

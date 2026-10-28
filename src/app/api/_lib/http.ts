@@ -84,7 +84,8 @@ export function parseQuery<T extends z.ZodType>(request: Request, schema: T): z.
   return validate(schema, params);
 }
 
-function validate<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
+/** Checks a parsed body against `schema`; failures name paths, never submitted values. */
+export function validate<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
   const result = schema.safeParse(value);
   if (!result.success) {
     throw new AppError("VALIDATION_FAILED", "Request validation failed", {

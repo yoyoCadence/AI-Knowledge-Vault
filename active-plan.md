@@ -4,12 +4,11 @@ _Last updated: 2026-10-27 by the implementing agent._
 
 ## Current focus
 
-**PR 23 (this branch): P1B-LIBRARY list layout.** The library switches between cards and
-one row per work (格狀/清單), a choice kept in a preference cookie. Phase 1B is complete with
-it.
+**PR 24 (this branch): P1A-ENC, encrypted export downloads.** A completed export downloads
+encrypted with `age` (passphrase or recipients), streamed and verified, the secret never
+stored (ADR-022); a sidecar describes it; restore refuses `.age` files with how to decrypt.
 
-**Next: P1A-ENC (PR 24), built-in `age` encryption for exports.** The exact steps are in
-`docs/HANDOFF.md` §4.
+**Next: P1A-ENC CLI (PR 25).** The exact steps are in `docs/HANDOFF.md` §4.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.
@@ -62,7 +61,7 @@ findings handled. If the review bot is unavailable, run an independent review fi
    - ✅ version split (PR 21)
    - ✅ library statistics (PR 22)
    - ✅ library list layout (PR 23)
-8. P1A-ENC: built-in `age` encryption for exports (PR 24).
+8. 🚧 P1A-ENC: encrypted export downloads (PR 24); the CLI (PR 25).
 
 ## Open questions for the owner
 

@@ -398,3 +398,58 @@ peer dependencies). Anything not verified that way is marked _assumption_.
   the report says so and copy mode restores it as a copy. In that restore, a version added
   under the reused number is skipped too ("already has a different version"). There is no
   merge (the reverse) yet.
+
+## ADR-022 Export encryption: age, applied as the archive leaves the vault, secrets never kept
+
+- **Status:** accepted (PR 24, P1A-ENC; the CLI follows in PR 25)
+- **Context:** Exports are the owner's backups and end up on disks and cloud drives the
+  vault does not control, so they must be encryptable with an open format any tool can
+  decrypt (BACKUP_RECOVERY §4). Exports are built by a background job; a passphrase given to
+  that job would have to sit in the job queue or the database, and nothing secret may.
+- **Decision:**
+  - Format: `age` (age-encryption.org/v1), through `age-encryption` (typage, the reference
+    TypeScript implementation by the age authors, BSD-3-Clause, pinned). Either a passphrase
+    or 1–10 recipients, never both (the age spec forbids it):
+    - A passphrase is 12–1,024 characters of printable ASCII. `age -d` takes the bytes a
+      terminal sends, and other text can arrive as other bytes (a Big5 console, another
+      Unicode normalization), so it would never decrypt.
+    - Recipients are X25519 public keys (`age1` + 58 bech32 characters), the kind every age
+      version reads. Post-quantum keys, plugin and SSH recipients, and private keys pasted by
+      mistake are refused.
+  - The passphrase stanza is age's own scrypt (work factor 2^18), written to the spec in the
+    vault: typage computes it synchronously, which would block the event loop for about a
+    second per download. Node's `crypto.scrypt` runs on the thread pool instead, one
+    derivation at a time (each takes 256 MiB), with at most 4 waiting; past that the answer is 429. typage still does the rest of the format, and CI decrypts both kinds with the age CLI.
+  - Encryption happens when the archive leaves the vault, not when it is built. The export
+    job still writes the plain archive to the app's storage, the same trust boundary as the
+    live originals, for its 7 days. `POST /api/exports/:id/encrypted` streams it through the
+    encrypter into the response, so the passphrase lives only in that request's memory: not
+    in the database, the job queue, storage, the audit log (which records only "passphrase"
+    or the number of recipients) or logs (the logger redacts `passphrase` too).
+  - The export panel posts a plain HTML form, so the browser streams the `.age` file to disk
+    whatever its size. A form's error would replace the page, so the panel first applies the
+    server's rules (shared, `src/lib/backup-encryption.ts`) and asks the sidecar whether the
+    session and the export are still good. The fields are uncontrolled (the secret is never
+    in React state), the confirmation has no name and is never sent, and both are cleared
+    once the request has gone.
+  - The route takes exactly `application/x-www-form-urlencoded` or `application/json`, read
+    chunk by chunk and refused past 16 KiB.
+  - A stored object of another size than recorded is refused (422) before any header is
+    sent. The archive is counted and hashed while it streams: if it runs past its size, or
+    its SHA-256 differs at the end, the response fails before age's final chunk, so a
+    damaged archive never becomes a valid encrypted backup (an age file without its final
+    chunk does not decrypt).
+  - A sidecar (`…zip.age.manifest.json`, `GET /api/exports/:id/manifest`) describes the
+    archive (file name, size, SHA-256 of the plaintext, format and app version, counts), so
+    encrypted backups can be inventoried without decrypting. It holds nothing secret and not
+    the workspace's name; the file name carries the workspace slug, as the plain one does.
+  - Restore takes plain ZIPs; an age file is refused before anything is written, with the
+    command that decrypts it. Decrypting inside the app is the CLI's (PR 25).
+- **Consequences:** Encrypted backups decrypt with any age tool (`age -d`), so the vault is
+  not needed to read them (CI checks interoperability with the `age` CLI). The vault never
+  holds a key and cannot recover a lost passphrase. The plain archive exists in the app's
+  storage until it expires, like the data it was made from. A download's `content-length` is
+  the ciphertext's exact size, but a mismatch found mid-stream can only abort the response,
+  not change its status. Errors the panel cannot foresee (429 when busy, a damaged archive)
+  still show as a JSON page. The vault carries its own copy of the scrypt stanza, about 20
+  lines, checked against typage's decrypter and the age CLI.

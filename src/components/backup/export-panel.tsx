@@ -1,9 +1,17 @@
 "use client";
 
-import { Download, PackageOpen, ShieldAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Download, FileJson, Lock, PackageOpen, ShieldAlert } from "lucide-react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  PASSPHRASE_MAX,
+  PASSPHRASE_MIN,
+  passphraseProblem,
+  RECIPIENTS_MAX,
+  recipientsFrom,
+  recipientsProblem,
+} from "@/lib/backup-encryption";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { t, tOptional } from "@/lib/i18n";
 
@@ -23,6 +31,189 @@ export interface ExportView {
 }
 
 const ACTIVE = new Set(["queued", "running"]);
+
+const field =
+  "border-border-strong bg-surface focus-visible:ring-ring w-full max-w-md rounded-md border px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:outline-none";
+
+/** What the owner typed, checked by the rules the server applies (`@/lib/backup-encryption`). */
+function choiceProblem(
+  mode: "passphrase" | "recipients",
+  passphrase: string,
+  confirmation: string,
+  recipients: string,
+): string | null {
+  if (mode === "recipients") {
+    const problem = recipientsProblem(recipientsFrom(recipients));
+    if (problem === "none") return t("backup.encrypt.noRecipients");
+    if (problem === "count") return t("backup.encrypt.tooManyRecipients", { max: RECIPIENTS_MAX });
+    return problem ? t("backup.encrypt.recipientFormat") : null;
+  }
+  const problem = passphraseProblem(passphrase);
+  if (problem === "characters") return t("backup.encrypt.characters");
+  if (problem) return t("backup.encrypt.length", { min: PASSPHRASE_MIN, max: PASSPHRASE_MAX });
+  return passphrase === confirmation ? null : t("backup.encrypt.mismatch");
+}
+
+/**
+ * Encrypted download (ADR-022): a plain form POST, so the browser streams the `.age` file to
+ * disk however large it is. A form's error would replace the page with JSON, so the panel
+ * checks first what it can: the choice, by the server's rules, and that the session and the
+ * export are still good (the sidecar answers 401 or 409 as the download would). The fields
+ * are uncontrolled, so the secret is never mirrored into React state or the DOM; the
+ * confirmation has no name and is never sent. Both are cleared once the request has gone.
+ */
+function EncryptedDownload({ exportId }: { exportId: string }) {
+  const form = useRef<HTMLFormElement>(null);
+  const confirmation = useRef<HTMLInputElement>(null);
+  const [mode, setMode] = useState<"passphrase" | "recipients">("passphrase");
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const element = event.currentTarget;
+    const data = new FormData(element);
+    const problem = choiceProblem(
+      mode,
+      String(data.get("passphrase") ?? ""),
+      confirmation.current?.value ?? "",
+      String(data.get("recipients") ?? ""),
+    );
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setError(null);
+    setChecking(true);
+    try {
+      const response = await fetch(`/api/exports/${exportId}/manifest`, { cache: "no-store" });
+      if (!response.ok) {
+        setError(
+          response.status === 401
+            ? t("backup.encrypt.signedOut")
+            : response.status === 409 || response.status === 404
+              ? t("backup.encrypt.unavailable")
+              : t("backup.encrypt.checkFailed", { status: response.status }),
+        );
+        return;
+      }
+    } catch {
+      setError(t("backup.encrypt.checkFailed", { status: "network" }));
+      return;
+    } finally {
+      setChecking(false);
+    }
+    // `submit()` sends the form as it is, without this handler; then the secret leaves the page.
+    element.submit();
+    setTimeout(() => form.current?.reset(), 0);
+  }
+
+  return (
+    <details className="text-xs" data-testid="export-encrypted">
+      <summary className="text-primary w-fit cursor-pointer">
+        <Lock className="mr-1 inline size-3.5 align-[-2px]" aria-hidden />
+        {t("backup.encrypt.open")}
+      </summary>
+      <form
+        ref={form}
+        method="post"
+        action={`/api/exports/${exportId}/encrypted`}
+        onSubmit={submit}
+        noValidate
+        className="mt-2 flex flex-col gap-2"
+      >
+        {/* For password managers: what a saved passphrase belongs to (never sent: no name). */}
+        <input
+          type="text"
+          autoComplete="username"
+          value="vault-backup-encryption"
+          readOnly
+          hidden
+        />
+        <fieldset className="flex flex-wrap gap-3">
+          <legend className="sr-only">{t("backup.encrypt.mode")}</legend>
+          {(["passphrase", "recipients"] as const).map((value) => (
+            <label key={value} className="flex items-center gap-1">
+              <input
+                type="radio"
+                checked={mode === value}
+                onChange={() => {
+                  setMode(value);
+                  setError(null);
+                }}
+              />
+              {t(
+                value === "passphrase"
+                  ? "backup.encrypt.byPassphrase"
+                  : "backup.encrypt.byRecipients",
+              )}
+            </label>
+          ))}
+        </fieldset>
+        {mode === "passphrase" ? (
+          <>
+            <label className="flex flex-col gap-1">
+              {t("backup.encrypt.passphrase", { min: PASSPHRASE_MIN })}
+              <input
+                type="password"
+                name="passphrase"
+                autoComplete="new-password"
+                aria-describedby={`${exportId}-passphrase-hint`}
+                className={field}
+              />
+            </label>
+            <p id={`${exportId}-passphrase-hint`} className="text-muted-foreground -mt-1">
+              {t("backup.encrypt.asciiHint")}
+            </p>
+            <label className="flex flex-col gap-1">
+              {t("backup.encrypt.confirm")}
+              <input
+                ref={confirmation}
+                type="password"
+                autoComplete="new-password"
+                className={field}
+              />
+            </label>
+          </>
+        ) : (
+          <label className="flex flex-col gap-1">
+            {t("backup.encrypt.recipients", { max: RECIPIENTS_MAX })}
+            <textarea
+              name="recipients"
+              rows={3}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="age1…"
+              className={`${field} font-mono`}
+            />
+          </label>
+        )}
+        <p className="text-muted-foreground max-w-md leading-relaxed">
+          {t("backup.encrypt.custody")}
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="submit" size="sm" disabled={checking} data-testid="export-encrypted-submit">
+            <Lock />
+            {t("backup.encrypt.submit")}
+          </Button>
+          <a
+            href={`/api/exports/${exportId}/manifest`}
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+          >
+            <FileJson className="size-3.5" aria-hidden />
+            {t("backup.encrypt.sidecar")}
+          </a>
+        </div>
+        {error ? (
+          <p role="alert" className="text-danger">
+            {error}
+          </p>
+        ) : null}
+      </form>
+    </details>
+  );
+}
 
 /** Portable export (BACKUP_RECOVERY §3): request, follow progress, download the archive. */
 export function ExportPanel({ initial }: { initial: ExportView[] }) {
@@ -154,6 +345,7 @@ export function ExportPanel({ initial }: { initial: ExportView[] }) {
                     SHA-256 {run.sha256}
                   </p>
                 ) : null}
+                {run.downloadable ? <EncryptedDownload exportId={run.id} /> : null}
                 {run.status === "failed" && run.errorMessage ? (
                   <p className="text-danger text-xs">{run.errorMessage}</p>
                 ) : null}

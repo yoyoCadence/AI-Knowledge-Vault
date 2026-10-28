@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
+import { Decrypter } from "age-encryption";
 import { claudeDesignZipEntries, htmlDocument } from "../fixtures/builders";
 import { buildZip } from "../fixtures/zip";
 import { e2eEnv } from "./e2e-env";
@@ -10,6 +11,9 @@ test.describe("import → library → artifact (Scenario A)", () => {
   test("batch upload shows progress and a per-file report; works appear in the library", async ({
     page,
   }) => {
+    // The whole journey, import to restore, in one session (sign-in is rate limited): longer than
+    // one step's budget, with two scrypt derivations (encrypted export) of a second or two each.
+    test.slow();
     // In-memory payloads: Chromium in some containers drops file *paths* with non-ASCII names,
     // and we specifically want a Traditional Chinese filename in this scenario.
     // support.js is made to mutate the page: the preview must show the page without running it.
@@ -233,6 +237,41 @@ test.describe("import → library → artifact (Scenario A)", () => {
     expect(archive.suggestedFilename()).toMatch(/^knowledge-vault-export-.+\.zip$/);
     const archiveBytes = await readFile((await archive.path())!);
     expect(createHash("sha256").update(archiveBytes).digest("hex")).toBe(checksum);
+
+    // The same archive, encrypted with a passphrase on its way out (ADR-022).
+    await exportRow.getByText("加密下載（age）").click();
+    const encryptedForm = exportRow.getByTestId("export-encrypted");
+    const passphraseField = encryptedForm.getByLabel("密碼（至少 12 個字元）");
+    const confirmationField = encryptedForm.getByLabel("再輸入一次密碼");
+    // What the server would refuse is refused on the page, which stays.
+    await passphraseField.fill("備份用的中文密碼不能用喔");
+    await confirmationField.fill("備份用的中文密碼不能用喔");
+    await encryptedForm.getByTestId("export-encrypted-submit").click();
+    await expect(encryptedForm.getByRole("alert")).toContainText("可列印的 ASCII");
+    await passphraseField.fill("e2e passphrase for the backup");
+    await confirmationField.fill("e2e passphrase, mistyped");
+    await encryptedForm.getByTestId("export-encrypted-submit").click();
+    await expect(encryptedForm.getByRole("alert")).toHaveText("兩次輸入的密碼不一致。");
+    await confirmationField.fill("e2e passphrase for the backup");
+    // A session that ended meanwhile is told on the page, not answered with a JSON page.
+    await page.route("**/api/exports/*/manifest", (route) =>
+      route.fulfill({ status: 401, contentType: "application/json", body: "{}" }),
+    );
+    await encryptedForm.getByTestId("export-encrypted-submit").click();
+    await expect(encryptedForm.getByRole("alert")).toHaveText("登入已過期，請重新登入後再下載。");
+    await expect(page).toHaveURL(/\/import$/);
+    await page.unroute("**/api/exports/*/manifest");
+    const encryptedDownload = page.waitForEvent("download");
+    await encryptedForm.getByTestId("export-encrypted-submit").click();
+    const sealed = await encryptedDownload;
+    expect(sealed.suggestedFilename()).toMatch(/^knowledge-vault-export-.+\.zip\.age$/);
+    const decrypter = new Decrypter();
+    decrypter.addPassphrase("e2e passphrase for the backup");
+    const opened = await decrypter.decrypt(await readFile((await sealed.path())!));
+    expect(createHash("sha256").update(opened).digest("hex")).toBe(checksum);
+    // The secret does not stay on the page.
+    await expect(passphraseField).toHaveValue("");
+    await expect(confirmationField).toHaveValue("");
 
     // Integrity check re-hashes every stored original.
     await page.getByTestId("integrity-run").click();

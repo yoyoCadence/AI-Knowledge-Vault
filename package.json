@@ -40,6 +40,7 @@
     "@aws-sdk/s3-request-presigner": "3.1150.0",
     "@better-auth/core": "1.7.10",
     "@tailwindcss/postcss": "4.3.3",
+    "age-encryption": "0.3.1",
     "better-auth": "1.7.10",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

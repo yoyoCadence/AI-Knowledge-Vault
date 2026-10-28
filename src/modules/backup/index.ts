@@ -40,6 +40,8 @@ export {
   requestExport,
   listExports,
   createExportDownload,
+  openEncryptedExport,
+  exportSidecar,
   runExport,
   exportJobDefinition,
   exportCleanupJobDefinition,
@@ -50,6 +52,16 @@ export {
   EXPORT_RETENTION_DAYS,
   type ExportRun,
 } from "./service";
+
+export {
+  encryptionOptions,
+  encryptVerified,
+  isAgeEncrypted,
+  PASSPHRASE_MIN,
+  PASSPHRASE_MAX,
+  RECIPIENTS_MAX,
+  type EncryptionOptions,
+} from "./encryption";
 
 import type { Env } from "@/infrastructure/config/env";
 import type { RestoreLimits } from "./restore";

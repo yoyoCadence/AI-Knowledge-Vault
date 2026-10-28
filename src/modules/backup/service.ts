@@ -2,6 +2,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { and, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import { exportRuns } from "@/infrastructure/database/schema";
@@ -12,7 +13,8 @@ import { recordAudit, type RequestMeta } from "@/modules/audit";
 import type { Actor } from "@/modules/auth";
 import { sha256OfFile } from "@/modules/files/hash";
 import { enqueueJob, type JobContext, type JobDefinition } from "@/modules/jobs";
-import { EXPORT_FORMAT_VERSION } from "./format";
+import { encryptVerified, type EncryptionOptions } from "./encryption";
+import { EXPORT_FORMAT, EXPORT_FORMAT_VERSION } from "./format";
 import { writeExport } from "./export";
 import { eachRowIndependently } from "./each-independently";
 import { cleanupRestoreUploads } from "./restore-runs";
@@ -96,6 +98,31 @@ export async function listExports(db: DbExecutor, actor: Actor, limit = 20): Pro
     .limit(limit);
 }
 
+/** A completed, unexpired export of the actor's workspace, or NOT_FOUND / CONFLICT. */
+async function downloadableRun(db: DbExecutor, actor: Actor, exportId: string) {
+  const [run] = await db
+    .select()
+    .from(exportRuns)
+    .where(and(eq(exportRuns.id, exportId), eq(exportRuns.workspaceId, actor.workspaceId)));
+  if (!run) throw notFound("Export");
+  if (
+    !toExportDto(run).downloadable ||
+    !run.storageKey ||
+    !run.filename ||
+    !run.sha256 ||
+    run.byteSize === null
+  ) {
+    throw new AppError("CONFLICT", "This export is not ready or has expired");
+  }
+  return {
+    ...run,
+    storageKey: run.storageKey,
+    filename: run.filename,
+    sha256: run.sha256,
+    byteSize: run.byteSize,
+  };
+}
+
 export async function createExportDownload(
   db: DbExecutor,
   storage: StorageAdapter,
@@ -103,14 +130,7 @@ export async function createExportDownload(
   exportId: string,
   meta: RequestMeta,
 ): Promise<SignedRequest & { filename: string; sha256: string }> {
-  const [run] = await db
-    .select()
-    .from(exportRuns)
-    .where(and(eq(exportRuns.id, exportId), eq(exportRuns.workspaceId, actor.workspaceId)));
-  if (!run) throw notFound("Export");
-  if (!toExportDto(run).downloadable || !run.storageKey || !run.filename || !run.sha256) {
-    throw new AppError("CONFLICT", "This export is not ready or has expired");
-  }
+  const run = await downloadableRun(db, actor, exportId);
   const signed = await storage.createSignedDownloadUrl(run.storageKey, {
     expiresInSeconds: EXPORT_DOWNLOAD_TTL_SECONDS,
     filename: run.filename,
@@ -126,6 +146,86 @@ export async function createExportDownload(
     ...meta,
   });
   return { ...signed, filename: run.filename, sha256: run.sha256 };
+}
+
+/**
+ * An export streamed out encrypted with age (P1A-ENC, ADR-022): the stored archive passes
+ * through the encrypter on its way to the owner, verified against its SHA-256 as it goes.
+ * The passphrase or recipients are used here and nowhere else: not stored, not audited.
+ */
+export async function openEncryptedExport(
+  db: DbExecutor,
+  storage: StorageAdapter,
+  actor: Actor,
+  exportId: string,
+  options: EncryptionOptions,
+  meta: RequestMeta,
+) {
+  const run = await downloadableRun(db, actor, exportId);
+  const { body, info } = await storage.getObject(run.storageKey);
+  let stream: Awaited<ReturnType<typeof encryptVerified>> | null = null;
+  try {
+    // A stored object of another size cannot be the archive: refuse before any header goes out
+    // (the response's content-length is the encrypted size of the recorded one).
+    if (info.size !== run.byteSize) {
+      throw new AppError("CHECKSUM_MISMATCH", "The stored archive does not match its record");
+    }
+    stream = await encryptVerified(Readable.toWeb(body) as ReadableStream<Uint8Array>, options, {
+      sha256: run.sha256,
+      byteSize: run.byteSize,
+    });
+    await recordAudit(db, {
+      action: "backup.export.downloaded",
+      workspaceId: actor.workspaceId,
+      actorUserId: actor.userId,
+      targetType: "export_run",
+      targetId: run.id,
+      metadata: {
+        sha256: run.sha256,
+        byteSize: run.byteSize,
+        encryption: options.kind,
+        ...(options.kind === "recipients" ? { recipients: options.recipients.length } : {}),
+      },
+      ...meta,
+    });
+  } catch (error) {
+    // Nothing will read the archive: release the storage stream (a file or a pooled socket).
+    await stream?.cancel().catch(() => undefined);
+    body.destroy();
+    throw error;
+  }
+  return {
+    stream,
+    filename: `${run.filename}.age`,
+    byteSize: stream.size(run.byteSize),
+    sha256: run.sha256,
+  };
+}
+
+/**
+ * The sidecar of an encrypted export (BACKUP_RECOVERY §4): what the archive holds, readable
+ * without decrypting it, so a set of backups can be inventoried. It describes the plaintext
+ * archive (its SHA-256 checks the decrypted copy): file name, size, format, when and by which
+ * app version it was made, and its counts. It holds nothing secret, and not the workspace's
+ * name, which sits beside the backup in whatever cloud it is kept.
+ */
+export async function exportSidecar(db: DbExecutor, actor: Actor, exportId: string) {
+  const run = await downloadableRun(db, actor, exportId);
+  return {
+    filename: `${run.filename}.age.manifest.json`,
+    sidecar: {
+      format: `${EXPORT_FORMAT}-sidecar`,
+      sidecarVersion: 1,
+      encrypted: { format: "age", filename: `${run.filename}.age` },
+      archive: {
+        filename: run.filename,
+        byteSize: run.byteSize,
+        sha256: run.sha256,
+        formatVersion: run.formatVersion,
+      },
+      manifest: run.manifestSummary,
+    },
+  };
 }
 
 /**
