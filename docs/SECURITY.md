@@ -240,8 +240,12 @@ nofollow`, are never cached, and are rate limited per client address
   `auth_verifications`, `auth_rate_limits` and share token hashes (FR-BAK-2).
 - Export encryption passphrases and age recipients' keys are never stored (ADR-022): the
   passphrase is used while an encrypted download streams and is not written to the
-  database, job payloads, the audit log or logs (redacted as `passphrase`). The vault holds
-  no private key; a lost passphrase cannot be recovered.
+  database, job payloads, the audit log or logs (redacted as `passphrase`). Validation
+  errors never echo it. The export panel keeps it out of React state and clears it once
+  sent; the request body is capped at 16 KiB and must be exactly a form or JSON. scrypt
+  runs on the thread pool, one at a time, at most four waiting (429 past that), so
+  encrypted downloads cannot stall the server or exhaust its memory. The vault holds no
+  private key; a lost passphrase cannot be recovered.
 
 ## 11. Input validation and injection
 

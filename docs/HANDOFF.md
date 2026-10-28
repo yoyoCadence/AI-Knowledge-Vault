@@ -821,17 +821,38 @@ conversations. Update it at the end of every PR.
   (passphrase with confirmation, or `age1…` recipients; a plain form POST, so the browser
   streams the file).
   - The secret is used while the archive streams and nowhere else; the audit records only
-    the method. The archive is verified against its SHA-256 on the way; a mismatch aborts
-    before age's final chunk.
+    the method.
+  - Passphrases are 12–1,024 printable-ASCII characters (any terminal types the same bytes);
+    recipients are X25519 keys only. The rules live in `src/lib/backup-encryption.ts`,
+    shared by the route and the panel.
+  - The scrypt stanza is the vault's own (`PassphraseRecipient`): Node's async `scrypt`,
+    one at a time, at most 4 waiting (429), instead of typage's synchronous one.
+  - A stored object of the wrong size is refused (422) before headers. The archive is
+    counted and hashed on the way; running past its size or a SHA-256 mismatch aborts before
+    age's final chunk.
+  - The route takes exactly a form or JSON, read chunk by chunk up to 16 KiB.
+  - The panel checks the rules and preflights the sidecar (401/409 shown on the page), keeps
+    the secret out of React state, and clears it once sent.
+  - The sidecar has no workspace name.
   - Restore refuses an age file before writing anything, with `age -d …`.
-  - Tests: `tests/unit/backup/encryption.test.ts` (validation, round trips, the checksum
-    abort leaves an undecryptable file, header detection);
-    `tests/integration/backup/encrypted-export.test.ts` (passphrase and recipients through
-    the route, `content-length`, the audit and the database hold no secret, refusals,
-    a damaged stored archive aborts, the sidecar, restore refusal, and decryption with the
-    `age` CLI, which CI now installs and requires); the import E2E downloads an encrypted
-    copy in the browser and decrypts it to the archive's SHA-256. Removing the checksum
-    check fails a unit and an integration test.
+  - Tests:
+    - `tests/unit/backup/encryption.test.ts`: the rules, round trips, the stanza's shape, the
+      event loop never stalls over 250 ms during derivation, 429 past the queue, early stop
+      past the recorded size, and a checksum abort leaves an undecryptable file.
+    - `tests/integration/backup/encrypted-export.test.ts`:
+      - passphrase and recipients through the route, `content-length`; neither the audit nor
+        the database holds the secret;
+      - refusals: non-ASCII, PQ and secret keys, media types, 413 on an endless body;
+      - 422 for a resized archive; a damaged archive aborts;
+      - the sidecar without the workspace name; restore refusal;
+      - the `age` CLI decrypts both kinds; for passphrases, typed at its prompt on a pty.
+    - The import E2E: a non-ASCII refusal and a 401 preflight shown on the page, then the
+      encrypted copy downloaded and decrypted to the archive's SHA-256. The scenario is marked
+      `test.slow()`.
+    - Mutation-checked: sync scrypt, the queue cap, the size count, the size check, the ASCII
+      rule (unit and route), the recipient rule (unit and route), the media type, the
+      streaming cap, the sidecar's workspace, and the panel's preflight (E2E) each fail a test
+      when removed.
 
 **Not done or not verified**
 

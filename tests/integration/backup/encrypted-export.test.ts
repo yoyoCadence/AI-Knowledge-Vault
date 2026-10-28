@@ -92,6 +92,50 @@ function encrypted(
 const form = (fields: Record<string, string>) => new URLSearchParams(fields).toString();
 const bytesOf = async (response: Response) => new Uint8Array(await response.arrayBuffer());
 
+/** The reference age CLI, where it is installed; CI installs it (interoperability, ADR-022). */
+function ageCli(): string | null {
+  let age: string | null = null;
+  try {
+    age = execFileSync("sh", ["-c", "command -v age"]).toString().trim() || null;
+  } catch {
+    age = null;
+  }
+  if (!age && process.env.CI) {
+    throw new Error("the age CLI must be installed in CI (.github/workflows/ci.yml)");
+  }
+  if (!age) console.warn("age CLI not installed: interoperability not checked");
+  return age;
+}
+
+/**
+ * Types the passphrase at `age -d`'s prompt, as a person would: age reads it only from a
+ * terminal, so this runs age on a pseudo-terminal. The passphrase goes through the
+ * environment, not the command line.
+ */
+const TYPE_AT_PROMPT = String.raw`
+import os, pty, sys
+age, output, encrypted = sys.argv[1:4]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv(age, [age, "-d", "-o", output, encrypted])
+def read():
+    try:
+        return os.read(fd, 1024)
+    except OSError:
+        return b""
+seen = b""
+while b"passphrase" not in seen.lower():
+    chunk = read()
+    if not chunk:
+        break
+    seen += chunk
+os.write(fd, os.environ["AGE_TEST_PASSPHRASE"].encode() + b"\n")
+while read():
+    pass
+_, status = os.waitpid(pid, 0)
+sys.exit(os.waitstatus_to_exitcode(status))
+`;
+
 describe("POST /api/exports/:id/encrypted (ADR-022)", () => {
   let owner: Owner;
   let run: Awaited<ReturnType<typeof exported>>["run"];
@@ -129,6 +173,24 @@ describe("POST /api/exports/:id/encrypted (ADR-022)", () => {
     expect(Number(leaks.rows[0]!.n)).toBe(0);
   });
 
+  it("is decrypted by the age CLI with the passphrase typed at its prompt", async () => {
+    const response = await encrypted(owner, run.id, form({ passphrase: PASSPHRASE }));
+    expect(response.status).toBe(200);
+    const body = await bytesOf(response);
+    const age = ageCli();
+    if (!age) return;
+    const input = path.join(dir, "by-passphrase.zip.age");
+    const output = path.join(dir, "by-passphrase.zip");
+    const script = path.join(dir, "type-at-prompt.py");
+    await writeFile(input, body);
+    await writeFile(script, TYPE_AT_PROMPT);
+    execFileSync("python3", ["-I", script, age, output, input], {
+      env: { ...process.env, AGE_TEST_PASSPHRASE: PASSPHRASE },
+      timeout: 60_000,
+    });
+    expect(execFileSync("sha256sum", [output]).toString().split(" ")[0]).toBe(run.sha256);
+  });
+
   it("encrypts to age recipients, from JSON too, and the age CLI decrypts it", async () => {
     const identity = await generateIdentity();
     const response = await encrypted(
@@ -143,41 +205,74 @@ describe("POST /api/exports/:id/encrypted (ADR-022)", () => {
     decrypter.addIdentity(identity);
     expect(sha256(await decrypter.decrypt(body))).toBe(run.sha256);
 
-    // Interoperability with the reference CLI, where it is installed (CI installs it).
-    let age: string | null = null;
-    try {
-      age = execFileSync("sh", ["-c", "command -v age"]).toString().trim() || null;
-    } catch {
-      age = null;
-    }
-    if (age) {
-      const input = path.join(dir, "export.zip.age");
-      const key = path.join(dir, "key.txt");
-      const output = path.join(dir, "export.zip");
-      await writeFile(input, body);
-      await writeFile(key, `${identity}\n`, { mode: 0o600 });
-      execFileSync(age, ["-d", "-i", key, "-o", output, input]);
-      expect(execFileSync("sha256sum", [output]).toString().split(" ")[0]).toBe(run.sha256);
-    } else if (process.env.CI) {
-      throw new Error("the age CLI must be installed in CI (.github/workflows/ci.yml)");
-    } else {
-      console.warn("age CLI not installed: interoperability not checked");
-    }
+    const age = ageCli();
+    if (!age) return;
+    const input = path.join(dir, "export.zip.age");
+    const key = path.join(dir, "key.txt");
+    const output = path.join(dir, "export.zip");
+    await writeFile(input, body);
+    await writeFile(key, `${identity}\n`, { mode: 0o600 });
+    execFileSync(age, ["-d", "-i", key, "-o", output, input]);
+    expect(execFileSync("sha256sum", [output]).toString().split(" ")[0]).toBe(run.sha256);
   });
 
   it("refuses what is not a usable choice, and anyone but the workspace's exporters", async () => {
+    const identity = await generateIdentity();
+    const recipient = await identityToRecipient(identity);
     for (const [body, type] of [
       [form({ passphrase: "too short" }), undefined],
-      [form({ passphrase: PASSPHRASE, recipients: "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqq" }), undefined],
+      [form({ passphrase: "十二個字的中文密碼是不行的" }), undefined],
+      [form({ passphrase: PASSPHRASE, recipients: recipient }), undefined],
       [form({ recipients: "not-a-key" }), undefined],
+      [form({ recipients: identity }), undefined], // a private key pasted by mistake
+      [form({ recipients: `age1pq1${"q".repeat(80)}` }), undefined],
       [form({}), undefined],
       [JSON.stringify({ passphrase: PASSPHRASE, extra: 1 }), "application/json"],
+      ["{not json", "application/json"],
     ] as const) {
       const response = await encrypted(owner, run.id, body, type);
       expect(response.status, body).toBe(400);
-      expect(await response.text()).not.toContain("too short");
+      const text = await response.text();
+      for (const secret of ["too short", "中文密碼", identity]) expect(text).not.toContain(secret);
     }
-    expect((await encrypted(owner, run.id, PASSPHRASE, "text/plain")).status).toBe(415);
+    // Exactly a form or JSON: no lists, look-alikes or multipart.
+    for (const type of [
+      "text/plain",
+      "multipart/form-data; boundary=x",
+      "application/x-www-form-urlencoded, multipart/form-data; boundary=x",
+      "application/x-www-form-urlencodedx",
+    ]) {
+      expect((await encrypted(owner, run.id, PASSPHRASE, type)).status, type).toBe(415);
+    }
+    expect(
+      (await encrypted(owner, run.id, form({ passphrase: PASSPHRASE }), "Application/JSON")).status,
+    ).toBe(400); // JSON, case-insensitively: then not JSON
+    // A body far past any choice: refused, even one that never ends.
+    expect((await encrypted(owner, run.id, form({ passphrase: "x".repeat(20_000) }))).status).toBe(
+      413,
+    );
+    let sent = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent += 1_024;
+        controller.enqueue(new Uint8Array(1_024).fill(0x61));
+      },
+    });
+    const cutOff = await encryptedRoute(
+      new Request(`${env.APP_ORIGIN}/api/exports/${run.id}/encrypted`, {
+        method: "POST",
+        headers: {
+          cookie: owner.cookie,
+          origin: env.APP_ORIGIN,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: endless,
+        duplex: "half",
+      } as RequestInit),
+      params({ id: run.id }),
+    );
+    expect(cutOff.status).toBe(413);
+    expect(sent).toBeLessThan(64 * 1_024);
     expect(
       (
         await encrypted(owner, run.id, form({ passphrase: PASSPHRASE }), undefined, {
@@ -214,6 +309,19 @@ describe("POST /api/exports/:id/encrypted (ADR-022)", () => {
     await expect(response.arrayBuffer()).rejects.toThrow();
   });
 
+  it("refuses, before any byte goes out, a stored archive of another size", async () => {
+    const { owner: other, run: grownRun } = await exported();
+    const { body } = await getStorage().getObject(grownRun.storageKey!);
+    const stored = Buffer.concat(await body.toArray());
+    await getStorage().putObject(grownRun.storageKey!, Buffer.concat([stored, Buffer.alloc(10)]), {
+      contentType: "application/zip",
+    });
+    const response = await encrypted(other, grownRun.id, form({ passphrase: PASSPHRASE }));
+    expect(response.status).toBe(422);
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(await response.json()).toMatchObject({ error: { code: "CHECKSUM_MISMATCH" } });
+  });
+
   it("gives the sidecar: what the archive holds, readable without decrypting", async () => {
     const response = await manifestRoute(
       new Request(`${env.APP_ORIGIN}/api/exports/${run.id}/manifest`, {
@@ -232,6 +340,13 @@ describe("POST /api/exports/:id/encrypted (ADR-022)", () => {
       archive: { filename: run.filename, sha256: run.sha256, byteSize: run.byteSize },
       manifest: { counts: { artifacts: 1 } },
     });
+    // Not the workspace's name: the sidecar sits unencrypted beside the backup. (Its slug is in
+    // the file name, as in the plain download's: BACKUP_RECOVERY §4.)
+    const { rows } = await db.execute<{ name: string }>(
+      sql`select name from workspaces where id = ${owner.workspaceId}`,
+    );
+    expect(sidecar).not.toHaveProperty("workspace");
+    expect(JSON.stringify(sidecar)).not.toContain(rows[0]!.name);
   });
 });
 

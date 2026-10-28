@@ -85,15 +85,25 @@ Properties:
 ## 4. Encryption
 
 - **Built in (P1A-ENC, ADR-022):** Import & Backup → 加密下載（age） downloads a completed
-  export encrypted with `age`, with a passphrase (scrypt, at least 12 characters) or to
-  `age1…` recipients (`POST /api/exports/:id/encrypted`). Rules:
+  export encrypted with `age` (`POST /api/exports/:id/encrypted`), either:
+  - with a passphrase: scrypt, 12–1,024 characters, **printable ASCII only** (letters, digits,
+    spaces, half-width symbols), so `age -d` on any computer receives the same bytes; or
+  - to 1–10 X25519 recipients (`age1…` public keys; not post-quantum, plugin or SSH keys).
+
+  Rules:
   - The passphrase or key is never stored: not in the archive, the database, the job queue,
     the audit log or logs. It is used while the archive streams out, and then gone.
-  - The archive is checked against its SHA-256 as it streams; a mismatch aborts the download
-    before age's final chunk, so the partial file does not decrypt.
+  - The key derivation runs off the event loop, one at a time; with more than four waiting
+    the server answers 429 (try again in a moment).
+  - The archive is checked as it streams: a stored object of the wrong size is refused (422)
+    before the download starts; running past its size or a SHA-256 mismatch at the end
+    aborts the download before age's final chunk, so the partial file does not decrypt.
   - The sidecar `…zip.age.manifest.json` (`GET /api/exports/:id/manifest`) stays outside
-    the envelope: the export's summary, counts and the plaintext archive's SHA-256, so a
-    backup can be inventoried without decrypting and checked after decrypting.
+    the envelope: file name, size, SHA-256 of the plaintext archive, format and app version,
+    creation time and counts, so a backup can be inventoried without decrypting and checked
+    after decrypting. It has no workspace name; the file names carry the workspace slug
+    (rename the files if that matters where they are kept).
+
 - **Decrypting** needs no app: `age -d -o export.zip export.zip.age` (asks for the
   passphrase), or `age -d -i key.txt …` for a recipient's identity. Restore takes the
   decrypted `.zip`; an `.age` file is refused with this command. The CLI's built-in

@@ -325,9 +325,18 @@ export const zhTW = {
   "backup.encrypt.sidecar": "說明檔（未加密，只有摘要與 SHA-256）",
   "backup.encrypt.custody":
     "密碼與私鑰不會被保存；遺失就無法解密。請存放在密碼管理工具，並另留一份離線備份。解密：age -d -o export.zip export.zip.age",
-  "backup.encrypt.tooShort": "密碼至少需要 {min} 個字元。",
+  "backup.encrypt.asciiHint": "只能用英文字母、數字、空白與半形符號，任何電腦上的 age 都打得出來。",
+  "backup.encrypt.length": "密碼需要 {min} 到 {max} 個字元。",
+  "backup.encrypt.characters":
+    "密碼只能用英文字母、數字、空白與半形符號（可列印的 ASCII）：其他文字在別台電腦的終端機可能變成不同的位元組，就解不開了。",
   "backup.encrypt.mismatch": "兩次輸入的密碼不一致。",
   "backup.encrypt.noRecipients": "請至少輸入一個 age 公鑰。",
+  "backup.encrypt.tooManyRecipients": "最多 {max} 個 age 公鑰。",
+  "backup.encrypt.recipientFormat":
+    "age 公鑰是 age1 開頭、共 62 個字元的 X25519 公鑰。請勿貼上私鑰（AGE-SECRET-KEY-…）。",
+  "backup.encrypt.signedOut": "登入已過期，請重新登入後再下載。",
+  "backup.encrypt.unavailable": "這份匯出尚未完成或已過期，請重新整理頁面。",
+  "backup.encrypt.checkFailed": "無法開始下載（{status}），請稍後再試。",
   "backup.restoreHint":
     "還原：使用下方的「從備份還原」，或在伺服器上執行 pnpm backup:restore <檔案> --workspace <slug>。加密的備份（.age）請先解密成 ZIP 再還原。",
   "settings.title": "設定",
