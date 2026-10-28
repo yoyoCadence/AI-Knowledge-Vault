@@ -22,6 +22,8 @@ export const ErrorCodes = {
   STORAGE_UNAVAILABLE: 503,
   CHECKSUM_MISMATCH: 422,
   UNSUPPORTED_EXPORT_FORMAT: 422,
+  /** An encrypted backup that the given passphrase or identities do not open, or a damaged one. */
+  DECRYPTION_FAILED: 422,
   /** A stored original's bytes no longer match its recorded SHA-256 (storage corruption). */
   ORIGINAL_CORRUPT: 500,
   INTERNAL_ERROR: 500,

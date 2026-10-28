@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-27, after PR 24: encrypted export downloads)
+## 1. Snapshot (2026-10-28, after PR 25: encrypted backups from the CLI)
 
 **Merged and tested**
 
@@ -854,6 +854,39 @@ conversations. Update it at the end of every PR.
       streaming cap, the sidecar's workspace, and the panel's preflight (E2E) each fail a test
       when removed.
 
+- **PR 25, P1A-ENC CLI** (ADR-022): `src/modules/backup/encrypted-files.ts`:
+  - `exportToFile` writes an export to a new 0600 file, plain or encrypted as it is written
+    (the plaintext never touches the disk), with the sidecar `<out>.manifest.json` beside an
+    encrypted one. It never overwrites (`open(…, "wx")`): before, a failed plain export
+    deleted a file that already existed at `--out`. A failure removes only what it
+    created.
+  - `decryptToTempFile` decrypts an age file into a 0600 file in a fresh `mkdtemp` directory,
+    disposed after the restore. A wrong secret fails before any byte is written and a
+    truncated file before the end (`DECRYPTION_FAILED`); either way nothing is left.
+  - `secretFromEnv` reads the variable named and deletes it. `identitiesFrom` reads
+    `age-keygen` files (X25519 only) and `recipientsFileFrom` reads `age -R` files.
+  - `sidecar.ts`: `sidecarOf` and `manifestSummaryOf`, shared with the web, so the CLI's
+    sidecar has the same shape. It carries the manifest's summary, not the full manifest
+    (whose titles would sit unencrypted beside the backup).
+  - `scripts/backup-export.ts` (`--passphrase-env`, `--recipient` repeatable,
+    `--recipients-file`) and `scripts/backup-restore.ts` (`--passphrase-env`,
+    `--identity-file`) are thin wrappers. A restore records the decrypted archive's SHA-256.
+  - Tests:
+    - `tests/unit/backup/encrypted-files.test.ts`: the env secret is read and removed; the
+      identity and recipients files; age format detection.
+    - `tests/integration/backup/encrypted-cli.test.ts`:
+      - passphrase and recipient exports, decrypted by typage and the `age` CLI (typed at
+        its prompt on a pty);
+      - the sidecar's exact content, 0600 files, never overwriting (file or sidecar), and a
+        failed export leaving nothing;
+      - decrypt → restore into another workspace;
+      - wrong passphrase or identity, truncated, armored and non-age files refused, leaving
+        nothing in the temp directory;
+      - the real scripts end to end through `tsx`: the secret is in no output and no file;
+        missing or wrong secrets are refused before any work; passphrase plus recipients
+        is refused.
+    - The age CLI helpers moved to `tests/integration/helpers/age.ts`.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -893,8 +926,10 @@ conversations. Update it at the end of every PR.
     "unlisted" artifact restores without links (readable by no one outside the workspace).
   - The rate-limited reader page answers 200 with a message (a Server Component cannot set
     a 429); the `/s/*` routes answer 429.
-- The CLI exports and restores plain archives only (P1A-ENC CLI is PR 25); the web encrypts
-  downloads (PR 24).
+- The CLI does not read ASCII-armored age files, or identities other than X25519 (plugin,
+  post-quantum, SSH). Decrypt those with `age -d` first.
+- Decrypting with a passphrase uses typage's synchronous scrypt, which is fine for a CLI. Its
+  decrypter refuses scrypt work factors above 2^20; age's default is 2^18.
 - HTML extraction can join adjacent inline labels without a space. This is cosmetic.
 - The S3 adapter has not been verified against real R2.
 
@@ -928,18 +963,7 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 
 ## 4. Next steps (exact)
 
-**Phase 1B is complete** (ROADMAP, PR 23). Two Phase 1A items remain, one PR each:
+**Phase 1B is complete** (ROADMAP, PR 23), and so is P1A-ENC (PR 24 web, PR 25 CLI). One
+Phase 1A item remains, and it needs the owner:
 
-1. **P1A-ENC CLI (PR 25)** (ADR-022 says what; reuse `src/modules/backup/encryption.ts`):
-   - `pnpm backup:export … --out x.zip.age` with `--passphrase-env NAME` (the variable's
-     name; never the passphrase in argv, which `ps` shows) or `--recipient age1…`
-     (repeatable) / `--recipients-file`. It streams `writeExport` through the encrypter into
-     the file and writes the sidecar `x.zip.age.manifest.json` beside it (the full
-     `manifest.json`, which the CLI has).
-   - `pnpm backup:restore x.zip.age` with `--passphrase-env NAME` or `--identity-file` decrypts
-     into a 0600 temp file (in a fresh `mkdtemp` directory, removed afterwards), then restores
-     it as now; the wrong secret is a clear refusal before anything is written.
-   - Tests: export → encrypt → restore round trip through the scripts' functions; the wrong
-     passphrase; `age -d` decrypts the CLI's file; the secret appears in no argv, output or
-     file but the encrypted one.
-2. **Then:** verify the S3 adapter against real R2 (needs the owner's credentials).
+1. **Verify the S3 adapter against real R2.** This needs the owner's credentials.

@@ -54,8 +54,22 @@ export {
 } from "./service";
 
 export {
+  exportToFile,
+  ageFormatOfFile,
+  decryptToTempFile,
+  secretFromEnv,
+  identitiesFrom,
+  recipientsFileFrom,
+  type DecryptedFile,
+  type DecryptionSecret,
+  type ExportFileResult,
+} from "./encrypted-files";
+export { manifestSummaryOf, sidecarOf } from "./sidecar";
+
+export {
   encryptionOptions,
   encryptVerified,
+  encryptStream,
   isAgeEncrypted,
   PASSPHRASE_MIN,
   PASSPHRASE_MAX,

@@ -34,7 +34,7 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 | P1A-EXPORT        | Portable export v1 (job, API, UI, CLI)                         | ✅                                                                                   |
 | P1A-RESTORE       | Restore core, CLI, re-extraction, round-trip, API and UI       | ✅                                                                                   |
 | P1A-INTEGRITY     | Integrity check job, API, panel, weekly schedule               | ✅                                                                                   |
-| P1A-ENC           | Built-in age encryption for exports                            | 🚧 encrypted download, sidecar, restore refusal (PR 24); CLI encrypt/decrypt (PR 25) |
+| P1A-ENC           | Built-in age encryption for exports                            | ✅ encrypted download, sidecar, restore refusal (PR 24); CLI encrypt/decrypt (PR 25) |
 
 ## Phase 1B — Usable Library
 

@@ -1,14 +1,16 @@
 # Active Plan
 
-_Last updated: 2026-10-27 by the implementing agent._
+_Last updated: 2026-10-28 by the implementing agent._
 
 ## Current focus
 
-**PR 24 (this branch): P1A-ENC, encrypted export downloads.** A completed export downloads
-encrypted with `age` (passphrase or recipients), streamed and verified, the secret never
-stored (ADR-022); a sidecar describes it; restore refuses `.age` files with how to decrypt.
+**PR 25 (this branch): P1A-ENC CLI.** `pnpm backup:export` encrypts as it writes
+(`--passphrase-env`, `--recipient`, `--recipients-file`) and writes the sidecar.
+`pnpm backup:restore` decrypts `.age` backups (`--passphrase-env`, `--identity-file`) into a
+private temporary file and restores them. ADR-022 covers both.
 
-**Next: P1A-ENC CLI (PR 25).** The exact steps are in `docs/HANDOFF.md` §4.
+**Next:** verify the S3 adapter against real R2. This needs the owner's credentials;
+`docs/HANDOFF.md` §4 has the details.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.
@@ -61,7 +63,7 @@ findings handled. If the review bot is unavailable, run an independent review fi
    - ✅ version split (PR 21)
    - ✅ library statistics (PR 22)
    - ✅ library list layout (PR 23)
-8. 🚧 P1A-ENC: encrypted export downloads (PR 24); the CLI (PR 25).
+8. ✅ P1A-ENC: encrypted export downloads (PR 24); the CLI (PR 25).
 
 ## Open questions for the owner
 

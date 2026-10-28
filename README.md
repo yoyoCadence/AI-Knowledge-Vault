@@ -148,11 +148,12 @@ pnpm build && pnpm test:e2e  # Playwright E2E（使用獨立的 vault_e2e 資料
   - 匯出內容：metadata JSON、抽取文字（Markdown）、逐位元組相同的原始檔、`checksums.sha256`
   - 可用 `sha256sum -c` 在系統外驗證
   - 在「匯入與備份」頁建立與下載，或用 `pnpm backup:export`
+  - 加密（age）：網頁的「加密下載」，或 `pnpm backup:export --passphrase-env <變數名稱>`／`--recipient age1…`；密碼與私鑰從不保存，任何 age 工具都能解密
   - 匯出檔保留 7 天後自動刪除
 - 完整性檢查：
   - 重新計算每個原始檔的 SHA-256，標示遺失或損毀的檔案
   - 每週自動執行，也可在「匯入與備份」頁手動執行
-- 還原（「匯入與備份」頁的「從備份還原」，或 `pnpm backup:restore`）：
+- 還原（「匯入與備份」頁的「從備份還原」，或 `pnpm backup:restore`；加密的 `.age` 備份用 CLI 加 `--passphrase-env` 或 `--identity-file` 直接還原）：
   - 寫入任何資料前先驗證所有校驗碼，竄改的檔案會被拒絕
   - 可選「略過已存在」或「建立副本」
   - 還原後由背景工作重建文字、章節、縮圖與預覽

@@ -401,7 +401,7 @@ peer dependencies). Anything not verified that way is marked _assumption_.
 
 ## ADR-022 Export encryption: age, applied as the archive leaves the vault, secrets never kept
 
-- **Status:** accepted (PR 24, P1A-ENC; the CLI follows in PR 25)
+- **Status:** accepted (P1A-ENC: the web in PR 24, the CLI in PR 25)
 - **Context:** Exports are the owner's backups and end up on disks and cloud drives the
   vault does not control, so they must be encryptable with an open format any tool can
   decrypt (BACKUP_RECOVERY §4). Exports are built by a background job; a passphrase given to
@@ -443,8 +443,16 @@ peer dependencies). Anything not verified that way is marked _assumption_.
     archive (file name, size, SHA-256 of the plaintext, format and app version, counts), so
     encrypted backups can be inventoried without decrypting. It holds nothing secret and not
     the workspace's name; the file name carries the workspace slug, as the plain one does.
-  - Restore takes plain ZIPs; an age file is refused before anything is written, with the
-    command that decrypts it. Decrypting inside the app is the CLI's (PR 25).
+  - Web restore takes plain ZIPs; an age file is refused before anything is written, with
+    the command that decrypts it.
+  - The operator CLI (PR 25) does both ends with the same code and rules:
+    - `backup:export` encrypts the archive as it is written (the plaintext never touches the
+      disk) and writes the same sidecar beside it.
+    - `backup:restore` decrypts an age file into a 0600 file in a fresh temporary
+      directory, removed when the restore ends. A wrong secret or a damaged file fails
+      before the restore starts.
+    - A passphrase comes only from an environment variable the operator names: never argv,
+      which `ps` shows. The CLI deletes the variable once it has read it.
 - **Consequences:** Encrypted backups decrypt with any age tool (`age -d`), so the vault is
   not needed to read them (CI checks interoperability with the `age` CLI). The vault never
   holds a key and cannot recover a lost passphrase. The plain archive exists in the app's

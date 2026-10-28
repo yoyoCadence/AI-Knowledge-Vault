@@ -246,6 +246,11 @@ nofollow`, are never cached, and are rate limited per client address
   runs on the thread pool, one at a time, at most four waiting (429 past that), so
   encrypted downloads cannot stall the server or exhaust its memory. The vault holds no
   private key; a lost passphrase cannot be recovered.
+- The backup CLIs take a passphrase only from an environment variable the operator names
+  (`--passphrase-env`), never from argv, which `ps` shows to every user, and delete it from
+  their environment once read. Encrypted exports and their sidecars are created 0600 and never
+  overwrite a file. A decrypted archive exists only as a 0600 file in a fresh 0700 temporary
+  directory for the length of the restore.
 
 ## 11. Input validation and injection
 

@@ -21,21 +21,21 @@
 
 ## Phase 1A — Preservation Core
 
-| ID                | 任務                                                                                                 | 狀態                                   |
-| ----------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| P1A-AUTH          | Better Auth（email+password、無註冊、DB rate limit、session 管理）、`admin:create` CLI、登入/登出 UI | ✅                                     |
-| P1A-FILES         | 不可變原始檔（內容定址、條件寫入、DB trigger）、SHA-256、下載原始檔（signed URL）                    | ✅                                     |
-| P1A-IMPORT-API    | Import batch/item API、signed upload、complete、retry、cancel、狀態機                                | ✅                                     |
-| P1A-IMPORT-WORKER | `import.process_item`：sniff、hash、dedupe、store、classify、extract、persist                        | ✅                                     |
-| P1A-EXTRACT       | HTML / Claude Design / Markdown / TXT / PDF / Image 抽取；sections；語言偵測                         | ✅                                     |
-| P1A-ZIP           | 安全 ZIP 讀取（限制、traversal、symlink、bomb）、分類 A/B/C/D、預覽檔衍生                            | ✅                                     |
-| P1A-VERSION       | 版本比對規則、疑似重複標示                                                                           | ✅                                     |
-| P1A-RECOVERY      | staging 清理、過期處理、reconciliation                                                               | ✅                                     |
-| P1A-IMPORT-UI     | 拖曳/多選上傳、進度、匯入報告、重試                                                                  | ✅                                     |
-| P1A-EXPORT        | 可攜式匯出 v1（manifest、checksums.sha256、metadata、originals、normalized）                         | ✅                                     |
-| P1A-RESTORE       | 還原（驗證、ID mapping、衝突模式、重建、報告）+ CLI                                                  | ✅                                     |
-| P1A-INTEGRITY     | 完整性檢查 job 與狀態                                                                                | ✅                                     |
-| P1A-ENC           | 內建 age 加密匯出                                                                                    | 🚧 網頁加密下載（PR 24）；CLI（PR 25） |
+| ID                | 任務                                                                                                 | 狀態                                                      |
+| ----------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| P1A-AUTH          | Better Auth（email+password、無註冊、DB rate limit、session 管理）、`admin:create` CLI、登入/登出 UI | ✅                                                        |
+| P1A-FILES         | 不可變原始檔（內容定址、條件寫入、DB trigger）、SHA-256、下載原始檔（signed URL）                    | ✅                                                        |
+| P1A-IMPORT-API    | Import batch/item API、signed upload、complete、retry、cancel、狀態機                                | ✅                                                        |
+| P1A-IMPORT-WORKER | `import.process_item`：sniff、hash、dedupe、store、classify、extract、persist                        | ✅                                                        |
+| P1A-EXTRACT       | HTML / Claude Design / Markdown / TXT / PDF / Image 抽取；sections；語言偵測                         | ✅                                                        |
+| P1A-ZIP           | 安全 ZIP 讀取（限制、traversal、symlink、bomb）、分類 A/B/C/D、預覽檔衍生                            | ✅                                                        |
+| P1A-VERSION       | 版本比對規則、疑似重複標示                                                                           | ✅                                                        |
+| P1A-RECOVERY      | staging 清理、過期處理、reconciliation                                                               | ✅                                                        |
+| P1A-IMPORT-UI     | 拖曳/多選上傳、進度、匯入報告、重試                                                                  | ✅                                                        |
+| P1A-EXPORT        | 可攜式匯出 v1（manifest、checksums.sha256、metadata、originals、normalized）                         | ✅                                                        |
+| P1A-RESTORE       | 還原（驗證、ID mapping、衝突模式、重建、報告）+ CLI                                                  | ✅                                                        |
+| P1A-INTEGRITY     | 完整性檢查 job 與狀態                                                                                | ✅                                                        |
+| P1A-ENC           | 內建 age 加密匯出                                                                                    | ✅ 網頁加密下載（PR 24）；CLI 加密匯出與解密還原（PR 25） |
 
 **Exit Criteria**（Master Spec §22）：
 
