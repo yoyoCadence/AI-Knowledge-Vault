@@ -86,28 +86,36 @@ See `.env.example` for the full annotated list. Required in staging and producti
    ```
 4. Optional: add a lifecycle rule that deletes `ws/*/staging/` objects older than 3 days (a
    safety net behind the cleanup job).
-5. **Verify the bucket before first use.** Run the storage adapter suite against it, from a
-   checkout with `pnpm install` done. The staging bucket is the right target. The suite works
-   only under a fresh `vault-adapter-test-<id>/` prefix and deletes what it wrote.
+5. **Verify each bucket before first use**, from a checkout after `pnpm install`. This needs
+   no database. Run it for staging and for production: it works only under a fresh
+   `vault-adapter-test-<id>/` prefix, which it deletes afterwards.
 
    ```bash
    S3_TEST_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com \
    S3_TEST_BUCKET=vault-staging S3_TEST_REGION=auto \
    S3_TEST_ACCESS_KEY_ID=… S3_TEST_SECRET_ACCESS_KEY=… \
-   S3_TEST_CORS_ORIGIN=https://vault.example.com \
-   pnpm vitest run tests/integration/storage/s3-adapter.test.ts
+   S3_TEST_CORS_ORIGIN=https://staging.<your-domain> \
+   pnpm storage:verify
    ```
 
-   It checks:
-   - put, head, get, list (paged) and delete;
-   - that a conditional write (`If-None-Match`) refuses to overwrite, which immutable
-     originals depend on;
-   - that presigned uploads and downloads carry the exact bytes, with
-     `Content-Disposition`;
-   - with `S3_TEST_CORS_ORIGIN`, that the CORS rule lets the app's origin upload and no
-     other origin.
+   `S3_TEST_CORS_ORIGIN` is the app origin that this bucket's CORS rule allows (step 3).
+   A missing variable is an error, never a skipped check.
 
-   All 6 tests must pass.
+   All 7 tests must pass. They check:
+   - put, head, get, paged list and delete;
+   - **conditional writes:** a write with `If-None-Match` must refuse to overwrite. If it
+     doesn't, the immutability of originals cannot rely on the provider. Stop and decide
+     (SECURITY.md) before storing anything.
+   - presigned downloads (with `Content-Disposition`) and uploads carry the exact bytes;
+   - **presigned upload bounds:** an upload of another size or type is refused. If it isn't,
+     only the completion check enforces the declared size.
+   - **CORS:** the app's origin may PUT with `content-type`, and no other origin may.
+
+   Notes:
+   - A CORS change can take a minute to apply. Rerun if the CORS test fails right after an
+     edit.
+   - Only an interrupted run leaves objects behind. Delete the `vault-adapter-test-` prefix
+     by hand.
 
 ### 5.3 Domains
 

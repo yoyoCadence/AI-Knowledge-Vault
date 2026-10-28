@@ -7,8 +7,8 @@ _Last updated: 2026-10-28 by the implementing agent._
 **Phase 0, 1A and 1B are complete** (ROADMAP). The last PR, 26, lets the storage suite run
 against a real bucket.
 
-**Next, needs the owner:** verify R2 with that suite, using the one command in DEPLOYMENT.md
-§5.2, step 5. Then deploy (DEPLOYMENT.md), with the owner's domains, accounts and secrets.
+**Next, needs the owner:** verify R2 with `pnpm storage:verify`, as DEPLOYMENT.md §5.2,
+step 5 shows. Then deploy (DEPLOYMENT.md), with the owner's domains, accounts and secrets.
 Phase 2 (AI retrieval) has not started. Its design is in `docs/AI_RESEARCH.md`.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its

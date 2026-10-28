@@ -6,26 +6,58 @@ import { S3StorageAdapter, StorageObjectNotFoundError } from "@/infrastructure/s
 import { newId } from "@/lib/ids";
 
 /**
- * Runs against a real S3-compatible endpoint when S3_TEST_ENDPOINT is set. Never production.
+ * Runs against a real S3-compatible endpoint when S3_TEST_ENDPOINT is set. Never production
+ * data: every key is under a fresh prefix, removed afterwards.
  *
  * - **An emulator** (CI: a local `moto_server`, .github/workflows/ci.yml): the suite creates a
- *   bucket of its own, with dummy credentials.
- * - **A real bucket, such as Cloudflare R2** (DEPLOYMENT.md §5.2): also set `S3_TEST_BUCKET`,
- *   `S3_TEST_REGION` (`auto` for R2) and `S3_TEST_ACCESS_KEY_ID` / `S3_TEST_SECRET_ACCESS_KEY`
- *   (a token scoped to that bucket). The suite writes only under a fresh
- *   `vault-adapter-test-<id>/` prefix and deletes everything it wrote. With
- *   `S3_TEST_CORS_ORIGIN` (the app's origin) it also checks the bucket's CORS rule.
+ *   bucket of its own, with dummy credentials. Only on a local endpoint: elsewhere that would
+ *   create a bucket in someone's account.
+ * - **A real bucket, such as Cloudflare R2**: `pnpm storage:verify` (DEPLOYMENT.md §5.2, step
+ *   5), with `S3_TEST_BUCKET`, `S3_TEST_REGION` (`auto` for R2), `S3_TEST_ACCESS_KEY_ID` /
+ *   `S3_TEST_SECRET_ACCESS_KEY` (a token scoped to that bucket) and `S3_TEST_CORS_ORIGIN` (the
+ *   origin the bucket's CORS rule allows). It uses the app's URL style (virtual-hosted) unless
+ *   `S3_TEST_FORCE_PATH_STYLE=true`. Against a real provider it also checks that presigned
+ *   uploads are bound to their size and type, which an emulator does not enforce.
  */
-const endpoint = process.env.S3_TEST_ENDPOINT;
-const existingBucket = process.env.S3_TEST_BUCKET;
-const corsOrigin = process.env.S3_TEST_CORS_ORIGIN;
+const env = process.env;
+const endpoint = env.S3_TEST_ENDPOINT || undefined;
+const existingBucket = env.S3_TEST_BUCKET || undefined;
+const corsOrigin = env.S3_TEST_CORS_ORIGIN || undefined;
+
+if (env.S3_TEST_VERIFY === "1") {
+  const missing = [
+    "S3_TEST_ENDPOINT",
+    "S3_TEST_BUCKET",
+    "S3_TEST_REGION",
+    "S3_TEST_ACCESS_KEY_ID",
+    "S3_TEST_SECRET_ACCESS_KEY",
+    "S3_TEST_CORS_ORIGIN",
+  ].filter((name) => !env[name]);
+  if (missing.length > 0) {
+    throw new Error(
+      `storage:verify needs ${missing.join(", ")} (DEPLOYMENT.md §5.2, step 5); nothing was checked`,
+    );
+  }
+}
+const localEndpoint =
+  endpoint !== undefined &&
+  ["127.0.0.1", "localhost", "[::1]"].includes(new URL(endpoint).hostname);
+if (endpoint && !existingBucket && !localEndpoint) {
+  throw new Error(
+    "S3_TEST_BUCKET is required for a non-local endpoint: the suite creates buckets only on a local emulator",
+  );
+}
+
 const config = {
   endpoint: endpoint ?? "http://127.0.0.1:0",
-  region: process.env.S3_TEST_REGION ?? "us-east-1",
+  region: env.S3_TEST_REGION || "us-east-1",
   bucket: existingBucket ?? `vault-test-${newId().slice(-12)}`,
-  accessKeyId: process.env.S3_TEST_ACCESS_KEY_ID ?? "test",
-  secretAccessKey: process.env.S3_TEST_SECRET_ACCESS_KEY ?? "test",
-  forcePathStyle: true,
+  accessKeyId: env.S3_TEST_ACCESS_KEY_ID || "test",
+  secretAccessKey: env.S3_TEST_SECRET_ACCESS_KEY || "test",
+  // The emulator answers path-style only; a real bucket is checked as the app reaches it.
+  forcePathStyle: env.S3_TEST_FORCE_PATH_STYLE
+    ? env.S3_TEST_FORCE_PATH_STYLE === "true"
+    : !existingBucket,
 };
 /** Every key this run touches: a bucket shared with anything else is left as it was. */
 const prefix = `vault-adapter-test-${newId()}/`;
@@ -132,6 +164,31 @@ describe.skipIf(!endpoint)("S3StorageAdapter (S3-compatible endpoint)", () => {
     expect(get.headers.get("content-disposition")).toContain("attachment");
   });
 
+  it.skipIf(localEndpoint)("binds a presigned upload to its size and type", async () => {
+    const body = Buffer.from("twelve bytes");
+    const upload = await storage.createSignedUploadUrl(key("bound/obj"), {
+      contentLength: body.length,
+      contentType: "text/plain",
+      expiresInSeconds: 60,
+    });
+    // fetch sends the body's own length, so the provider sees a length other than the signed one.
+    const longer = await fetch(upload.url, {
+      method: "PUT",
+      headers: upload.headers,
+      body: Buffer.concat([body, Buffer.from("+more")]),
+    });
+    expect(longer.ok).toBe(false);
+    const otherType = await fetch(upload.url, {
+      method: "PUT",
+      headers: { "content-type": "text/html" },
+      body,
+    });
+    expect(otherType.ok).toBe(false);
+    expect(await storage.headObject(key("bound/obj"))).toBeNull();
+    const exact = await fetch(upload.url, { method: "PUT", headers: upload.headers, body });
+    expect(exact.status).toBe(200);
+  });
+
   it.skipIf(!corsOrigin)("lets the app's origin upload (CORS), and no other origin", async () => {
     const upload = await storage.createSignedUploadUrl(key("cors/obj"), {
       contentLength: 1,
@@ -150,6 +207,8 @@ describe.skipIf(!endpoint)("S3StorageAdapter (S3-compatible endpoint)", () => {
     const app = await preflight(corsOrigin!);
     expect(app.ok).toBe(true);
     expect(app.headers.get("access-control-allow-origin")).toBe(corsOrigin);
+    expect(app.headers.get("access-control-allow-methods") ?? "").toMatch(/\bPUT\b/i);
+    expect(app.headers.get("access-control-allow-headers") ?? "").toMatch(/content-type/i);
     // A browser passes a preflight only on a 2xx answer that allows the origin.
     const elsewhere = await preflight("https://elsewhere.example");
     const allowed =
