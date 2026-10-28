@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-28, after PR 25: encrypted backups from the CLI)
+## 1. Snapshot (2026-10-28, after PR 26: the storage suite against a real bucket)
 
 **Merged and tested**
 
@@ -907,6 +907,18 @@ conversations. Update it at the end of every PR.
       - interrupt a restore and an export, holding each on a table lock, and check that
         nothing is left.
 
+- **PR 26, the storage suite against a real bucket:**
+  - `tests/integration/storage/s3-adapter.test.ts` also runs against an existing bucket. Set
+    `S3_TEST_BUCKET`, `S3_TEST_REGION` and `S3_TEST_ACCESS_KEY_ID` /
+    `S3_TEST_SECRET_ACCESS_KEY`, as with an R2 token scoped to one bucket.
+  - Every key sits under a fresh `vault-adapter-test-<id>/` prefix, and `afterAll` deletes
+    them, checking that none remain.
+  - New tests: paged listing with a cursor, and an optional CORS preflight check
+    (`S3_TEST_CORS_ORIGIN`). The CORS check passes only on a 2xx answer that allows the
+    origin, as a browser requires.
+  - Checked locally against moto in both modes, with a CORS rule for the right origin and for
+    the wrong one. An object already in the bucket was left untouched.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -951,7 +963,9 @@ conversations. Update it at the end of every PR.
 - Decrypting with a passphrase uses typage's synchronous scrypt, which is fine for a CLI. Its
   decrypter refuses scrypt work factors above 2^20; age's default is 2^18.
 - HTML extraction can join adjacent inline labels without a space. This is cosmetic.
-- The S3 adapter has not been verified against real R2.
+- The S3 adapter has not been verified against real R2: that needs the owner's bucket and
+  token. The suite can now run against one (DEPLOYMENT.md §5.2, step 5). So far it is verified
+  against moto in CI, and locally in moto's existing-bucket mode with a CORS rule.
 
 ## 2. How to run
 
@@ -986,4 +1000,7 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 **Phase 1B is complete** (ROADMAP, PR 23), and so is P1A-ENC (PR 24 web, PR 25 CLI). One
 Phase 1A item remains, and it needs the owner:
 
-1. **Verify the S3 adapter against real R2.** This needs the owner's credentials.
+1. **Verify the S3 adapter against real R2.** This needs the owner's bucket and token. With
+   them, run the command in DEPLOYMENT.md §5.2, step 5; all 6 tests must pass. If the
+   conditional-write test fails, originals' immutability cannot rely on the provider. Stop and
+   decide (SECURITY.md) before storing anything there.

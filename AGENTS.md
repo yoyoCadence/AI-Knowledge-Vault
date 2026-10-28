@@ -81,7 +81,8 @@ DATABASE_URL_TEST=... pnpm test   # unit + integration (integration resets the *
 ```
 
 Optional: `S3_TEST_ENDPOINT=http://127.0.0.1:5055 pnpm test` runs the S3 adapter suite against a
-local `moto_server` (`pip install "moto[server]"`).
+local `moto_server` (`pip install "moto[server]"`). With `S3_TEST_BUCKET` and credentials it
+runs against a real bucket instead, such as R2 (DEPLOYMENT.md §5.2, step 5).
 
 ## 6. Language
 

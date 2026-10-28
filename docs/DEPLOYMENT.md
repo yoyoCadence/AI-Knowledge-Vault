@@ -86,6 +86,28 @@ See `.env.example` for the full annotated list. Required in staging and producti
    ```
 4. Optional: add a lifecycle rule that deletes `ws/*/staging/` objects older than 3 days (a
    safety net behind the cleanup job).
+5. **Verify the bucket before first use.** Run the storage adapter suite against it, from a
+   checkout with `pnpm install` done. The staging bucket is the right target. The suite works
+   only under a fresh `vault-adapter-test-<id>/` prefix and deletes what it wrote.
+
+   ```bash
+   S3_TEST_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com \
+   S3_TEST_BUCKET=vault-staging S3_TEST_REGION=auto \
+   S3_TEST_ACCESS_KEY_ID=… S3_TEST_SECRET_ACCESS_KEY=… \
+   S3_TEST_CORS_ORIGIN=https://vault.example.com \
+   pnpm vitest run tests/integration/storage/s3-adapter.test.ts
+   ```
+
+   It checks:
+   - put, head, get, list (paged) and delete;
+   - that a conditional write (`If-None-Match`) refuses to overwrite, which immutable
+     originals depend on;
+   - that presigned uploads and downloads carry the exact bytes, with
+     `Content-Disposition`;
+   - with `S3_TEST_CORS_ORIGIN`, that the CORS rule lets the app's origin upload and no
+     other origin.
+
+   All 6 tests must pass.
 
 ### 5.3 Domains
 
