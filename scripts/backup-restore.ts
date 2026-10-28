@@ -1,11 +1,17 @@
 /**
  * Restores a portable export into a workspace (BACKUP_RECOVERY §6).
  *
- *   pnpm backup:restore ./knowledge-vault-export.zip --workspace <slug> [--mode skip_existing|copy]
+ *   pnpm backup:restore <archive.zip | archive.zip.age> --workspace <slug>
+ *       [--mode skip_existing|copy] [--passphrase-env <VAR> | --identity-file <file>]
  *
- * Every checksum is verified before anything is written. Re-extraction of the restored
- * versions runs in the worker (`restore.reextract_version` jobs), so start the worker after.
+ * An age-encrypted backup (§4) is decrypted first, with the passphrase in the environment
+ * variable named (never on the command line) or the identities of an age identity file,
+ * into a private temporary file (TMPDIR needs room for the whole archive). It is removed
+ * when the restore ends, and on Ctrl-C, SIGTERM or SIGHUP. Every checksum is verified before
+ * anything is written. Re-extraction of the restored versions runs in the worker
+ * (`restore.reextract_version` jobs), so start the worker after.
  */
+import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { and, eq } from "drizzle-orm";
 import { getEnv } from "@/infrastructure/config/env";
@@ -20,20 +26,43 @@ import {
 import { getStorage } from "@/infrastructure/storage";
 import { isAppError } from "@/lib/errors";
 import { newId } from "@/lib/ids";
-import { restoreArchive, restoreLimitsFromEnv } from "@/modules/backup";
+import {
+  ageFormatOfFile,
+  cleanUpOnInterrupt,
+  decryptToTempFile,
+  identitiesFrom,
+  restoreArchive,
+  restoreLimitsFromEnv,
+  secretFromEnv,
+  type DecryptedFile,
+  type DecryptionSecret,
+} from "@/modules/backup";
 import { sha256OfFile } from "@/modules/files/hash";
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
-    options: { workspace: { type: "string" }, mode: { type: "string" } },
+    options: {
+      workspace: { type: "string" },
+      mode: { type: "string" },
+      "passphrase-env": { type: "string" },
+      "identity-file": { type: "string" },
+    },
   });
   const file = positionals[0];
   if (!file || !values.workspace) {
     throw new Error(
-      "usage: backup:restore <archive.zip> --workspace <slug> [--mode skip_existing|copy]",
+      "usage: backup:restore <archive.zip | archive.zip.age> --workspace <slug> [--mode skip_existing|copy] [--passphrase-env <VAR> | --identity-file <file>]",
     );
   }
+  cleanUpOnInterrupt();
+  const format = await ageFormatOfFile(file);
+  if (format === "armored") {
+    throw new Error(
+      `${file} is ASCII-armored: decrypt it with age -d first, then restore the .zip`,
+    );
+  }
+  const secret = await secretFrom(values);
   const mode = (values.mode ?? "skip_existing") as RestoreMode;
   if (!RESTORE_MODES.includes(mode))
     throw new Error(`--mode must be one of ${RESTORE_MODES.join(", ")}`);
@@ -50,12 +79,52 @@ async function main(): Promise<void> {
     .from(workspaceMembers)
     .where(and(eq(workspaceMembers.workspaceId, workspace.id), eq(workspaceMembers.role, "owner")));
 
+  const encrypted = format !== null;
+  if (encrypted && !secret) {
+    throw new Error(
+      `${file} is encrypted with age: give --passphrase-env <VAR> or --identity-file <file>`,
+    );
+  }
+  if (!encrypted && secret) throw new Error(`${file} is not encrypted; drop the secret`);
+  const decrypted: DecryptedFile | null = secret ? await decryptToTempFile(file, secret) : null;
+  try {
+    await restore(decrypted?.path ?? file, workspace.id, owner?.userId ?? null, mode, env);
+  } finally {
+    await decrypted?.dispose();
+  }
+}
+
+async function secretFrom(values: {
+  "passphrase-env"?: string;
+  "identity-file"?: string;
+}): Promise<DecryptionSecret | null> {
+  if (values["passphrase-env"] !== undefined && values["identity-file"] !== undefined) {
+    throw new Error("use --passphrase-env or --identity-file, not both");
+  }
+  if (values["passphrase-env"] !== undefined) {
+    return { passphrase: secretFromEnv(values["passphrase-env"]) };
+  }
+  if (values["identity-file"] !== undefined) {
+    return { identities: identitiesFrom(await readFile(values["identity-file"], "utf8")) };
+  }
+  return null;
+}
+
+/** Restores the plain archive `file`, recording the run (its SHA-256 is the plaintext's). */
+async function restore(
+  file: string,
+  workspaceId: string,
+  userId: string | null,
+  mode: RestoreMode,
+  env: ReturnType<typeof getEnv>,
+): Promise<void> {
+  const db = getDb();
   const restoreId = newId();
   const { sha256 } = await sha256OfFile(file);
   await db.insert(restoreRuns).values({
     id: restoreId,
-    workspaceId: workspace.id,
-    requestedBy: owner?.userId ?? null,
+    workspaceId,
+    requestedBy: userId,
     status: "running",
     sourceSha256: sha256,
     mode,
@@ -63,8 +132,8 @@ async function main(): Promise<void> {
   try {
     const report = await restoreArchive(db, getStorage(), {
       archivePath: file,
-      workspaceId: workspace.id,
-      userId: owner?.userId ?? null,
+      workspaceId,
+      userId,
       mode,
       restoreId,
       limits: restoreLimitsFromEnv(env),

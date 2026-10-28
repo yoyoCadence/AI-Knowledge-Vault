@@ -14,10 +14,11 @@ import type { Actor } from "@/modules/auth";
 import { sha256OfFile } from "@/modules/files/hash";
 import { enqueueJob, type JobContext, type JobDefinition } from "@/modules/jobs";
 import { encryptVerified, type EncryptionOptions } from "./encryption";
-import { EXPORT_FORMAT, EXPORT_FORMAT_VERSION } from "./format";
+import { EXPORT_FORMAT_VERSION } from "./format";
 import { writeExport } from "./export";
 import { eachRowIndependently } from "./each-independently";
 import { cleanupRestoreUploads } from "./restore-runs";
+import { manifestSummaryOf, sidecarOf } from "./sidecar";
 
 /**
  * Export runs (BACKUP_RECOVERY §3): request → `export.create` job → archive in storage under
@@ -202,21 +203,13 @@ export async function openEncryptedExport(
   };
 }
 
-/**
- * The sidecar of an encrypted export (BACKUP_RECOVERY §4): what the archive holds, readable
- * without decrypting it, so a set of backups can be inventoried. It describes the plaintext
- * archive (its SHA-256 checks the decrypted copy): file name, size, format, when and by which
- * app version it was made, and its counts. It holds nothing secret, and not the workspace's
- * name, which sits beside the backup in whatever cloud it is kept.
- */
+/** The sidecar of an encrypted export (`sidecarOf`), for a completed run. */
 export async function exportSidecar(db: DbExecutor, actor: Actor, exportId: string) {
   const run = await downloadableRun(db, actor, exportId);
   return {
     filename: `${run.filename}.age.manifest.json`,
-    sidecar: {
-      format: `${EXPORT_FORMAT}-sidecar`,
-      sidecarVersion: 1,
-      encrypted: { format: "age", filename: `${run.filename}.age` },
+    sidecar: sidecarOf({
+      encryptedFilename: `${run.filename}.age`,
       archive: {
         filename: run.filename,
         byteSize: run.byteSize,
@@ -224,7 +217,7 @@ export async function exportSidecar(db: DbExecutor, actor: Actor, exportId: stri
         formatVersion: run.formatVersion,
       },
       manifest: run.manifestSummary,
-    },
+    }),
   };
 }
 
@@ -269,12 +262,7 @@ export async function runExport(ctx: JobContext): Promise<Record<string, unknown
         filename,
         byteSize: size,
         sha256,
-        manifestSummary: {
-          createdAt: manifest.createdAt,
-          appVersion: manifest.appVersion,
-          dbMigration: manifest.dbMigration,
-          counts: manifest.counts,
-        },
+        manifestSummary: manifestSummaryOf(manifest),
         completedAt,
         expiresAt: new Date(completedAt.getTime() + EXPORT_RETENTION_DAYS * 86_400_000),
       })

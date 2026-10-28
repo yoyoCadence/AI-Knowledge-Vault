@@ -69,7 +69,8 @@ Properties:
 ## 3. Export process
 
 - Triggered by `POST /api/exports`, the Import & Backup page, or the CLI
-  `pnpm backup:export --workspace <slug> --out <file>` (`node dist/backup-export.mjs` in images).
+  `pnpm backup:export --workspace <slug> --out <file>` (`node dist/backup-export.mjs` in images;
+  encrypted with `--passphrase-env` or `--recipient`, §4).
 - Job `export.create`:
   1. read rows (workspace-scoped)
   2. stream originals from storage into the ZIP while hashing
@@ -104,10 +105,31 @@ Properties:
     after decrypting. It has no workspace name; the file names carry the workspace slug
     (rename the files if that matters where they are kept).
 
+- **From the CLI (PR 25):** `pnpm backup:export` encrypts while it writes, so the plain
+  archive never touches the disk, and writes the same sidecar beside the file:
+  ```bash
+  # a passphrase, read into a subshell's environment (never on the command line, which `ps` shows)
+  ( read -rs VAULT_BACKUP_PASSPHRASE && export VAULT_BACKUP_PASSPHRASE &&
+    pnpm backup:export --workspace <slug> --out backup.zip.age --passphrase-env VAULT_BACKUP_PASSPHRASE )
+  pnpm backup:export --workspace <slug> --out backup.zip.age --recipient age1… [--recipient age1…]
+  pnpm backup:export --workspace <slug> --out backup.zip.age --recipients-file recipients.txt
+  ```
+  - `--passphrase-env` takes the variable's **name**. Something that is not a name may be the
+    passphrase typed by mistake, so it is refused without being echoed.
+  - The CLI deletes the variable from its own environment, so the processes it starts do not
+    inherit it. That protects less than it sounds:
+    - the shell that set the variable keeps it, so set it in a subshell, as above;
+    - tsx's parent process keeps it too;
+    - so does `/proc/<pid>/environ`, which only the same user (and root) can read.
+  - The same rules as the web apply: printable ASCII, 12–1,024 characters, X25519 recipients.
+  - Neither file may exist yet: `--out` never overwrites. Both are 0600 and are flushed to
+    disk before "Exported" is printed. A failed or interrupted export (Ctrl-C, SIGTERM,
+    SIGHUP) removes what it created.
 - **Decrypting** needs no app: `age -d -o export.zip export.zip.age` (asks for the
-  passphrase), or `age -d -i key.txt …` for a recipient's identity. Restore takes the
-  decrypted `.zip`; an `.age` file is refused with this command. The CLI's built-in
-  encryption and decryption (`pnpm backup:export`, `pnpm backup:restore`) are PR 25.
+  passphrase), or `age -d -i key.txt …` for a recipient's identity. Or let the CLI do it
+  (`pnpm backup:restore backup.zip.age … --passphrase-env NAME | --identity-file key.txt`,
+  §6). The web restore takes the decrypted `.zip`; an `.age` file is refused there with the
+  command above.
 - The plain download stays for owners who encrypt elsewhere:
   ```bash
   age --passphrase -o export.zip.age export.zip      # or: age -r age1… -o export.zip.age export.zip
@@ -259,15 +281,37 @@ Job `restore.run`. Steps, each recorded in `restore_runs.report`:
 
 ```bash
 pnpm backup:restore ./knowledge-vault-export-….zip --workspace <slug> [--mode skip_existing|copy]
+pnpm backup:restore ./backup.zip.age --workspace <slug> --passphrase-env VAULT_BACKUP_PASSPHRASE
+pnpm backup:restore ./backup.zip.age --workspace <slug> --identity-file key.txt
 # production image: node dist/backup-restore.mjs …
 ```
+
+An age file (§4) is decrypted first, into a 0600 file in a fresh 0700 temporary directory:
+
+- **TMPDIR needs free space for the whole archive.** `/tmp` is often a RAM disk; point
+  `TMPDIR` elsewhere for a large backup. A full or unwritable disk is reported as such,
+  not as a damaged backup.
+- The directory is removed when the restore ends: normally, on an error, or on Ctrl-C,
+  SIGTERM or SIGHUP. The restore's own extraction directory is removed in the same cases.
+  Only SIGKILL, a power cut or a crash can leave either behind, as `vault-restore-*` in
+  TMPDIR.
+
+- A wrong passphrase or identity is refused before anything is written (`DECRYPTION_FAILED`).
+- So is a damaged or truncated file: age authenticates every chunk and marks the last.
+- An encrypted file without a secret, or a secret with a plain file, is refused.
+- Identity files are `age-keygen`'s: X25519 identities only. ASCII-armored files are not
+  read; decrypt those with `age -d` first.
+
+The restore run records the SHA-256 of the decrypted archive, the sidecar's
+`archive.sha256`.
 
 ### Clean-environment recovery runbook (Scenario C)
 
 1. Provision an empty Postgres and an empty bucket (or local storage).
 2. Set the env vars and run `pnpm db:migrate`.
 3. Run `pnpm admin:create`, which creates the admin and their workspace.
-4. Run `pnpm backup:restore <archive> --workspace <slug>`.
+4. Run `pnpm backup:restore <archive> --workspace <slug>` (with `--passphrase-env NAME` or
+   `--identity-file key.txt` for an `.age` backup).
 5. Start `web` and `worker`, and wait for the re-extraction jobs (visible in Import & Backup).
 6. Run the integrity check (Import & Backup → 立即檢查, or `POST /api/integrity-checks`) and confirm every file asset is `stored`
    and verified.

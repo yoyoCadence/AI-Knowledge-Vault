@@ -167,13 +167,21 @@ export function encryptVerified(
       },
     }),
   );
+  return encryptStream(verified, options);
+}
+
+/** `plaintext` encrypted with age as it streams, with the options' passphrase or recipients. */
+export function encryptStream(
+  plaintext: ReadableStream<Uint8Array>,
+  options: EncryptionOptions,
+): Promise<ReadableStreamWithSize> {
   const encrypter = new Encrypter();
   if (options.kind === "passphrase") {
     encrypter.addRecipient(new PassphraseRecipient(options.passphrase));
   } else {
     for (const recipient of options.recipients) encrypter.addRecipient(recipient);
   }
-  return encrypter.encrypt(verified);
+  return encrypter.encrypt(plaintext);
 }
 
 const AGE_MAGIC = "age-encryption.org/v1\n";
@@ -181,6 +189,13 @@ const AGE_ARMOR = "-----BEGIN AGE ENCRYPTED FILE-----";
 
 /** Whether `head` (a file's first bytes) starts an age file, binary or ASCII-armored. */
 export function isAgeEncrypted(head: Uint8Array): boolean {
+  return ageFormatOf(head) !== null;
+}
+
+/** Which kind of age file `head` starts, if any. */
+export function ageFormatOf(head: Uint8Array): "binary" | "armored" | null {
   const text = Buffer.from(head.subarray(0, AGE_ARMOR.length)).toString("latin1");
-  return text.startsWith(AGE_MAGIC) || text.startsWith(AGE_ARMOR);
+  if (text.startsWith(AGE_MAGIC)) return "binary";
+  if (text.startsWith(AGE_ARMOR)) return "armored";
+  return null;
 }

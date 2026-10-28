@@ -246,6 +246,18 @@ nofollow`, are never cached, and are rate limited per client address
   runs on the thread pool, one at a time, at most four waiting (429 past that), so
   encrypted downloads cannot stall the server or exhaust its memory. The vault holds no
   private key; a lost passphrase cannot be recovered.
+- **Backup CLI passphrases:**
+  - The CLIs take a passphrase only from an environment variable the operator names
+    (`--passphrase-env`), never from argv, which `ps` shows to every user.
+  - They delete the variable from their own environment, so their children do not inherit
+    it. The shell that set it keeps it, so the documented command sets it in a subshell
+    (BACKUP_RECOVERY §4).
+  - A `--passphrase-env` value that is not a variable name is refused without being echoed.
+- **Backup CLI files:**
+  - Encrypted exports and their sidecars are created 0600 and never overwrite a file.
+  - A decrypted archive exists only as a 0600 file in a fresh 0700 temporary directory, for
+    the length of the restore. It is removed on errors and on SIGINT, SIGTERM or SIGHUP;
+    only SIGKILL or a crash can leave it.
 
 ## 11. Input validation and injection
 

@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,6 +19,7 @@ import { getStorage } from "@/infrastructure/storage";
 import { newId } from "@/lib/ids";
 import { requestExport, restoreArchive, restoreLimitsFromEnv } from "@/modules/backup";
 import { htmlDocument } from "@tests/fixtures/builders";
+import { ageCli, ageDecryptWithIdentity, ageDecryptWithPassphrase } from "../helpers/age";
 import { createTestAdmin, signInOk } from "../helpers/auth";
 import { closeTestDb, testDb } from "../helpers/db";
 import { drainJobs, newBatch, uploadFile } from "../helpers/imports";
@@ -92,50 +92,6 @@ function encrypted(
 const form = (fields: Record<string, string>) => new URLSearchParams(fields).toString();
 const bytesOf = async (response: Response) => new Uint8Array(await response.arrayBuffer());
 
-/** The reference age CLI, where it is installed; CI installs it (interoperability, ADR-022). */
-function ageCli(): string | null {
-  let age: string | null = null;
-  try {
-    age = execFileSync("sh", ["-c", "command -v age"]).toString().trim() || null;
-  } catch {
-    age = null;
-  }
-  if (!age && process.env.CI) {
-    throw new Error("the age CLI must be installed in CI (.github/workflows/ci.yml)");
-  }
-  if (!age) console.warn("age CLI not installed: interoperability not checked");
-  return age;
-}
-
-/**
- * Types the passphrase at `age -d`'s prompt, as a person would: age reads it only from a
- * terminal, so this runs age on a pseudo-terminal. The passphrase goes through the
- * environment, not the command line.
- */
-const TYPE_AT_PROMPT = String.raw`
-import os, pty, sys
-age, output, encrypted = sys.argv[1:4]
-pid, fd = pty.fork()
-if pid == 0:
-    os.execv(age, [age, "-d", "-o", output, encrypted])
-def read():
-    try:
-        return os.read(fd, 1024)
-    except OSError:
-        return b""
-seen = b""
-while b"passphrase" not in seen.lower():
-    chunk = read()
-    if not chunk:
-        break
-    seen += chunk
-os.write(fd, os.environ["AGE_TEST_PASSPHRASE"].encode() + b"\n")
-while read():
-    pass
-_, status = os.waitpid(pid, 0)
-sys.exit(os.waitstatus_to_exitcode(status))
-`;
-
 describe("POST /api/exports/:id/encrypted (ADR-022)", () => {
   let owner: Owner;
   let run: Awaited<ReturnType<typeof exported>>["run"];
@@ -180,15 +136,8 @@ describe("POST /api/exports/:id/encrypted (ADR-022)", () => {
     const age = ageCli();
     if (!age) return;
     const input = path.join(dir, "by-passphrase.zip.age");
-    const output = path.join(dir, "by-passphrase.zip");
-    const script = path.join(dir, "type-at-prompt.py");
     await writeFile(input, body);
-    await writeFile(script, TYPE_AT_PROMPT);
-    execFileSync("python3", ["-I", script, age, output, input], {
-      env: { ...process.env, AGE_TEST_PASSPHRASE: PASSPHRASE },
-      timeout: 60_000,
-    });
-    expect(execFileSync("sha256sum", [output]).toString().split(" ")[0]).toBe(run.sha256);
+    expect(await ageDecryptWithPassphrase(age, dir, input, PASSPHRASE)).toBe(run.sha256);
   });
 
   it("encrypts to age recipients, from JSON too, and the age CLI decrypts it", async () => {
@@ -209,11 +158,9 @@ describe("POST /api/exports/:id/encrypted (ADR-022)", () => {
     if (!age) return;
     const input = path.join(dir, "export.zip.age");
     const key = path.join(dir, "key.txt");
-    const output = path.join(dir, "export.zip");
     await writeFile(input, body);
     await writeFile(key, `${identity}\n`, { mode: 0o600 });
-    execFileSync(age, ["-d", "-i", key, "-o", output, input]);
-    expect(execFileSync("sha256sum", [output]).toString().split(" ")[0]).toBe(run.sha256);
+    expect(await ageDecryptWithIdentity(age, dir, input, key)).toBe(run.sha256);
   });
 
   it("refuses what is not a usable choice, and anyone but the workspace's exporters", async () => {

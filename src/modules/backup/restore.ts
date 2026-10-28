@@ -33,6 +33,7 @@ import {
   normalizeCollectionName,
 } from "@/modules/collections";
 import { SafeZip, ZipRejectedError, type ZipLimits } from "@/modules/extraction";
+import { removeIfInterrupted } from "./interrupt-cleanup";
 import { isAgeEncrypted } from "./encryption";
 import { storeOriginal } from "@/modules/files/originals";
 import { deterministicId, saveExtraction } from "@/modules/imports/derive";
@@ -603,6 +604,7 @@ export async function restoreArchive(
     throw error;
   }
   const tmp = await mkdtemp(path.join(tmpdir(), "vault-restore-"));
+  const releaseTmp = removeIfInterrupted(tmp);
   try {
     const archive = await verifyArchive(zip, signal).catch((error: unknown) => {
       throw beforeAnyWrite(error);
@@ -1556,5 +1558,6 @@ export async function restoreArchive(
   } finally {
     zip.close();
     await rm(tmp, { recursive: true, force: true });
+    releaseTmp();
   }
 }
