@@ -1,6 +1,7 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export const E2E_PORT = 3100;
 export const E2E_WORKER_HEALTH_PORT = 3191;

@@ -59,7 +59,7 @@ export default async function ImportPage() {
         {batches.length === 0 ? (
           <p className="text-muted-foreground text-sm">{t("import.recentEmpty")}</p>
         ) : (
-          <ul className="divide-border border-border bg-surface divide-y rounded-lg border text-sm">
+          <ul className="surface-panel divide-border divide-y text-sm">
             {batches.map((batch) => (
               <li
                 key={batch.id}

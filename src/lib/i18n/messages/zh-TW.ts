@@ -20,6 +20,9 @@ export const zhTW = {
   "theme.light": "淺色",
   "theme.dark": "深色",
   "theme.system": "跟隨系統",
+  "skin.toggle": "切換介面風格",
+  "skin.archive": "典藏室",
+  "skin.plain": "簡潔",
 
   "future.badge": "尚未提供",
   "future.title": "此功能尚在規劃中",

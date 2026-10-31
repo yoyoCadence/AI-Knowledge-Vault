@@ -74,7 +74,7 @@ export function SessionsPanel({ sessions }: { sessions: SessionRow[] }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <ul className="divide-border border-border bg-surface divide-y rounded-lg border">
+      <ul className="surface-panel divide-border divide-y">
         {sessions.map((session) => (
           <li key={session.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
             <Monitor aria-hidden className="text-muted-foreground size-4" />

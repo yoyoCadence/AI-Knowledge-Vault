@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120"><defs>
+  <filter id="ink" x="-10%" y="-10%" width="120%" height="120%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" result="noise"/>
+    <feColorMatrix in="noise" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -2 2.05" result="holes"/>
+    <feComposite in="SourceGraphic" in2="holes" operator="in" result="speckled"/>
+    <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="2" seed="3" result="warp"/>
+    <feDisplacementMap in="speckled" in2="warp" scale="2.5" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+  <path id="ring" d="M60 60 m-40 0 a40 40 0 1 1 80 0 a40 40 0 1 1 -80 0"/>
+</defs>
+<g transform="rotate(-9 60 60)" filter="url(#ink)" opacity=".9">
+  <g fill="none" stroke="#d9826b">
+    <circle cx="60" cy="60" r="55" stroke-width="4"/>
+    <circle cx="60" cy="60" r="49" stroke-width="1.2"/>
+    <circle cx="60" cy="60" r="30" stroke-width="1.2"/>
+    <path d="M60 49 C53 44.5 45 44.5 39 46.5 V69 C45 67 53 67 60 71.5 C67 67 75 67 81 69 V46.5 C75 44.5 67 44.5 60 49 Z M60 49 V71.5" stroke-width="2.2" stroke-linejoin="round"/>
+    <path d="M43.5 52 C48 51 52.5 51.5 56 53 M43.5 57 C48 56 52.5 56.5 56 58 M43.5 62 C48 61 52.5 61.5 56 63 M64 53 C67.5 51.5 72 51 76.5 52 M64 58 C67.5 56.5 72 56 76.5 57 M64 63 C67.5 61.5 72 61 76.5 62" stroke-width="1.2" stroke-linecap="round"/>
+  </g>
+  <path d="M60 34.5 l1.6 3.6 3.9 .4 -2.9 2.6 .9 3.8 -3.5 -2 -3.5 2 .9 -3.8 -2.9 -2.6 3.9 -.4Z" fill="#d9826b"/>
+  <text font-family="Georgia, 'Times New Roman', serif" font-size="8.6" letter-spacing="1.6" fill="#d9826b"><textPath href="#ring" textLength="246">AI KNOWLEDGE VAULT · ARCHIVE ·</textPath></text>
+</g></svg>

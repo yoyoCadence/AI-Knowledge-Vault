@@ -28,7 +28,7 @@ export function FutureFeature({
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         <p className="text-muted-foreground text-sm leading-relaxed">{t("future.body")}</p>
       </header>
-      <div className="border-border bg-surface rounded-lg border p-5">
+      <div className="surface-panel p-5">
         <p className="text-sm">
           <span className="font-medium">{t("future.phase")}：</span>
           {phase}

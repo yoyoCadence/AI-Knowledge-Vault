@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getCurrentActor } from "@/app/_lib/session";
 import { LoginForm } from "@/components/auth/login-form";
+import { SkinToggle } from "@/components/layout/skin-toggle";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { t } from "@/lib/i18n";
 
@@ -16,11 +17,17 @@ export default async function LoginPage({
   const { next } = await searchParams;
 
   return (
-    <main className="flex min-h-dvh items-center justify-center px-4 py-10">
-      <div className="absolute top-4 right-4">
+    <main className="relative flex min-h-dvh items-center justify-center px-4 py-10">
+      <div className="absolute top-4 right-4 flex">
+        <SkinToggle />
         <ThemeToggle />
       </div>
-      <div className="border-border bg-surface w-full max-w-sm rounded-xl border p-8 shadow-sm">
+      {/* The archive skin's shelf (docs/THEME.md); before the card, so the card stays on top. */}
+      <div aria-hidden data-slot="scene" className="absolute inset-x-0 bottom-0 hidden" />
+      <div
+        data-slot="login-card"
+        className="border-border bg-surface w-full max-w-sm rounded-xl border p-8 shadow-sm"
+      >
         <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
           {t("app.name")}
         </p>

@@ -29,6 +29,7 @@ export function LibrarySummary({
     <section
       aria-label={t("library.summary.title")}
       data-testid="library-summary"
+      data-slot="ledger"
       className="border-border flex min-w-0 flex-col gap-2 rounded-lg border p-4 text-sm"
     >
       <p className="flex flex-wrap gap-x-4 gap-y-1">

@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 import { ThemeProvider } from "@/components/layout/theme-provider";
 import { t } from "@/lib/i18n";
+import { SKIN_COOKIE, skinOf } from "@/lib/skin";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,9 +20,11 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // The skin is chosen per browser (docs/THEME.md); reading it here avoids a flash of the other.
+  const skin = skinOf((await cookies()).get(SKIN_COOKIE)?.value);
   return (
-    <html lang="zh-Hant-TW" suppressHydrationWarning>
+    <html lang="zh-Hant-TW" data-skin={skin} suppressHydrationWarning>
       <body>
         <ThemeProvider>{children}</ThemeProvider>
       </body>

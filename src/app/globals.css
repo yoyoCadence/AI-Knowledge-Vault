@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Skins (docs/THEME.md): decoration chosen by <html data-skin>, over the tokens below. */
+@import "./_skins/archive/archive.css";
 
 /* Class-based dark mode driven by next-themes (`<html class="dark">`). */
 @custom-variant dark (&:where(.dark, .dark *));
@@ -99,5 +101,14 @@
       animation-duration: 0.01ms !important;
       transition-duration: 0.01ms !important;
     }
+  }
+}
+
+@layer components {
+  /* A panel of content (lists, settings boxes); skins dress it, utilities still override it. */
+  .surface-panel {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background-color: var(--color-surface);
   }
 }

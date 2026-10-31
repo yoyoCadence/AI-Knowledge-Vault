@@ -295,7 +295,7 @@ export function ExportPanel({ initial }: { initial: ExportView[] }) {
       {runs.length === 0 ? (
         <p className="text-muted-foreground text-sm">{t("backup.empty")}</p>
       ) : (
-        <ul className="divide-border border-border bg-surface divide-y rounded-lg border text-sm">
+        <ul className="surface-panel divide-border divide-y text-sm">
           {runs.map((run) => {
             const counts = run.summary?.counts;
             const expired = run.status === "completed" && !run.downloadable;

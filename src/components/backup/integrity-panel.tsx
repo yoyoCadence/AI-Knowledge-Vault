@@ -101,10 +101,7 @@ export function IntegrityPanel({
       {check === null ? (
         <p className="text-muted-foreground text-sm">{t("integrity.never")}</p>
       ) : (
-        <div
-          className="border-border bg-surface rounded-lg border px-4 py-3 text-sm"
-          data-testid="integrity-result"
-        >
+        <div className="surface-panel px-4 py-3 text-sm" data-testid="integrity-result">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>
               {check.completedAt

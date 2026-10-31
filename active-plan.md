@@ -1,11 +1,12 @@
 # Active Plan
 
-_Last updated: 2026-10-28 by the implementing agent._
+_Last updated: 2026-10-31 by the implementing agent._
 
 ## Current focus
 
-**Phase 0, 1A and 1B are complete** (ROADMAP). The last PR, 26, lets the storage suite run
-against a real bucket.
+**Phase 0, 1A and 1B are complete** (ROADMAP). PR 26 lets the storage suite run against a
+real bucket. The last PR, 27, makes development work on Windows and adds the "archive" skin
+(docs/THEME.md).
 
 **Next, needs the owner:** verify R2 with `pnpm storage:verify`, as DEPLOYMENT.md §5.2,
 step 5 shows. Then deploy (DEPLOYMENT.md), with the owner's domains, accounts and secrets.
@@ -63,6 +64,8 @@ findings handled. If the review bot is unavailable, run an independent review fi
    - ✅ library statistics (PR 22)
    - ✅ library list layout (PR 23)
 8. ✅ P1A-ENC: encrypted export downloads (PR 24); the CLI (PR 25).
+9. ✅ Storage suite against a real bucket (PR 26).
+10. ✅ Windows development and the archive skin, P1B-SKIN (PR 27).
 
 ## Open questions for the owner
 

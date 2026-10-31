@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 /**
@@ -7,7 +8,7 @@ import { defineConfig } from "vitest/config";
  * setup: it needs no database, and it resets none. `S3_TEST_VERIFY` makes a missing variable
  * an error, so a skipped run is never mistaken for a verified one.
  */
-const root = path.dirname(new URL(import.meta.url).pathname);
+const root = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   resolve: {

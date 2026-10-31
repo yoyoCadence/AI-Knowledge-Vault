@@ -318,7 +318,7 @@ export function CollectionManager({
     <div className="flex flex-col gap-6">
       {canEdit ? <NewCollection rows={collections} /> : null}
       {collections.length > 0 ? (
-        <ul className="divide-border border-border bg-surface divide-y rounded-lg border">
+        <ul className="surface-panel divide-border divide-y">
           {collections.map((row) => (
             <CollectionItem key={row.id} row={row} rows={collections} canEdit={canEdit} />
           ))}

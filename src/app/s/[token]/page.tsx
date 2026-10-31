@@ -198,6 +198,8 @@ export default async function SharedArtifactPage({
       <footer className="text-muted-foreground border-border border-t pt-4 text-xs">
         {t("share.public.notice")} · {t("app.name")}
       </footer>
+      {/* Decoration of the archive skin (docs/THEME.md); nothing in the plain one. */}
+      <div aria-hidden data-slot="scene" className="hidden" />
     </main>
   );
 }
