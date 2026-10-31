@@ -10,15 +10,11 @@
 4. Decisions with rationale are in `docs/DECISIONS.md` (ADRs). Do not silently reverse one; add a
    new ADR instead.
 
-<!-- BEGIN:nextjs-agent-rules -->
-
 ## Next.js: this is NOT the Next.js you know
 
 This repo uses Next.js 16 (App Router). APIs and conventions differ from older training data:
 `proxy.ts` replaced `middleware.ts`, and request APIs are async. Read the version-matched docs in
 `node_modules/next/dist/docs/` before writing Next.js code.
-
-<!-- END:nextjs-agent-rules -->
 
 ## 1. Non-negotiable product rules (docs/PRODUCT_SPEC.md §1.3)
 

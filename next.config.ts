@@ -4,6 +4,10 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   reactStrictMode: true,
+  // `next dev` would otherwise write its own Next.js rules into AGENTS.md, whose Next.js section is
+  // maintained by hand (without the `nextjs-agent-rules` markers, which `next dev` would rewrite or,
+  // with this off, delete).
+  agentRules: false,
   // Native / Node-only packages are loaded at runtime instead of bundled.
   serverExternalPackages: ["sharp", "pg", "pino", "yauzl", "yazl", "unpdf"],
   async headers() {
