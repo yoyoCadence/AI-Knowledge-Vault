@@ -4,13 +4,12 @@ _Last updated: 2026-10-28 by the implementing agent._
 
 ## Current focus
 
-**PR 25 (this branch): P1A-ENC CLI.** `pnpm backup:export` encrypts as it writes
-(`--passphrase-env`, `--recipient`, `--recipients-file`) and writes the sidecar.
-`pnpm backup:restore` decrypts `.age` backups (`--passphrase-env`, `--identity-file`) into a
-private temporary file and restores them. ADR-022 covers both.
+**Phase 0, 1A and 1B are complete** (ROADMAP). The last PR, 26, lets the storage suite run
+against a real bucket.
 
-**Next:** verify the S3 adapter against real R2. This needs the owner's credentials;
-`docs/HANDOFF.md` §4 has the details.
+**Next, needs the owner:** verify R2 with `pnpm storage:verify`, as DEPLOYMENT.md §5.2,
+step 5 shows. Then deploy (DEPLOYMENT.md), with the owner's domains, accounts and secrets.
+Phase 2 (AI retrieval) has not started. Its design is in `docs/AI_RESEARCH.md`.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
 findings handled. If the review bot is unavailable, run an independent review first.

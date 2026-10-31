@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-28, after PR 25: encrypted backups from the CLI)
+## 1. Snapshot (2026-10-28, after PR 26: the storage suite against a real bucket)
 
 **Merged and tested**
 
@@ -907,6 +907,32 @@ conversations. Update it at the end of every PR.
       - interrupt a restore and an export, holding each on a table lock, and check that
         nothing is left.
 
+- **PR 26, the storage suite against a real bucket:**
+  - `pnpm storage:verify` (`vitest.storage.config.ts`) runs only
+    `tests/integration/storage/s3-adapter.test.ts`, without the integration project's
+    database setup (that setup resets `DATABASE_URL_TEST`).
+  - It requires `S3_TEST_ENDPOINT`, `S3_TEST_BUCKET`, `S3_TEST_REGION`, the token pair and
+    `S3_TEST_CORS_ORIGIN`. A missing one is an error, never a green run of skips.
+  - Every key sits under a fresh `vault-adapter-test-<id>/` prefix, and `afterAll` deletes
+    them, checking that none remain.
+  - The suite creates a bucket only on a local emulator. A real endpoint without
+    `S3_TEST_BUCKET` is refused.
+  - A real bucket is reached the way the app reaches it: virtual-hosted, unless
+    `S3_TEST_FORCE_PATH_STYLE=true`.
+  - New tests:
+    - paged listing;
+    - against a real provider only, a presigned upload of another size or type is refused
+      (moto does not check signatures);
+    - the CORS preflight passes, with PUT and `content-type`, only for the app's origin.
+  - Checked locally against moto in every mode:
+    - emulator: 5 passed, 2 skipped;
+    - verify with nothing set: an error;
+    - verify against an existing bucket with a CORS rule and an unreachable database: 6
+      passed, with the size-and-type test skipped as local;
+    - a non-local endpoint without a bucket: refused.
+  - Pointed at moto through a non-loopback address, the size-and-type test fails, as it
+    should: moto accepts the oversized upload. So the requests reach the provider.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -951,7 +977,9 @@ conversations. Update it at the end of every PR.
 - Decrypting with a passphrase uses typage's synchronous scrypt, which is fine for a CLI. Its
   decrypter refuses scrypt work factors above 2^20; age's default is 2^18.
 - HTML extraction can join adjacent inline labels without a space. This is cosmetic.
-- The S3 adapter has not been verified against real R2.
+- The S3 adapter has not been verified against real R2: that needs the owner's bucket and
+  token. `pnpm storage:verify` runs the check (DEPLOYMENT.md §5.2, step 5). So far the suite is
+  verified only against moto, which checks neither signatures nor the signed size.
 
 ## 2. How to run
 
@@ -986,4 +1014,7 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 **Phase 1B is complete** (ROADMAP, PR 23), and so is P1A-ENC (PR 24 web, PR 25 CLI). One
 Phase 1A item remains, and it needs the owner:
 
-1. **Verify the S3 adapter against real R2.** This needs the owner's credentials.
+1. **Verify the S3 adapter against real R2.** This needs the owner's bucket and token. With
+   them, run `pnpm storage:verify` as DEPLOYMENT.md §5.2, step 5 shows, for each bucket; all
+   7 tests must pass. If the conditional-write test fails, the immutability of originals cannot
+   rely on the provider. Stop and decide (SECURITY.md) before storing anything there.
