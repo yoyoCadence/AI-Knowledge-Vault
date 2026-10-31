@@ -1,0 +1,448 @@
+/*
+ * Skin "archive" (典藏室): a reading room with a card catalogue (docs/THEME.md).
+ *
+ * Active while <html data-skin="archive">. The rules here are decoration over the semantic
+ * tokens of globals.css: colours, type, borders, shadows and pictures. They change no layout
+ * except where a decoration needs room (the ledger's margin, the seal), add no content and no
+ * focus stops, and never touch user images (thumbnails, previews) or the preview origin.
+ *
+ * The rules are unlayered on purpose: they must win over the utilities that draw the plain
+ * skin (bg-surface, rounded-lg, shadow-xs …). Each is scoped to the skin, so the plain skin is
+ * exactly what it was.
+ */
+
+/* ---- Tokens ---- */
+
+:root[data-skin="archive"] {
+  --background: #efe6d4;
+  --foreground: #2b2118;
+  --surface: #fbf6ea;
+  --surface-muted: #f2e9d6;
+  --muted-foreground: #6a5643;
+  --border: #ddcdae;
+  --border-strong: #9c835d;
+  --primary: #2c5a46;
+  --primary-foreground: #fbf6ea;
+  --accent: #e9dfc6;
+  --accent-foreground: #24493a;
+  --success: #3b6e3f;
+  --warning: #b07a1e;
+  --danger: #a3392a;
+  --ring: #8a5a1c;
+  --radius: 0.3rem;
+
+  /* Skin-only tokens. */
+  --font-display:
+    "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Noto Serif TC",
+    "Source Han Serif TC", "Songti TC", "PMingLiU", serif;
+  --ornament: #9a7a48;
+  --brass: #b8914a;
+  --catalog-rule: rgb(163 57 42 / 0.55);
+  --sheet-behind: #e8dcc3;
+  --paper-shadow: 0 1px 2px rgb(74 52 30 / 0.1), 0 4px 12px -6px rgb(74 52 30 / 0.22);
+  --highlight: #f3df9d;
+}
+
+:root[data-skin="archive"].dark {
+  --background: #1b1612;
+  --foreground: #efe4cf;
+  --surface: #26201a;
+  --surface-muted: #2f2820;
+  --muted-foreground: #b9a78a;
+  --border: #3e342a;
+  --border-strong: #86705a;
+  --primary: #93c7a9;
+  --primary-foreground: #14231b;
+  --accent: #34402f;
+  --accent-foreground: #cfe6d6;
+  --success: #8fcf95;
+  --warning: #e2b25a;
+  --danger: #ec907a;
+  --ring: #e0b45e;
+
+  --ornament: #9c8460;
+  --catalog-rule: rgb(236 144 122 / 0.5);
+  --sheet-behind: #1f1a15;
+  --paper-shadow: 0 1px 2px rgb(0 0 0 / 0.35), 0 6px 16px -8px rgb(0 0 0 / 0.6);
+  --highlight: #6b5422;
+}
+
+/* ---- The room: wallpaper, paper grain and window light behind everything ---- */
+
+:root[data-skin="archive"] body {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(70% 100% at 72% 0%, rgb(255 248 228 / 0.9), transparent 70%),
+    url("./assets/wallpaper-light.svg"), url("./assets/paper-grain-light.webp");
+  background-size:
+    100% 720px,
+    64px 64px,
+    256px 256px;
+  background-repeat: no-repeat, repeat, repeat;
+}
+
+:root[data-skin="archive"].dark body {
+  /* At night the light comes from the reading lamps, warmer and lower. */
+  background-image:
+    radial-gradient(60% 100% at 70% 0%, rgb(255 196 120 / 0.09), transparent 70%),
+    url("./assets/wallpaper-dark.svg"), url("./assets/paper-grain-dark.webp");
+}
+
+:root[data-skin="archive"] ::selection {
+  background: var(--highlight);
+  color: var(--foreground);
+}
+
+/* ---- Type ---- */
+
+:root[data-skin="archive"]
+  :is(main h1, main h2, [data-slot="card-title"], [data-slot="nameplate"]) {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+/* Page titles carry a rule with a lozenge, in the room's brass-brown. */
+:root[data-skin="archive"] main h1::after {
+  content: "";
+  display: block;
+  width: 168px;
+  max-width: 100%;
+  height: 11px;
+  margin-top: 0.5rem;
+  background-color: var(--ornament);
+  mask: url("./assets/ornament.svg") left center / contain no-repeat;
+}
+:root[data-skin="archive"] main.text-center h1::after {
+  margin-inline: auto;
+  mask-position: center;
+}
+
+:root[data-skin="archive"] mark {
+  background: var(--highlight);
+  color: var(--foreground);
+}
+
+/* ---- The catalogue cabinet: sidebar, mobile drawer and mobile top bar ---- */
+
+:root[data-skin="archive"] :is([data-region="cabinet"], [data-region="topbar"]) {
+  /* Tokens re-scoped to wood: everything inside (links, buttons, badges) follows. */
+  --foreground: #f5ecd8;
+  --muted-foreground: #e8d9bc;
+  --surface-muted: rgb(255 240 210 / 0.1);
+  --accent: #f4ead3;
+  --accent-foreground: #2b2118;
+  --border: rgb(0 0 0 / 0.35);
+  --border-strong: #c9a35a;
+  --ring: #f0c46a;
+  color: var(--foreground);
+  background-color: #4a2f1e;
+  background-image:
+    linear-gradient(90deg, rgb(0 0 0 / 0.2), transparent 14%, transparent 86%, rgb(0 0 0 / 0.3)),
+    url("./assets/walnut.webp");
+  background-size:
+    auto,
+    256px 512px;
+  border-color: #2e1d12;
+}
+:root[data-skin="archive"].dark :is([data-region="cabinet"], [data-region="topbar"]) {
+  background-image:
+    linear-gradient(
+      90deg,
+      rgb(0 0 0 / 0.45),
+      rgb(0 0 0 / 0.3) 14%,
+      rgb(0 0 0 / 0.3) 86%,
+      rgb(0 0 0 / 0.55)
+    ),
+    url("./assets/walnut.webp");
+}
+
+/* Drawer fronts: the current page is a cream label card in a brass holder. */
+:root[data-skin="archive"] [data-region="cabinet"] nav a {
+  border-radius: 3px;
+}
+:root[data-skin="archive"] [data-region="cabinet"] nav a[aria-current="page"] {
+  background-image: url("./assets/paper-grain-light.webp");
+  box-shadow:
+    inset 0 0 0 1px var(--brass),
+    inset 0 0 0 3px var(--accent),
+    inset 0 0 0 4px rgb(184 145 74 / 0.45),
+    0 1px 3px rgb(0 0 0 / 0.45);
+}
+
+/* The app's name on a brass plate. */
+:root[data-skin="archive"] [data-slot="nameplate"] {
+  width: fit-content;
+  padding: 0.3rem 0.75rem;
+  border-radius: 3px;
+  color: #2b2118;
+  background: linear-gradient(180deg, #f0d58f, #c9a253 55%, #b58f48);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.5),
+    inset 0 -1px 0 rgb(0 0 0 / 0.25),
+    0 1px 2px rgb(0 0 0 / 0.45);
+  text-shadow: 0 1px 0 rgb(255 255 255 / 0.35);
+}
+
+/* Books on the cabinet's bottom shelf; dropped where the window is too short for them. */
+:root[data-skin="archive"] [data-slot="cabinet-shelf"] {
+  display: block;
+  height: 120px;
+  margin: 0.5rem -0.75rem -1rem;
+  /* The drawing's board, carried across drawers wider than the drawing. */
+  background:
+    url("./assets/sidebar-shelf.svg") center bottom / 240px 120px no-repeat,
+    linear-gradient(#7a5436 0 2px, #4a2f1e 2px 12px, #2e1d12 12px) center bottom / 100% 14px
+      no-repeat;
+  pointer-events: none;
+}
+@media (max-height: 760px) {
+  :root[data-skin="archive"] [data-slot="cabinet-shelf"] {
+    display: none;
+  }
+}
+
+/* The mobile top bar: wood with a brass rail, opaque (no backdrop blur to pay for). */
+:root[data-skin="archive"] [data-region="topbar"] {
+  backdrop-filter: none;
+  border-bottom-width: 0;
+  box-shadow:
+    inset 0 -2px 0 var(--brass),
+    0 2px 6px rgb(40 25 10 / 0.25);
+}
+
+/* A dentil cornice along the top of the reading room (wide screens). */
+:root[data-skin="archive"] [data-slot="cornice"] {
+  display: none;
+}
+@media (min-width: 1024px) {
+  :root[data-skin="archive"] [data-slot="cornice"] {
+    display: block;
+    height: 14px;
+    background-color: var(--ornament);
+    opacity: 0.55;
+    mask: url("./assets/cornice.svg") left top / 16px 14px repeat-x;
+    pointer-events: none;
+  }
+}
+
+/* The bookshelf at the end of every page: the whole shelf on wide screens, its middle
+   (lamp, books, plant) on a phone. */
+:root[data-skin="archive"] [data-slot="scene"] {
+  display: block;
+  height: 96px;
+  margin-top: 2rem;
+  background: url("./assets/footer-scene.svg") center bottom / cover no-repeat;
+  pointer-events: none;
+}
+@media (min-width: 640px) {
+  :root[data-skin="archive"] [data-slot="scene"] {
+    height: 132px;
+  }
+}
+:root[data-skin="archive"].dark [data-slot="scene"] {
+  opacity: 0.8;
+}
+
+/* ---- Paper: cards, panels, ledger, catalogue cards ---- */
+
+:root[data-skin="archive"] .surface-panel {
+  background-image: url("./assets/paper-grain-light.webp");
+  box-shadow: var(--paper-shadow);
+}
+
+/* Archival sheets: double rule, brass photo corners, a second sheet behind. The middle stays
+   plain paper for reading. */
+:root[data-skin="archive"] [data-slot="card"] {
+  background-image:
+    url("./assets/corner-tl.svg"), url("./assets/corner-br.svg"),
+    url("./assets/paper-grain-light.webp");
+  background-position:
+    4px 4px,
+    right 4px bottom 4px,
+    0 0;
+  background-size:
+    16px 16px,
+    16px 16px,
+    256px 256px;
+  background-repeat: no-repeat, no-repeat, repeat;
+  box-shadow:
+    inset 0 0 0 3px var(--surface),
+    inset 0 0 0 4px var(--border),
+    var(--paper-shadow),
+    4px 5px 0 -1px var(--sheet-behind),
+    4px 5px 0 0 var(--border);
+}
+
+:root[data-skin="archive"].dark
+  :is(
+    [data-slot="card"],
+    .surface-panel,
+    [data-slot="catalog-card"],
+    [data-slot="catalog-row"],
+    [data-slot="ledger"],
+    [data-slot="empty-state"],
+    [data-slot="login-card"]
+  ) {
+  background-image: url("./assets/paper-grain-dark.webp");
+}
+:root[data-skin="archive"].dark [data-slot="card"] {
+  background-image:
+    url("./assets/corner-tl.svg"), url("./assets/corner-br.svg"),
+    url("./assets/paper-grain-dark.webp");
+}
+
+/* Library catalogue cards: a red rule under the picture and the rod hole at the foot. The
+   thumbnail itself is shown exactly as stored. */
+:root[data-skin="archive"] :is([data-slot="catalog-card"], [data-slot="catalog-row"]) {
+  background-image: url("./assets/paper-grain-light.webp");
+  box-shadow: var(--paper-shadow);
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+:root[data-skin="archive"] :is([data-slot="catalog-card"], [data-slot="catalog-row"]):hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 2px 4px rgb(74 52 30 / 0.12),
+    0 10px 20px -10px rgb(74 52 30 / 0.4);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-skin="archive"] :is([data-slot="catalog-card"], [data-slot="catalog-row"]):hover {
+    transform: none;
+  }
+}
+:root[data-skin="archive"] [data-slot="catalog-thumb"] {
+  border-bottom: 2px solid var(--catalog-rule);
+}
+:root[data-skin="archive"] [data-slot="catalog-card"] [data-slot="catalog-body"] {
+  position: relative;
+}
+:root[data-skin="archive"] [data-slot="catalog-card"] [data-slot="catalog-body"]::after {
+  content: "";
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  margin-left: -4.5px;
+  border-radius: 50%;
+  background: var(--background);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+}
+/* Rows (list layout, search results) keep the rule on their left edge. */
+:root[data-skin="archive"] [data-slot="catalog-row"] {
+  border-left: 3px solid var(--catalog-rule);
+}
+
+/* The library's ledger: red margin rules on the left and the seal stamped over its top edge. */
+:root[data-skin="archive"] [data-slot="ledger"] {
+  position: relative;
+  padding-left: 2.6rem;
+  padding-right: 4.25rem;
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent 20px,
+      var(--catalog-rule) 20px 21px,
+      transparent 21px 24px,
+      var(--catalog-rule) 24px 25px,
+      transparent 25px
+    ),
+    url("./assets/paper-grain-light.webp");
+  box-shadow: var(--paper-shadow);
+}
+:root[data-skin="archive"].dark [data-slot="ledger"] {
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent 20px,
+      var(--catalog-rule) 20px 21px,
+      transparent 21px 24px,
+      var(--catalog-rule) 24px 25px,
+      transparent 25px
+    ),
+    url("./assets/paper-grain-dark.webp");
+}
+:root[data-skin="archive"] :is([data-slot="ledger"], [data-slot="login-card"])::after {
+  content: "";
+  position: absolute;
+  top: -20px;
+  right: 10px;
+  width: 64px;
+  height: 64px;
+  background: url("./assets/seal.svg") center / contain no-repeat;
+  pointer-events: none;
+}
+:root[data-skin="archive"].dark :is([data-slot="ledger"], [data-slot="login-card"])::after {
+  background-image: url("./assets/seal-dark.svg");
+}
+@media (max-width: 639px) {
+  :root[data-skin="archive"] [data-slot="ledger"] {
+    padding-right: 3.25rem;
+  }
+  :root[data-skin="archive"] [data-slot="ledger"]::after {
+    top: -14px;
+    width: 48px;
+    height: 48px;
+  }
+}
+
+/* An empty drawer: paper, a brass-dashed edge and a pressed sprig in the corner. */
+:root[data-skin="archive"] [data-slot="empty-state"] {
+  position: relative;
+  border-color: var(--border-strong);
+  background-color: var(--surface);
+  background-image: url("./assets/paper-grain-light.webp");
+  box-shadow: var(--paper-shadow);
+}
+:root[data-skin="archive"] :is([data-slot="empty-state"], [data-slot="login-card"])::before {
+  content: "";
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 84px;
+  height: 84px;
+  background: url("./assets/sprig.svg") center / contain no-repeat;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+/* The reader's card at the door. */
+:root[data-skin="archive"] [data-slot="login-card"] {
+  position: relative;
+  background-image: url("./assets/paper-grain-light.webp");
+  box-shadow:
+    inset 0 0 0 4px var(--surface),
+    inset 0 0 0 5px var(--border),
+    var(--paper-shadow),
+    5px 6px 0 -1px var(--sheet-behind),
+    5px 6px 0 0 var(--border);
+}
+/* Below the card's last line: the sprig's tip stays in the bottom padding, clear of the text. */
+:root[data-skin="archive"] [data-slot="login-card"]::before {
+  right: auto;
+  left: -26px;
+  bottom: -58px;
+  width: 76px;
+  height: 76px;
+  transform: rotate(-16deg);
+}
+
+/* ---- Controls ---- */
+
+:root[data-skin="archive"] [data-slot="button"][data-variant="default"] {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.18),
+    inset 0 -2px 0 rgb(0 0 0 / 0.2),
+    0 1px 2px rgb(40 25 10 / 0.3);
+  letter-spacing: 0.02em;
+}
+:root[data-skin="archive"] [data-slot="button"][data-variant="outline"] {
+  box-shadow: 0 1px 0 rgb(74 52 30 / 0.12);
+}
+:root[data-skin="archive"] [data-slot="badge"] {
+  border-radius: 3px;
+}

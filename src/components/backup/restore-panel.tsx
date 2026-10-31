@@ -160,7 +160,7 @@ export function RestorePanel({ initial }: { initial: RestoreView | null }) {
         </p>
       </div>
 
-      <div className="border-border bg-surface flex flex-col gap-3 rounded-lg border p-4 text-sm">
+      <div className="surface-panel flex flex-col gap-3 p-4 text-sm">
         <input
           ref={inputRef}
           type="file"
@@ -206,10 +206,7 @@ export function RestorePanel({ initial }: { initial: RestoreView | null }) {
       </div>
 
       {run ? (
-        <div
-          className="border-border bg-surface rounded-lg border px-4 py-3 text-sm"
-          data-testid="restore-result"
-        >
+        <div className="surface-panel px-4 py-3 text-sm" data-testid="restore-result">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="truncate">
               {run.filename}

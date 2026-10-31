@@ -160,7 +160,7 @@ function TagItem({ tag, others, canEdit }: { tag: TagRow; others: TagRow[]; canE
 /** All tags of the workspace (Master Spec §9: organize the library). */
 export function TagManager({ tags, canEdit }: { tags: TagRow[]; canEdit: boolean }) {
   return (
-    <ul className="divide-border border-border bg-surface divide-y rounded-lg border">
+    <ul className="surface-panel divide-border divide-y">
       {tags.map((tag) => (
         <TagItem
           key={tag.id}

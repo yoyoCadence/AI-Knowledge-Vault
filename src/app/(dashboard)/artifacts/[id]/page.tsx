@@ -338,7 +338,7 @@ export default async function ArtifactPage({
           </Card>
 
           {warnings.length > 0 ? (
-            <details className="border-border bg-surface rounded-lg border p-4 text-sm">
+            <details className="surface-panel p-4 text-sm">
               <summary className="cursor-pointer font-medium">{t("artifact.warnings")}</summary>
               <ul className="text-muted-foreground mt-3 flex flex-col gap-1 font-mono text-xs">
                 {warnings.map((warning) => (

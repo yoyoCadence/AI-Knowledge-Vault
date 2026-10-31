@@ -119,9 +119,13 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactCardData }) {
   return (
     <Link
       href={`/artifacts/${artifact.id}`}
+      data-slot="catalog-card"
       className={`${linkClass} flex flex-col overflow-hidden`}
     >
-      <div className="bg-surface-muted relative flex aspect-[16/10] items-center justify-center">
+      <div
+        data-slot="catalog-thumb"
+        className="bg-surface-muted relative flex aspect-[16/10] items-center justify-center"
+      >
         {artifact.hasThumbnail ? (
           // eslint-disable-next-line @next/next/no-img-element -- authorized same-origin image route, not optimizable
           <img
@@ -134,7 +138,7 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactCardData }) {
           <KindIcon kind={kind} className="text-muted-foreground/60 size-10" />
         )}
       </div>
-      <div className="flex flex-1 flex-col gap-2 p-4">
+      <div data-slot="catalog-body" className="flex flex-1 flex-col gap-2 p-4">
         <ArtifactTitle artifact={artifact} className="line-clamp-2 leading-snug" />
         <p className="text-muted-foreground line-clamp-2 text-xs leading-relaxed">
           {artifact.summary ?? t("library.noSummary")}
@@ -157,6 +161,7 @@ export function ArtifactRow({ artifact }: { artifact: ArtifactCardData }) {
     <Link
       href={`/artifacts/${artifact.id}`}
       data-testid="artifact-row"
+      data-slot="catalog-row"
       className={`${linkClass} flex min-w-0 flex-col gap-2 px-4 py-3 lg:flex-row lg:items-center lg:gap-4`}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-1">

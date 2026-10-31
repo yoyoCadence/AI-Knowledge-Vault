@@ -222,7 +222,7 @@ export function ProjectManager({
     <div className="flex flex-col gap-6">
       {canEdit ? <NewProject /> : null}
       {projects.length > 0 ? (
-        <ul className="divide-border border-border bg-surface divide-y rounded-lg border">
+        <ul className="surface-panel divide-border divide-y">
           {projects.map((project) => (
             <ProjectItem key={project.id} project={project} canEdit={canEdit} />
           ))}

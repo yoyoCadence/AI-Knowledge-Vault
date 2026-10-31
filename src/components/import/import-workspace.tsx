@@ -337,7 +337,7 @@ export function ImportWorkspace({
         </ul>
       ) : null}
 
-      <div className="border-border bg-surface flex flex-col gap-3 rounded-lg border p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="surface-panel flex flex-col gap-3 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
         <label className="flex items-center gap-2">
           <input
             type="checkbox"

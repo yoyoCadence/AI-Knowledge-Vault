@@ -13,6 +13,7 @@ export function SearchResults({ items }: { items: SearchHit[] }) {
         <li key={item.id}>
           <Link
             href={`/artifacts/${item.id}?view=read`}
+            data-slot="catalog-row"
             className="border-border bg-surface hover:border-border-strong focus-visible:ring-ring flex flex-col gap-2 rounded-lg border p-4 transition-colors focus-visible:ring-2"
           >
             <span className="flex flex-wrap items-center gap-2">

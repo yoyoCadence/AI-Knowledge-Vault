@@ -933,6 +933,22 @@ conversations. Update it at the end of every PR.
   - Pointed at moto through a non-loopback address, the size-and-type test fails, as it
     should: moto accepts the oversized upload. So the requests reach the provider.
 
+- **PR 27 (2026-10-31): Windows development and the archive skin.**
+  - Windows: the Vitest and E2E configs built paths with `new URL(import.meta.url).pathname`,
+    which on Windows keeps a leading `/` and percent-encodes non-ASCII folders, so `@/`
+    imports failed (`pnpm storage:verify` could not run). They use `fileURLToPath` now.
+    `next.config.ts` sets `agentRules: false`: `next dev` used to rewrite the Next.js block of
+    `AGENTS.md`.
+  - On Windows, clone with `git config core.autocrlf false` (Prettier wants LF), and in Git
+    Bash run tools from `./node_modules/.bin/` if the pnpm shim fails. Two backup integration
+    files (`encrypted-cli`, `roundtrip`; 11 tests) assume Linux (POSIX modes, process groups,
+    `python3`, `sha256sum`) and fail on Windows; CI runs them on Ubuntu.
+  - The "archive" skin (典藏室), now the default, and a switch back to the plain look:
+    docs/THEME.md has the design, every asset and how it was made (`scripts/skin-assets.ts`;
+    no image model was used), the contrast figures and what was checked. The plain skin is
+    unchanged. Tests: `tests/unit/lib/skin.test.ts` (the cookie value, the hooks, and that the
+    stylesheet is scoped to the skin and never restyles user images or previews).
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
