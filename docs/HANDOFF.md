@@ -992,6 +992,10 @@ conversations. Update it at the end of every PR.
 
       E2E: `tests/e2e/delete.spec.ts`.
 
+    - `tests/e2e/import.spec.ts` assumed it was the first spec to import anything: its
+      restore check expected exactly 2 skipped works. `delete.spec.ts` sorts before it and
+      broke that in CI. The check now reads the archive's own count from the export row.
+      Specs share one database, so a spec must not count the whole workspace.
     - Purging (removing data and originals for good) is still a later task (ADR-017).
 
 **Not done or not verified**
