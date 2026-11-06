@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { t } from "@/lib/i18n";
+import { fetchOrExplain, signedOutMessage } from "@/lib/http-client";
 
 type Tally = { restored: number; skipped: number; copied: number; failed: number };
 
@@ -44,7 +45,7 @@ export interface RestoreView {
 }
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetchOrExplain(path, {
     method: body === undefined ? "GET" : "POST",
     headers: body === undefined ? {} : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -52,7 +53,11 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   const payload = (await response.json().catch(() => ({}))) as T & {
     error?: { message?: string };
   };
-  if (!response.ok) throw new Error(payload.error?.message ?? `HTTP ${response.status}`);
+  if (!response.ok) {
+    throw new Error(
+      signedOutMessage(response) ?? payload.error?.message ?? `HTTP ${response.status}`,
+    );
+  }
   return payload;
 }
 
@@ -71,7 +76,7 @@ function upload(
     };
     xhr.onload = () =>
       xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`HTTP ${xhr.status}`));
-    xhr.onerror = () => reject(new Error("network error"));
+    xhr.onerror = () => reject(new Error(t("request.error.network")));
     xhr.send(file);
   });
 }

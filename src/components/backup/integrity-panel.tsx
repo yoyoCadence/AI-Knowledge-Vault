@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/format";
 import { t } from "@/lib/i18n";
+import { fetchOrExplain, signedOutMessage } from "@/lib/http-client";
 
 /** Mirrors `toIntegrityDto` (src/modules/backup/integrity.ts); dates arrive as ISO strings. */
 export interface IntegrityView {
@@ -61,11 +62,13 @@ export function IntegrityPanel({
   async function run() {
     setError(null);
     try {
-      const response = await fetch("/api/integrity-checks", {
+      const response = await fetchOrExplain("/api/integrity-checks", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",
       });
+      const signedOut = signedOutMessage(response);
+      if (signedOut) throw new Error(signedOut);
       const body = (await response.json()) as {
         check?: IntegrityView;
         error?: { message?: string };
