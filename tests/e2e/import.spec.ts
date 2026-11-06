@@ -52,7 +52,9 @@ test.describe("import → library → artifact (Scenario A)", () => {
       /2 完成 · 0 重複 · 1 失敗 · 0 處理中/,
       { timeout: 30_000 },
     );
-    await expect(page.getByText("UNSUPPORTED_FILE_TYPE")).toBeVisible();
+    // The reason in words of the UI's language; the code stays as the technical detail.
+    await expect(page.getByText("不支援這種檔案格式")).toBeVisible();
+    await expect(page.getByText(/技術細節：UNSUPPORTED_FILE_TYPE/)).toBeVisible();
 
     // Library shows both works.
     await page.getByRole("link", { name: "知識庫" }).first().click();

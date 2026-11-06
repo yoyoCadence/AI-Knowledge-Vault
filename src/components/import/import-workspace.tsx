@@ -48,9 +48,16 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
     headers: body === undefined ? {} : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const json = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
+  const json = (await response.json().catch(() => ({}))) as {
+    error?: { code?: string; message?: string };
+  };
   if (!response.ok) {
-    throw new Error(signedOutMessage(response) ?? json.error?.message ?? `HTTP ${response.status}`);
+    throw new Error(
+      signedOutMessage(response) ??
+        (json.error?.code ? tOptional(`import.error.${json.error.code}`) : null) ??
+        json.error?.message ??
+        `HTTP ${response.status}`,
+    );
   }
   return json as T;
 }
@@ -444,9 +451,18 @@ export function ImportWorkspace({
                         ) : null}
                         {status === "failed" && item ? (
                           <span className="text-danger flex items-center gap-2">
-                            <span>
-                              {item.errorCode}
-                              {item.errorMessage ? `：${item.errorMessage}` : ""}
+                            <span className="flex min-w-0 flex-col">
+                              <span>
+                                {(item.errorCode
+                                  ? tOptional(`import.error.${item.errorCode}`)
+                                  : null) ?? t("import.error.unknown")}
+                              </span>
+                              {item.errorCode || item.errorMessage ? (
+                                <span className="text-muted-foreground break-words">
+                                  {t("import.error.details")}：
+                                  {[item.errorCode, item.errorMessage].filter(Boolean).join(" · ")}
+                                </span>
+                              ) : null}
                             </span>
                             {item.retryable ? (
                               <Button

@@ -1042,6 +1042,21 @@ conversations. Update it at the end of every PR.
       - E2E: the server fails, then the connection drops. Both times the user stays on the
         page, sees the message, and no page error is thrown.
 
+  - **PR 32, import failure reasons in zh-TW (QP-7).** The import report (FR-IMP-10) showed
+    a failed file's raw code and the server's English message, e.g.
+    "UNSUPPORTED_FILE_TYPE：The file content is not a supported format".
+    - The report now shows a reason looked up by code (`import.error.<code>`, 17 codes).
+    - Below it, a muted 「技術細節」 line keeps the code and the server's message, so no detail
+      is lost.
+    - Upload-time refusals (too large, empty, expired) use the same reasons.
+    - `CONFLICT` has several meanings (batch cancelled, batch full, already processing), so it
+      keeps the server's specific message.
+    - Tests:
+      - `tests/integration/imports/failure-reasons.test.ts` makes real failures at three
+        stages (sniffing, the ZIP reader, upload completion) and checks that each stored
+        code has a reason;
+      - `tests/e2e/import.spec.ts` checks the zh-TW reason and the detail line.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
