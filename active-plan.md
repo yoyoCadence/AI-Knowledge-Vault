@@ -8,13 +8,14 @@ _Last updated: 2026-11-06 by the implementing agent (quality pass)._
 real bucket. The last PR, 27, makes development work on Windows and adds the "archive" skin
 (docs/THEME.md).
 
-**Quality pass (2026-11), PRs 28–31:** each finding is in `task.md` § Quality pass, with
+**Quality pass (2026-11), PRs 28–32:** each finding is in `task.md` § Quality pass, with
 its evidence and class:
 
 - download names (PR 28);
 - delete and undo (PR 29);
 - a search time limit (PR 30);
-- request failures and sign-out failures that say what happened (PR 31).
+- request failures and sign-out failures that say what happened (PR 31);
+- import failure reasons in zh-TW (PR 32).
 
 **Next, needs the owner:** verify R2 with `pnpm storage:verify`, as DEPLOYMENT.md §5.2,
 step 5 shows. Then deploy (DEPLOYMENT.md), with the owner's domains, accounts and secrets.
@@ -75,7 +76,7 @@ findings handled. If the review bot is unavailable, run an independent review fi
 9. ✅ Storage suite against a real bucket (PR 26).
 10. ✅ Windows development and the archive skin, P1B-SKIN (PR 27).
 11. ✅ Quality pass: download names (PR 28), delete and undo (PR 29), search time limit
-    (PR 30), request and sign-out failures (PR 31).
+    (PR 30), request and sign-out failures (PR 31), import failure reasons (PR 32).
 
 ## Open questions for the owner
 
