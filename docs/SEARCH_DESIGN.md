@@ -109,6 +109,14 @@ where a highlight can differ from the index). Words match only at a word start (
 search); CJK runs match anywhere. It returns `segments: [{text, highlight: boolean}]`. The UI
 renders segments as text nodes and `<mark>` elements, with no HTML injection.
 
+**Time limit.** Each search runs in its own short transaction with
+`set_config('statement_timeout', SEARCH_TIMEOUT_MS, true)` (8 s; `SET LOCAL`, so the limit ends
+with the transaction and never applies to the next user of the pooled connection). A search
+that runs past it, which only a very broad query over a very large library would do (one
+common character matching every chunk; 0.4 s at 120,000 matching chunks), stops with
+`503 SEARCH_TIMEOUT`, and the library page asks for more specific words or filters instead of
+failing. Before PR 30 such a query held a connection for its whole run.
+
 **Built so far:** `q` and `offset` (PR 12; 20 per page, offsets up to 1,000), `tag` (PR 13),
 and project, kind, source model and import-day range, sort (relevance, newest, title) and
 `total` (PR 14). The filters are one builder (`src/modules/artifacts/filters.ts`) shared

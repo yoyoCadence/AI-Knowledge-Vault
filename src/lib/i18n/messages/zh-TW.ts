@@ -46,6 +46,8 @@ export const zhTW = {
   "search.results": "「{q}」的搜尋結果",
   "search.none": "找不到符合「{q}」的作品。可以試試較短的詞，或改用其他說法。",
   "search.invalid": "請輸入至少一個文字或數字。",
+  "search.timeout":
+    "這次搜尋花了太久而中止。請改用更明確的關鍵字（例如兩個字以上的詞），或加上篩選條件。",
   "search.clear": "清除搜尋",
   "search.total": "共 {count} 份",
   "filters.title": "篩選與排序",

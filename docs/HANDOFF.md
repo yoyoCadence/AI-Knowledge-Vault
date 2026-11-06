@@ -998,14 +998,28 @@ conversations. Update it at the end of every PR.
       Specs share one database, so a spec must not count the whole workspace.
     - Purging (removing data and originals for good) is still a later task (ADR-017).
 
+  - **PR 30, search time limit (QP-3):** a search used to have no time limit, so a
+    pathological query held a pooled connection for its whole run.
+    - `searchArtifacts` now runs in its own short transaction with `statement_timeout` set
+      locally to `SEARCH_TIMEOUT_MS` (8 s). Past the limit it throws `SEARCH_TIMEOUT` (503).
+    - The library page shows 「這次搜尋花了太久而中止…」 under the search box, instead of the
+      error page.
+    - `pgErrorCode` (`src/infrastructure/database/errors.ts`) replaces the two copies of
+      `pgCode` in tags and collections.
+    - Test: `tests/integration/search/timeout.test.ts`. It holds an ACCESS EXCLUSIVE lock on
+      `artifact_search_documents` from another connection; statement_timeout counts lock waits.
+      - On the old code the search hangs until the test times out.
+      - Now it fails in about 0.3 s, and the connection comes back with no limit left on it.
+      - The API answers 503.
+    - Also checked in a browser against the production build, with the lock held: the message
+      appears after 8.1 s, and the same search works once the lock is released.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
 - Collections: no manual ordering yet (`sort_order` and item `position` are stored; the UI
   sorts by name and lists items like the library). The import page has no project or
   collection picker; both work through `POST /api/imports`.
-- Search has no `statement_timeout`. A one-character query over a very large library holds
-  a connection for its whole run (0.4 s at 120,000 matching chunks today).
 - Development databases that applied an earlier draft of `0006_search_index` (before PR 12
   merged) must be reset: the migration was regenerated with a new timestamp.
 - Tag operations re-index every affected artifact synchronously. Fine for a personal

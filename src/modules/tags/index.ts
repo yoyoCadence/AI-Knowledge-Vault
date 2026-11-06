@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
+import { PG_UNIQUE_VIOLATION, pgErrorCode } from "@/infrastructure/database/errors";
 import {
   artifacts,
   artifactTags,
@@ -71,15 +72,6 @@ export function normalizeTagName(input: string): { name: string; normalizedName:
     .replace(/\s+/gu, " ")
     .trim();
   return { name, normalizedName };
-}
-
-/** The Postgres error code under Drizzle's wrapper, if any. */
-function pgCode(error: unknown): string | undefined {
-  for (let current = error; current instanceof Error; current = current.cause) {
-    const code = (current as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
 }
 
 function nameTaken(otherTagId?: string): AppError {
@@ -243,7 +235,7 @@ export async function renameTag(
     });
   } catch (error) {
     // Two renames racing to the same new name: the unique constraint decides.
-    if (pgCode(error) === "23505") throw nameTaken();
+    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) throw nameTaken();
     throw error;
   }
 }

@@ -1,5 +1,7 @@
 import { sql } from "drizzle-orm";
-import type { DbExecutor } from "@/infrastructure/database/client";
+import type { Database } from "@/infrastructure/database/client";
+import { PG_QUERY_CANCELED, pgErrorCode } from "@/infrastructure/database/errors";
+import { AppError } from "@/lib/errors";
 import { filterConditions, type LibraryFilters } from "@/modules/artifacts/filters";
 import type { Actor } from "@/modules/auth";
 import { normalizeForSearch, parseQuery, type QueryTerm, termTsqueries } from "./tokenizer";
@@ -12,6 +14,13 @@ import { normalizeForSearch, parseQuery, type QueryTerm, termTsqueries } from ".
  */
 
 export const SEARCH_PAGE_SIZE = 20;
+/**
+ * The longest one search may run (docs/SEARCH_DESIGN.md §4, "Time limit"). A broad query over
+ * a very large library (one common character, every chunk matching) otherwise holds a pooled
+ * connection for its whole run; past this it stops with SEARCH_TIMEOUT and the connection is
+ * free again. Measured: 0.4 s at 120,000 matching chunks, so only pathological queries reach it.
+ */
+export const SEARCH_TIMEOUT_MS = 8_000;
 const MAX_OFFSET = 1_000;
 const SNIPPET_LENGTH = 160;
 
@@ -100,7 +109,7 @@ export const SEARCH_SORTS = ["relevance", "newest", "title"] as const;
 export type SearchSort = (typeof SEARCH_SORTS)[number];
 
 export async function searchArtifacts(
-  db: DbExecutor,
+  db: Database,
   actor: Actor,
   input: {
     q: string;
@@ -108,6 +117,8 @@ export async function searchArtifacts(
     limit?: number;
     filters?: LibraryFilters;
     sort?: SearchSort;
+    /** Overrides SEARCH_TIMEOUT_MS (tests). */
+    timeoutMs?: number;
   },
 ): Promise<{
   items: SearchHit[];
@@ -136,7 +147,8 @@ export async function searchArtifacts(
     sql`, `,
   );
 
-  const result = await db.execute<Row>(sql`
+  const timeoutMs = Math.max(1, Math.round(input.timeoutMs ?? SEARCH_TIMEOUT_MS));
+  const statement = sql`
     with terms (term_no, query) as (values ${termRows}),
     -- Any term: narrows rows through the GIN indexes and ranks them.
     any_term as (select ${termQueries.join(" | ")}::tsquery as query),
@@ -190,7 +202,25 @@ export async function searchArtifacts(
     left join content_chunks ch on ch.id = s.chunk_id
     order by ${order}
     limit ${limit + 1} offset ${offset}
-  `);
+  `;
+  let result;
+  try {
+    // Its own short transaction, so the limit (`set_config(..., true)` is SET LOCAL) ends with
+    // it and never applies to whatever the pooled connection runs next.
+    result = await db.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('statement_timeout', ${String(timeoutMs)}, true)`);
+      return tx.execute<Row>(statement);
+    });
+  } catch (error) {
+    if (pgErrorCode(error) === PG_QUERY_CANCELED) {
+      throw new AppError(
+        "SEARCH_TIMEOUT",
+        "The search took too long; use more specific words or add filters",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
   const rows = result.rows.slice(0, limit);
   const items = rows.map((row) => {
     const source = row.chunk_text ?? row.summary ?? row.title;
