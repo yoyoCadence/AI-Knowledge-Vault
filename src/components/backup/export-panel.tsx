@@ -14,6 +14,7 @@ import {
 } from "@/lib/backup-encryption";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { t, tOptional } from "@/lib/i18n";
+import { fetchOrExplain, signedOutMessage } from "@/lib/http-client";
 
 /** Mirrors `toExportDto` (src/modules/backup/service.ts); dates arrive as ISO strings. */
 export interface ExportView {
@@ -250,11 +251,13 @@ export function ExportPanel({ initial }: { initial: ExportView[] }) {
     setRequesting(true);
     setError(null);
     try {
-      const response = await fetch("/api/exports", {
+      const response = await fetchOrExplain("/api/exports", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",
       });
+      const signedOut = signedOutMessage(response);
+      if (signedOut) throw new Error(signedOut);
       const body = (await response.json()) as {
         export?: ExportView;
         error?: { message?: string };

@@ -1,12 +1,20 @@
 # Active Plan
 
-_Last updated: 2026-10-31 by the implementing agent._
+_Last updated: 2026-11-06 by the implementing agent (quality pass)._
 
 ## Current focus
 
 **Phase 0, 1A and 1B are complete** (ROADMAP). PR 26 lets the storage suite run against a
 real bucket. The last PR, 27, makes development work on Windows and adds the "archive" skin
 (docs/THEME.md).
+
+**Quality pass (2026-11), PRs 28–31:** each finding is in `task.md` § Quality pass, with
+its evidence and class:
+
+- download names (PR 28);
+- delete and undo (PR 29);
+- a search time limit (PR 30);
+- request failures and sign-out failures that say what happened (PR 31).
 
 **Next, needs the owner:** verify R2 with `pnpm storage:verify`, as DEPLOYMENT.md §5.2,
 step 5 shows. Then deploy (DEPLOYMENT.md), with the owner's domains, accounts and secrets.
@@ -66,6 +74,8 @@ findings handled. If the review bot is unavailable, run an independent review fi
 8. ✅ P1A-ENC: encrypted export downloads (PR 24); the CLI (PR 25).
 9. ✅ Storage suite against a real bucket (PR 26).
 10. ✅ Windows development and the archive skin, P1B-SKIN (PR 27).
+11. ✅ Quality pass: download names (PR 28), delete and undo (PR 29), search time limit
+    (PR 30), request and sign-out failures (PR 31).
 
 ## Open questions for the owner
 

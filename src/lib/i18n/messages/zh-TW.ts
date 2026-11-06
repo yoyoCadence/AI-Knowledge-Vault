@@ -88,6 +88,7 @@ export const zhTW = {
   "auth.error.generic": "登入失敗，請稍後再試。",
   "auth.noSignup": "本系統不開放註冊。管理者帳號需由伺服器端指令建立。",
   "auth.logout": "登出",
+  "auth.logoutFailed": "登出沒有完成，這個裝置仍是登入狀態。請再試一次。",
   "auth.signedInAs": "已登入：{email}",
 
   "sessions.title": "登入裝置與 Session",
@@ -417,6 +418,8 @@ export const zhTW = {
   "edit.error.gone": "這個作品或專案已經不存在，請重新整理頁面。",
   "edit.error.forbidden": "你沒有編輯權限。",
   "edit.error.generic": "沒有儲存成功，請再試一次。",
+  "request.error.network": "無法連線到伺服器，這次的操作沒有送出。請檢查網路連線後再試一次。",
+  "request.error.signedOut": "登入已過期，這次的操作沒有完成。請重新整理頁面並登入後再試一次。",
   "reading.favorite": "收藏",
   "reading.addFavorite": "加入收藏",
   "reading.removeFavorite": "已收藏",

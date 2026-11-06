@@ -1014,6 +1014,29 @@ conversations. Update it at the end of every PR.
     - Also checked in a browser against the production build, with the lock held: the message
       appears after 8.1 s, and the same search works once the lock is released.
 
+  - **PR 31, request failures in words of our own (QP-5).** Both reproduced in Chromium:
+    - Offline, any editor showed the browser's "Failed to fetch". Safari says "Load failed";
+      XHR uploads said "network error".
+    - After the session ended, editors said 「沒有儲存成功，請再試一次。」, which retrying can
+      never fix. The import and backup panels said "Authentication required".
+    - The fix: `src/lib/http-client.ts` (`fetchOrExplain`, `signedOutMessage`). Every client
+      request helper uses it:
+      - `jsonRequest` and `tagRequest` (all library editors);
+      - the import page;
+      - the backup panels (export, integrity, restore).
+    - Users now see 「無法連線到伺服器…」 or 「登入已過期…請重新整理頁面並登入」. Other
+      failures keep their existing messages.
+    - Tests:
+      - `tests/unit/lib/http-client.test.ts`: 4 of its 7 tests fail on the old helpers;
+      - `tests/e2e/request-errors.spec.ts`: the projects form, offline and then signed out.
+    - **Sign-out (QP-6).** When it failed (a server error, a dropped connection), the user
+      menu still went to /login. That page sent the user straight back to the library, still
+      signed in, with nothing said; offline it also threw an uncaught "Failed to fetch".
+      - Now only a confirmed sign-out leaves the page.
+      - Otherwise the menu says 「登出沒有完成，這個裝置仍是登入狀態。」.
+      - E2E: the server fails, then the connection drops. Both times the user stays on the
+        page, sees the message, and no page error is thrown.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).

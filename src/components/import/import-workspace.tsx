@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/format";
 import { t, tOptional } from "@/lib/i18n";
+import { fetchOrExplain, signedOutMessage } from "@/lib/http-client";
 import { cn } from "@/lib/utils";
 
 /** Mirrors the API item DTO fields the UI needs (docs/API_CONTRACT.md §4). */
@@ -42,13 +43,15 @@ const ACTIVE_SERVER_STATUSES = new Set(["awaiting_upload", "uploaded", "queued",
 const MAX_PARALLEL_UPLOADS = 3;
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetchOrExplain(path, {
     method: body === undefined ? "GET" : "POST",
     headers: body === undefined ? {} : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const json = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
-  if (!response.ok) throw new Error(json.error?.message ?? `HTTP ${response.status}`);
+  if (!response.ok) {
+    throw new Error(signedOutMessage(response) ?? json.error?.message ?? `HTTP ${response.status}`);
+  }
   return json as T;
 }
 
@@ -67,7 +70,7 @@ function putWithProgress(
     };
     xhr.onload = () =>
       xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`HTTP ${xhr.status}`));
-    xhr.onerror = () => reject(new Error("network error"));
+    xhr.onerror = () => reject(new Error(t("request.error.network")));
     xhr.send(file);
   });
 }

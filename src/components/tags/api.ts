@@ -1,13 +1,16 @@
+import { fetchOrExplain, signedOutMessage } from "@/lib/http-client";
 import { t } from "@/lib/i18n";
 
 /** Calls a tag endpoint; throws an Error whose message is ready to show the user. */
 export async function tagRequest<T>(url: string, init: { method: string; body?: unknown }) {
-  const response = await fetch(url, {
+  const response = await fetchOrExplain(url, {
     method: init.method,
     headers: { "content-type": "application/json" },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
   if (response.ok) return (await response.json()) as T;
+  const signedOut = signedOutMessage(response);
+  if (signedOut) throw new Error(signedOut);
   const code = await response
     .json()
     .then((body: { error?: { code?: string } }) => body.error?.code)
