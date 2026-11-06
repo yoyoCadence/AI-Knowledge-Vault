@@ -4,14 +4,13 @@ import { LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { fetchOrExplain } from "@/lib/http-client";
 import { t } from "@/lib/i18n";
 
 /**
- * The signed-in address and sign-out. Only a sign-out the server confirmed leaves the page: if
- * it failed (a server error, a dropped connection), the session is still valid, so the menu
- * says so and stays, instead of going to /login (which sent the user straight back here,
- * still signed in, with nothing said).
+ * The signed-in address and sign-out. Only a sign-out the server confirmed leaves the page,
+ * instead of going to /login regardless (which sent the user straight back here, still signed
+ * in, with nothing said). A server error means the session is still valid; a dropped
+ * connection leaves it unknown (the server may have ended it), so the menu says which.
  */
 export function UserMenu({ email }: { email: string }) {
   const router = useRouter();
@@ -21,20 +20,25 @@ export function UserMenu({ email }: { email: string }) {
   async function logout() {
     setPending(true);
     setError(null);
+    let response: Response;
     try {
-      const response = await fetchOrExplain("/api/auth/sign-out", {
+      response = await fetch("/api/auth/sign-out", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",
       });
-      if (!response.ok) throw new Error(t("auth.logoutFailed"));
-      router.replace("/login");
-      router.refresh();
     } catch {
-      // Whatever failed, what matters here is that this device is still signed in.
+      setError(t("auth.logoutUnconfirmed"));
+      setPending(false);
+      return;
+    }
+    if (!response.ok) {
       setError(t("auth.logoutFailed"));
       setPending(false);
+      return;
     }
+    router.replace("/login");
+    router.refresh();
   }
 
   return (

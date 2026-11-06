@@ -4,8 +4,10 @@ import { t } from "@/lib/i18n";
  * Browser-side request plumbing shared by the app's client components. Two failures need words
  * of our own, because what the platform gives is not fit to show:
  *
- * - The request never reached the server (offline, connection dropped, DNS): `fetch` rejects
- *   with the browser's own text, "Failed to fetch" or "Load failed", in English.
+ * - No answer came back (offline, connection dropped, DNS): `fetch` rejects with the browser's
+ *   own text, "Failed to fetch" or "Load failed", in English. The request may still have
+ *   reached the server and been carried out (only the answer was lost), so the message says
+ *   the outcome is unknown and asks to check before retrying: not every request is idempotent.
  * - The session ended (`401`): "try again" would never work; the user has to sign in again.
  */
 

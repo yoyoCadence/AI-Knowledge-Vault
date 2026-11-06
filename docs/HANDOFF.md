@@ -1024,8 +1024,11 @@ conversations. Update it at the end of every PR.
       - `jsonRequest` and `tagRequest` (all library editors);
       - the import page;
       - the backup panels (export, integrity, restore).
-    - Users now see 「無法連線到伺服器…」 or 「登入已過期…請重新整理頁面並登入」. Other
-      failures keep their existing messages.
+    - Users now see 「連線中斷，無法確認這次的操作是否完成…重新整理頁面確認…」 or
+      「登入已過期…請重新整理頁面並登入」. Other failures keep their existing messages.
+    - The network message deliberately does not say "nothing was sent" (Codex review). A
+      dropped answer can follow a committed change, and not every request is idempotent
+      (creating a project, for one), so it asks the user to check before retrying.
     - Tests:
       - `tests/unit/lib/http-client.test.ts`: 4 of its 7 tests fail on the old helpers;
       - `tests/e2e/request-errors.spec.ts`: the projects form, offline and then signed out.
@@ -1033,7 +1036,9 @@ conversations. Update it at the end of every PR.
       menu still went to /login. That page sent the user straight back to the library, still
       signed in, with nothing said; offline it also threw an uncaught "Failed to fetch".
       - Now only a confirmed sign-out leaves the page.
-      - Otherwise the menu says 「登出沒有完成，這個裝置仍是登入狀態。」.
+      - A server error says 「登出沒有完成，這個裝置仍是登入狀態。」.
+      - A dropped connection says it cannot confirm the sign-out (the server may have ended
+        the session) and asks the user to refresh and check.
       - E2E: the server fails, then the connection drops. Both times the user stays on the
         page, sees the message, and no page error is thrown.
 
