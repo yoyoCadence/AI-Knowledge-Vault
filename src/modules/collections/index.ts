@@ -1,5 +1,6 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
+import { PG_UNIQUE_VIOLATION, pgErrorCode } from "@/infrastructure/database/errors";
 import {
   artifacts,
   type COLLECTION_KINDS,
@@ -54,14 +55,6 @@ export function normalizeCollectionName(input: string) {
 /** Up to 2,000 characters of text (see `cleanDescription`); empty becomes null. */
 export function normalizeCollectionDescription(input: string | null | undefined) {
   return cleanDescription(input ?? null, DESCRIPTION_MAX, "Collection descriptions");
-}
-
-function pgCode(error: unknown): string | undefined {
-  for (let current = error; current instanceof Error; current = current.cause) {
-    const code = (current as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
 }
 
 const siblingTaken = () =>
@@ -243,7 +236,7 @@ export async function createCollection(
       return collection!;
     });
   } catch (error) {
-    if (pgCode(error) === "23505") throw siblingTaken();
+    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) throw siblingTaken();
     throw error;
   }
 }
@@ -324,7 +317,7 @@ export async function updateCollection(
       return collection!;
     });
   } catch (error) {
-    if (pgCode(error) === "23505") throw siblingTaken();
+    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) throw siblingTaken();
     throw error;
   }
 }

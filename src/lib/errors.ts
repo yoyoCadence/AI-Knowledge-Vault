@@ -20,6 +20,8 @@ export const ErrorCodes = {
   PROCESSING_TIMEOUT: 504,
   EXTRACTION_FAILED: 422,
   STORAGE_UNAVAILABLE: 503,
+  /** A search ran past its time limit (a very broad query over a very large library). */
+  SEARCH_TIMEOUT: 503,
   CHECKSUM_MISMATCH: 422,
   UNSUPPORTED_EXPORT_FORMAT: 422,
   /** An encrypted backup that the given passphrase or identities do not open, or a damaged one. */

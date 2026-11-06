@@ -20,6 +20,7 @@ import { getLogger } from "@/infrastructure/observability/logger";
 import { CONTENT_KINDS, READING_STATUSES } from "@/infrastructure/database/schema";
 import { decodeCursorOrFirstPage, encodeCursor } from "@/lib/cursor";
 import { t } from "@/lib/i18n";
+import { isAppError } from "@/lib/errors";
 import { isUuid } from "@/lib/ids";
 import { LIBRARY_LAYOUT_COOKIE, libraryLayout } from "@/lib/library-layout";
 import {
@@ -281,12 +282,24 @@ export default async function LibraryPage({
 
   if (q) {
     const offset = Math.max(0, Number.parseInt(firstParam(params.offset) ?? "0", 10) || 0);
-    const { items, nextOffset, total, terms } = await searchArtifacts(db, actor, {
-      q,
-      offset,
-      filters,
-      sort: sort as SearchSort | undefined,
-    });
+    let found: Awaited<ReturnType<typeof searchArtifacts>> | null = null;
+    try {
+      found = await searchArtifacts(db, actor, {
+        q,
+        offset,
+        filters,
+        sort: sort as SearchSort | undefined,
+      });
+    } catch (error) {
+      // Too broad a query: say so on the page (with the search box), not as a crash.
+      if (!(isAppError(error) && error.code === "SEARCH_TIMEOUT")) throw error;
+    }
+    const { items, nextOffset, total, terms } = found ?? {
+      items: [],
+      nextOffset: null,
+      total: null,
+      terms: null,
+    };
     return (
       <div className="flex flex-col gap-6">
         <header className="flex flex-col gap-4">
@@ -314,7 +327,11 @@ export default async function LibraryPage({
               {t("search.clear")}
             </Link>
           </div>
-          {terms.length === 0 ? (
+          {terms === null ? (
+            <p role="alert" className="text-danger text-sm" data-testid="search-timeout">
+              {t("search.timeout")}
+            </p>
+          ) : terms.length === 0 ? (
             <p className="text-muted-foreground text-sm">{t("search.invalid")}</p>
           ) : items.length === 0 ? (
             <p className="text-muted-foreground text-sm" data-testid="search-none">
