@@ -54,6 +54,7 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 | P1B-E2E           | E2E of the main flows, desktop and phone                           | ✅ flows in each feature PR; phone viewport (PR 20)                                                                                                       |
 | P1B-OPS           | Usage and status page: storage, DB, jobs, failures, backup state   | ✅ (PR 18)                                                                                                                                                |
 | P1B-SKIN          | Full-page "archive" skin (default) with a switch to the plain look | ✅ (PR 27; docs/THEME.md)                                                                                                                                 |
+| P1B-DELETE        | Delete an artifact (soft) and undo; deleted works page (ADR-017)   | ✅ (PR 29)                                                                                                                                                |
 | others            | see `docs/ROADMAP.md`                                              | 📝                                                                                                                                                        |
 
 ## Quality pass (2026-11)
@@ -66,8 +67,9 @@ integration tests (2 skipped), build and E2E 16/16 all pass. Classes: **bug** (r
 | ID    | Finding                                                                                                                                                                       | Class   | Status                 |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------- |
 | QP-1  | `filename*` left `'()*` raw. Chromium ignores a `filename*` holding `'` and saves under the ASCII fallback, so "報告's.md" downloaded as "\_\_'s.md" (reproduced in Chromium) | bug     | ✅ PR 28               |
-| QP-2  | No way to delete an artifact: nothing sets `artifacts.deleted_at` (ADR-017; API_CONTRACT lists DELETE and restore as planned)                                                 | gap     | 📝                     |
+| QP-2  | No way to delete an artifact: nothing sets `artifacts.deleted_at` (ADR-017; API_CONTRACT lists DELETE and restore as planned)                                                 | gap     | ✅ PR 29               |
 | QP-3  | Search has no `statement_timeout` (HANDOFF "Not done")                                                                                                                        | risk    | 📝                     |
+| QP-4  | The empty library said import was unfinished ("匯入功能完成後…") and to drag files onto a page with no drop target                                                            | bug     | ✅ PR 29               |
 | QP-c1 | Promise handling: a one-off type-aware lint (`no-floating-promises`, `no-misused-promises`) found only `try`/`catch`-wrapped interval callbacks                               | checked | no change              |
 | QP-c2 | Version split vs. share previews: a token for a moved version stops (`shareAllowsPreview` requires the link artifact's current version)                                       | checked | no change              |
 | QP-c3 | Import dedupe and version matching skip deleted artifacts, so a soft delete cannot swallow a re-import                                                                        | checked | no change              |

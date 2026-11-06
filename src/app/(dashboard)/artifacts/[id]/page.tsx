@@ -6,6 +6,7 @@ import { requirePageActor } from "@/app/_lib/session";
 import { label } from "@/components/library/artifact-card";
 import { KindIcon } from "@/components/library/kind-icon";
 import { PreviewFrame } from "@/components/preview/preview-frame";
+import { ArtifactDelete } from "@/components/artifacts/artifact-delete";
 import { ArtifactMetaEditor } from "@/components/artifacts/artifact-meta-editor";
 import { SourceEditor } from "@/components/artifacts/source-editor";
 import { VersionSplit } from "@/components/artifacts/version-split";
@@ -570,6 +571,17 @@ export default async function ArtifactPage({
               </ul>
             </CardContent>
           </Card>
+
+          {canEdit ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t("delete.section")}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ArtifactDelete artifactId={artifact.id} />
+              </CardContent>
+            </Card>
+          ) : null}
         </aside>
       </div>
     </article>

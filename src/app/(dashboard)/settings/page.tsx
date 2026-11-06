@@ -1,4 +1,4 @@
-import { Gauge } from "lucide-react";
+import { Gauge, Trash2 } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requirePageActor } from "@/app/_lib/session";
@@ -25,6 +25,15 @@ export default async function SettingsPage() {
         >
           <Gauge className="size-4" aria-hidden />
           {t("usage.link")}
+        </Link>
+      ) : null}
+      {roleAllows(actor.role, "library:write") ? (
+        <Link
+          href="/settings/deleted"
+          className="border-border hover:bg-surface-muted flex w-fit items-center gap-2 rounded-md border px-3 py-2 text-sm"
+        >
+          <Trash2 className="size-4" aria-hidden />
+          {t("deleted.title")}
         </Link>
       ) : null}
       <section className="flex flex-col gap-3" aria-labelledby="sessions-heading">

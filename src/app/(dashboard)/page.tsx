@@ -1,7 +1,8 @@
-import { FolderKanban, FolderTree, Library, Tag, Upload, X } from "lucide-react";
+import { FolderKanban, FolderTree, Library, Tag, Trash2, Upload, X } from "lucide-react";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { requirePageActor } from "@/app/_lib/session";
+import { RestoreDeleted } from "@/components/artifacts/artifact-delete";
 import {
   ArtifactCard,
   type ArtifactCardData,
@@ -29,6 +30,7 @@ import {
   type PageSearchParams,
 } from "@/lib/search-params";
 import {
+  findDeletedArtifact,
   hasFilters,
   LIBRARY_SORTS,
   listArtifacts,
@@ -80,6 +82,29 @@ function LibraryViews({ current }: { current: "all" | "opened" | "favorites" | "
         </Link>
       ))}
     </nav>
+  );
+}
+
+/**
+ * Shown on the library after an artifact was deleted (`?deleted=<id>`): says so and offers to
+ * undo. Only for an artifact of the workspace that is still deleted; anything else shows nothing.
+ */
+function DeletedNotice({ artifact }: { artifact: { id: string; title: string } }) {
+  return (
+    <div
+      role="status"
+      className="border-border bg-surface-muted flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border px-4 py-3 text-sm"
+      data-testid="deleted-notice"
+    >
+      <Trash2 className="text-muted-foreground size-4 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1 basis-48 break-words">
+        {t("delete.done", { title: artifact.title })}
+      </span>
+      <RestoreDeleted artifactId={artifact.id} then="open" />
+      <Link href="/settings/deleted" className="text-muted-foreground hover:text-foreground">
+        {t("delete.viewAll")}
+      </Link>
+    </div>
   );
 }
 
@@ -313,6 +338,11 @@ export default async function LibraryPage({
   }
 
   const cursor = firstParam(params.cursor);
+  const deletedParam = firstParam(params.deleted);
+  const justDeleted =
+    deletedParam && roleAllows(actor.role, "library:write")
+      ? await findDeletedArtifact(db, actor, deletedParam)
+      : null;
   const layout = libraryLayout((await cookies()).get(LIBRARY_LAYOUT_COOKIE)?.value);
   const anyFilter = hasFilters(filters);
   // The whole library's numbers, on its first page with nothing narrowing it (a sort does not),
@@ -382,6 +412,8 @@ export default async function LibraryPage({
         {controls}
         {activeFilters}
       </header>
+
+      {justDeleted ? <DeletedNotice artifact={justDeleted} /> : null}
 
       {summary && items.length > 0 ? (
         <LibrarySummary

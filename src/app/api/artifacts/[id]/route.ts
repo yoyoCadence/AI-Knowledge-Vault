@@ -1,7 +1,12 @@
 import { notFound } from "@/lib/errors";
 import { isUuid } from "@/lib/ids";
 import { z } from "zod";
-import { getArtifactDetail, tagsByArtifact, updateArtifact } from "@/modules/artifacts";
+import {
+  deleteArtifact,
+  getArtifactDetail,
+  tagsByArtifact,
+  updateArtifact,
+} from "@/modules/artifacts";
 import { collectionsOf } from "@/modules/collections";
 import { readingStateOf } from "@/modules/notes";
 import { findProject } from "@/modules/projects";
@@ -62,5 +67,17 @@ export const PATCH = authedRoute<{ id: string }>(
     if (!isUuid(params.id)) throw notFound("Artifact");
     const input = await parseJsonBody(request, UpdateArtifact);
     return json({ artifact: await updateArtifact(services.db(), actor, params.id, input, meta) });
+  },
+);
+
+/**
+ * DELETE /api/artifacts/:id — soft delete (ADR-017): hidden everywhere, share links included,
+ * until `POST /api/artifacts/:id/restore`. Nothing is removed. Audited.
+ */
+export const DELETE = authedRoute<{ id: string }>(
+  { permission: "library:write" },
+  async ({ actor, params, meta }) => {
+    if (!isUuid(params.id)) throw notFound("Artifact");
+    return json({ artifact: await deleteArtifact(services.db(), actor, params.id, meta) });
   },
 );
