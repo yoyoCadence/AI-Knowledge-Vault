@@ -963,6 +963,41 @@ conversations. Update it at the end of every PR.
     through the system locale: without a UTF-8 `LANG`, every non-ASCII file name becomes
     "download".
 
+  - **PR 29, delete and undo (QP-2, ADR-017):** before this, nothing could delete an
+    artifact, so a mistaken or sensitive import stayed in the library.
+    - `src/modules/artifacts/delete.ts`: `deleteArtifact` and `restoreDeletedArtifact` are
+      each one conditional UPDATE of `deleted_at`, audited (`artifact.deleted`,
+      `artifact.restored`). A repeat, or the wrong state, is 404. `listDeletedArtifacts` is
+      keyset-paged by `(deleted_at, id)`.
+    - `DELETE /api/artifacts/:id`, `POST /api/artifacts/:id/restore` (`library:write`).
+    - Nothing else changes on delete. Every reader already skipped deleted artifacts (library,
+      search, detail, previews, thumbnails, share links, counts, import dedupe and version
+      matching). A restore brings the artifact back as it was, except its share links: they
+      are suspended while it is deleted, and the restore revokes them in the same transaction
+      (ADR-020: "a future undo of either must revoke them"), so an old URL never works again.
+      This was the PR's Codex finding: the first version revived them.
+      Search chunks stay current while deleted: index jobs do not skip deleted artifacts.
+    - UI:
+      - the detail page has a "刪除作品" card with its own confirm step;
+      - the library then shows a notice with "復原";
+      - `/settings/deleted` lists deleted works with a restore button each, linked from
+        settings. It is 404 for viewers.
+    - The empty library's text no longer says import is unfinished.
+    - Tests: `tests/integration/api/artifact-delete-api.test.ts` covers:
+      - hidden from library, search, detail and share links, then all back after restore;
+      - a repeat or wrong state is 404;
+      - another workspace 404, a viewer 403, a cross-site request 403;
+      - re-importing the same file while deleted makes a new artifact, and restore keeps both;
+      - paging.
+
+      E2E: `tests/e2e/delete.spec.ts`.
+
+    - `tests/e2e/import.spec.ts` assumed it was the first spec to import anything: its
+      restore check expected exactly 2 skipped works. `delete.spec.ts` sorts before it and
+      broke that in CI. The check now reads the archive's own count from the export row.
+      Specs share one database, so a spec must not count the whole workspace.
+    - Purging (removing data and originals for good) is still a later task (ADR-017).
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
@@ -995,7 +1030,8 @@ conversations. Update it at the end of every PR.
     requests with no usable address share one "unknown" budget (DEPLOYMENT §5.6).
   - A link follows the current version: adding a version to a shared artifact shares it
     without a new check. A handed-out download URL outlives a revocation by up to 5 minutes.
-  - Restriction and deletion suspend links (no undo exists yet; one must revoke them).
+  - Restriction and deletion suspend links. Restoring a deleted artifact (PR 29) revokes
+    them (ADR-020); lifting a restriction has no undo path yet.
   - The pre-share check is pattern-based and advisory; it scans at most 2,000,000
     characters of extracted text, plus metadata and preview file names.
   - A restored artifact keeps its archived visibility, but links are never exported, so an

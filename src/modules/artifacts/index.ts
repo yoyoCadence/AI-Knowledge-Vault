@@ -29,3 +29,10 @@ export {
 } from "./edit";
 export { filterConditions, hasFilters, type LibraryFilters } from "./filters";
 export { splitVersion } from "./split";
+export {
+  deleteArtifact,
+  restoreDeletedArtifact,
+  findDeletedArtifact,
+  listDeletedArtifacts,
+  type DeletedArtifact,
+} from "./delete";

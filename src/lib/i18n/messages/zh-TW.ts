@@ -73,7 +73,7 @@ export const zhTW = {
   "sort.title": "依標題",
   "library.empty.title": "知識庫還是空的",
   "library.empty.body":
-    "匯入功能完成後，你可以把 Claude Design、ChatGPT、Gemini 等工具產生的 HTML、ZIP、PDF 與 Markdown 拖曳到這裡保存。",
+    "把 Claude Design、ChatGPT、Gemini 等工具產生的 HTML、ZIP、PDF、Markdown 與 TXT 匯入這裡保存，原始檔會原樣保留。",
 
   "auth.login.title": "登入",
   "auth.login.subtitle": "這是私人知識庫，只有管理者可以登入。",
@@ -161,6 +161,22 @@ export const zhTW = {
     "V{number} 會移到一件新作品（私人，同一個研究專案與敏感度）。筆記、標籤、收藏集、閱讀狀態與分享連結都留在這件作品。",
   "split.explainCurrent": "這是目前版本：拆分後，這件作品與它的分享連結改為顯示其餘最新的版本。",
   "split.error.only": "無法拆分：這是作品唯一的版本，或它的版本剛有變動，請重新整理後再試。",
+  "delete.section": "刪除作品",
+  "delete.action": "刪除這件作品",
+  "delete.explain":
+    "作品會從知識庫、搜尋與分享連結中隱藏，原始檔、版本、筆記與標籤都會保留。之後可以在「設定 → 已刪除的作品」復原；為了安全，原有的分享連結在復原時會被撤銷，需要時請重新建立。",
+  "delete.confirm": "確認刪除",
+  "delete.error.gone": "這件作品已經被刪除或不存在，請重新整理頁面。",
+  "delete.done": "已刪除「{title}」。",
+  "delete.undo": "復原",
+  "delete.viewAll": "查看已刪除的作品",
+  "deleted.title": "已刪除的作品",
+  "deleted.description":
+    "刪除的作品不會出現在知識庫、搜尋或分享連結中，但所有資料都還保留著。復原後，作品回到刪除前的狀態；原有的分享連結則會被撤銷，拿到舊連結的人無法再開啟，需要時請重新建立。",
+  "deleted.empty": "沒有已刪除的作品。",
+  "deleted.at": "刪除於 {date}",
+  "deleted.restore": "復原",
+  "deleted.error.gone": "這件作品已經復原或不存在，請重新整理頁面。",
   "artifact.download": "下載原始檔",
   "artifact.sha256": "SHA-256",
   "artifact.size": "大小",

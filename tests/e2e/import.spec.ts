@@ -237,6 +237,12 @@ test.describe("import → library → artifact (Scenario A)", () => {
     expect(archive.suggestedFilename()).toMatch(/^knowledge-vault-export-.+\.zip$/);
     const archiveBytes = await readFile((await archive.path())!);
     expect(createHash("sha256").update(archiveBytes).digest("hex")).toBe(checksum);
+    // Every work of the workspace is in it, including those other specs made before this one
+    // (specs share one database), so the restore below is checked against this number.
+    const exportedWorks = Number(
+      /(\d+) 件作品/.exec((await exportRow.getByText(/件作品/).textContent())!)![1],
+    );
+    expect(exportedWorks).toBeGreaterThanOrEqual(2);
 
     // The same archive, encrypted with a passphrase on its way out (ADR-022).
     await exportRow.getByText("加密下載（age）").click();
@@ -305,7 +311,9 @@ test.describe("import → library → artifact (Scenario A)", () => {
     await page.getByTestId("restore-start").click();
     const result = page.getByTestId("restore-result");
     await expect(result.getByText("完成", { exact: true })).toBeVisible({ timeout: 30_000 });
-    await expect(result.getByText(/作品：還原 0 · 略過 2 · 副本 0 · 失敗 0/)).toBeVisible();
+    await expect(
+      result.getByText(new RegExp(`作品：還原 0 · 略過 ${exportedWorks} · 副本 0 · 失敗 0`)),
+    ).toBeVisible();
     // The archive carried the tag (format v2); it already exists here, so it is merged.
     await expect(result.getByText(/標籤：新增 0 · 併入既有 1 · 副本 0/)).toBeVisible();
     expect(creates).toHaveLength(1);
