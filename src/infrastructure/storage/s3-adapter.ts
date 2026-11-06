@@ -212,10 +212,19 @@ export class S3StorageAdapter implements StorageAdapter {
   }
 }
 
-/** RFC 6266 attachment disposition with an ASCII fallback and UTF-8 filename*. */
+/**
+ * RFC 6266 attachment disposition with an ASCII fallback and UTF-8 filename*. The filename*
+ * value may hold only RFC 8187 attr-chars, so the `'()*` that encodeURIComponent leaves alone
+ * are percent-encoded too: Chromium ignores a filename* with a raw apostrophe and saves the
+ * file under the fallback, where every non-ASCII character is `_`.
+ */
 export function contentDisposition(filename: string): string {
   const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+  const encoded = encodeURIComponent(filename).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
 function isStatus(error: unknown, status: number): boolean {

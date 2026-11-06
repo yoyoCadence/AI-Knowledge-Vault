@@ -3,7 +3,7 @@
 The current state of the project, written for an agent or engineer who has no access to earlier
 conversations. Update it at the end of every PR.
 
-## 1. Snapshot (2026-10-28, after PR 26: the storage suite against a real bucket)
+## 1. Snapshot (2026-11-06, quality pass after PR 27)
 
 **Merged and tested**
 
@@ -948,6 +948,20 @@ conversations. Update it at the end of every PR.
     no image model was used), the contrast figures and what was checked. The plain skin is
     unchanged. Tests: `tests/unit/lib/skin.test.ts` (the cookie value, the hooks, and that the
     stylesheet is scoped to the skin and never restyles user images or previews).
+
+- **Quality pass (2026-11), tracked in `task.md` § Quality pass.** Each finding is a row there
+  with its class (bug, gap, risk, or checked and found correct).
+  - **PR 28, download file names:** `contentDisposition` percent-encodes `'()*` in `filename*`
+    (RFC 8187 attr-chars only). Reproduced in Chromium first: a `filename*` with a raw `'` is
+    ignored and the ASCII fallback is used, so "報告's.md" was saved as "\_\_'s.md". Covers
+    every download (local storage route, S3/R2 signed URLs, export manifest, encrypted export).
+    Test: `tests/unit/infrastructure/content-disposition.test.ts` (3 of its cases fail on the
+    old code).
+  - Local E2E in a container whose Playwright browser revision differs from the pinned
+    `@playwright/test`: point `PLAYWRIGHT_BROWSERS_PATH` at a directory whose
+    `chromium-<pinned revision>` entries link to the installed build. Chromium names downloads
+    through the system locale: without a UTF-8 `LANG`, every non-ASCII file name becomes
+    "download".
 
 **Not done or not verified**
 

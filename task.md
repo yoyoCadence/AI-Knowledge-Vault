@@ -55,3 +55,21 @@ Rule: ✅ only when code, tests and docs are complete and CI is green on `main`.
 | P1B-OPS           | Usage and status page: storage, DB, jobs, failures, backup state   | ✅ (PR 18)                                                                                                                                                |
 | P1B-SKIN          | Full-page "archive" skin (default) with a switch to the plain look | ✅ (PR 27; docs/THEME.md)                                                                                                                                 |
 | others            | see `docs/ROADMAP.md`                                              | 📝                                                                                                                                                        |
+
+## Quality pass (2026-11)
+
+Baseline on `main` at `4a0c8f5` before any change: format, lint, typecheck, 519 unit and
+integration tests (2 skipped), build and E2E 16/16 all pass. Classes: **bug** (reproduced),
+**gap** (documented as planned, not built), **risk** (documented, unbounded), **checked**
+(investigated and found correct; no change).
+
+| ID    | Finding                                                                                                                                                                       | Class   | Status                 |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------- |
+| QP-1  | `filename*` left `'()*` raw. Chromium ignores a `filename*` holding `'` and saves under the ASCII fallback, so "報告's.md" downloaded as "\_\_'s.md" (reproduced in Chromium) | bug     | ✅ PR 28               |
+| QP-2  | No way to delete an artifact: nothing sets `artifacts.deleted_at` (ADR-017; API_CONTRACT lists DELETE and restore as planned)                                                 | gap     | 📝                     |
+| QP-3  | Search has no `statement_timeout` (HANDOFF "Not done")                                                                                                                        | risk    | 📝                     |
+| QP-c1 | Promise handling: a one-off type-aware lint (`no-floating-promises`, `no-misused-promises`) found only `try`/`catch`-wrapped interval callbacks                               | checked | no change              |
+| QP-c2 | Version split vs. share previews: a token for a moved version stops (`shareAllowsPreview` requires the link artifact's current version)                                       | checked | no change              |
+| QP-c3 | Import dedupe and version matching skip deleted artifacts, so a soft delete cannot swallow a re-import                                                                        | checked | no change              |
+| QP-c4 | Every page on desktop and phone, both skins, light and dark, plus not-found pages: no console or hydration errors, no broken layout                                           | checked | no change              |
+| QP-c5 | Preview root-relative URLs: previews run with `script-src 'none'` (ADR-007), so framework builds cannot render anyway; a deliberate trade-off                                 | checked | no change (documented) |
