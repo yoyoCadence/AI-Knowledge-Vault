@@ -6,8 +6,9 @@ import { authedRoute } from "../../../_lib/route";
 import { services } from "../../../_lib/services";
 
 /**
- * POST /api/artifacts/:id/restore — undoes a soft delete: the artifact, and its share links,
- * are back as they were. A live artifact, or another workspace's, is 404. Audited.
+ * POST /api/artifacts/:id/restore — undoes a soft delete: the artifact is back as it was, but
+ * its share links are revoked (ADR-020), so old URLs never work again. A live artifact, or
+ * another workspace's, is 404. Audited.
  */
 export const POST = authedRoute<{ id: string }>(
   { permission: "library:write" },

@@ -1,7 +1,7 @@
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import type { Database, DbExecutor } from "@/infrastructure/database/client";
 import { beforeCursor, cursorTimestamp } from "@/infrastructure/database/keyset";
-import { artifacts, artifactVersions } from "@/infrastructure/database/schema";
+import { artifacts, artifactVersions, shareLinks } from "@/infrastructure/database/schema";
 import type { KeysetCursor } from "@/lib/cursor";
 import { notFound } from "@/lib/errors";
 import { isUuid } from "@/lib/ids";
@@ -10,11 +10,13 @@ import type { Actor } from "@/modules/auth";
 
 /**
  * Soft delete and undo (ADR-017, API_CONTRACT §5). Deleting sets `deleted_at` and nothing else:
- * originals, versions, extractions, derived files, tags, collections, notes, reading states,
- * search chunks and share links all stay, and every reader already skips a deleted artifact
- * (library, search, detail, previews, thumbnails, share links, counts, import matching). So
- * restoring brings back exactly what was there, share links included; while deleted, nobody
- * can open it, a link holder included. Purging (removing data for good) is a later task.
+ * originals, versions, extractions, derived files, tags, collections, notes, reading states and
+ * search chunks all stay, and every reader already skips a deleted artifact (library, search,
+ * detail, previews, thumbnails, share links, counts, import matching). While deleted, nobody can
+ * open it, a link holder included: its share links are suspended. Restoring brings the artifact
+ * back as it was except for those links, which it revokes in the same transaction (ADR-020: an
+ * undo of a deletion must revoke them), so nobody who was handed a link before the deletion can
+ * read it again. Purging (removing data for good) is a later task.
  *
  * Each change is one conditional UPDATE: deleting a deleted artifact, or restoring a live one,
  * matches no row and is 404, the same answer as another workspace's id, so a repeated click or
@@ -62,13 +64,16 @@ export async function deleteArtifact(
   });
 }
 
-/** Undoes `deleteArtifact`. A live artifact, or one outside the workspace, is 404. */
+/**
+ * Undoes `deleteArtifact` and revokes the artifact's share links (ADR-020). A live artifact, or
+ * one outside the workspace, is 404. Returns how many links were revoked.
+ */
 export async function restoreDeletedArtifact(
   db: Database,
   actor: Actor,
   artifactId: string,
   meta: RequestMeta,
-): Promise<{ id: string; title: string }> {
+): Promise<{ id: string; title: string; revokedShares: number }> {
   if (!isUuid(artifactId)) throw notFound("Deleted artifact");
   return db.transaction(async (tx) => {
     const [restored] = await tx
@@ -83,15 +88,24 @@ export async function restoreDeletedArtifact(
       )
       .returning({ id: artifacts.id, title: artifacts.title });
     if (!restored) throw notFound("Deleted artifact");
+    // Under the artifact's row lock (the UPDATE above), which share creation also takes, so no
+    // link can be added between the restore and this sweep.
+    const now = new Date();
+    const revoked = await tx
+      .update(shareLinks)
+      .set({ revokedAt: now, updatedAt: now })
+      .where(and(eq(shareLinks.artifactId, restored.id), isNull(shareLinks.revokedAt)))
+      .returning({ id: shareLinks.id });
     await recordAudit(tx, {
       action: "artifact.restored",
       workspaceId: actor.workspaceId,
       actorUserId: actor.userId,
       targetType: "artifact",
       targetId: restored.id,
+      metadata: { revokedShares: revoked.length },
       ...meta,
     });
-    return restored;
+    return { ...restored, revokedShares: revoked.length };
   });
 }
 

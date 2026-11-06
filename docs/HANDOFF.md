@@ -972,7 +972,10 @@ conversations. Update it at the end of every PR.
     - `DELETE /api/artifacts/:id`, `POST /api/artifacts/:id/restore` (`library:write`).
     - Nothing else changes on delete. Every reader already skipped deleted artifacts (library,
       search, detail, previews, thumbnails, share links, counts, import dedupe and version
-      matching), so a restore brings back exactly what was there, share links included.
+      matching). A restore brings the artifact back as it was, except its share links: they
+      are suspended while it is deleted, and the restore revokes them in the same transaction
+      (ADR-020: "a future undo of either must revoke them"), so an old URL never works again.
+      This was the PR's Codex finding: the first version revived them.
       Search chunks stay current while deleted: index jobs do not skip deleted artifacts.
     - UI:
       - the detail page has a "刪除作品" card with its own confirm step;
@@ -1023,8 +1026,8 @@ conversations. Update it at the end of every PR.
     requests with no usable address share one "unknown" budget (DEPLOYMENT §5.6).
   - A link follows the current version: adding a version to a shared artifact shares it
     without a new check. A handed-out download URL outlives a revocation by up to 5 minutes.
-  - Restriction and deletion suspend links. Restoring a deleted artifact (PR 29) brings its
-    links back; to end them for good, revoke them.
+  - Restriction and deletion suspend links. Restoring a deleted artifact (PR 29) revokes
+    them (ADR-020); lifting a restriction has no undo path yet.
   - The pre-share check is pattern-based and advisory; it scans at most 2,000,000
     characters of extracted text, plus metadata and preview file names.
   - A restored artifact keeps its archived visibility, but links are never exported, so an

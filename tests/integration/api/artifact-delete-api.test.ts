@@ -14,7 +14,7 @@ import {
 } from "@/infrastructure/database/schema";
 import { newId } from "@/lib/ids";
 import { listDeletedArtifacts } from "@/modules/artifacts";
-import { createShare, resolveShare } from "@/modules/sharing";
+import { createShare, listShares, resolveShare } from "@/modules/sharing";
 import { htmlDocument } from "@tests/fixtures/builders";
 import { createTestAdmin, signInOk } from "../helpers/auth";
 import { closeTestDb, testDb } from "../helpers/db";
@@ -136,7 +136,7 @@ describe("DELETE /api/artifacts/:id and POST /api/artifacts/:id/restore", () => 
     owner = await loggedIn();
   });
 
-  it("hides the artifact everywhere, share links included, and restore brings it all back", async () => {
+  it("hides the artifact everywhere; restore brings it back and revokes its old links", async () => {
     const artifactId = await importOne(owner, "delete-me.html", "鳶尾花觀察");
     const kept = await importOne(owner, "keep-me.html", "鳶尾花標本");
     const link = await createShare(
@@ -174,13 +174,29 @@ describe("DELETE /api/artifacts/:id and POST /api/artifacts/:id/restore", () => 
 
     const restored = await restore(owner, artifactId);
     expect(restored.status).toBe(200);
-    expect(await restored.json()).toEqual({ artifact: { id: artifactId, title: "鳶尾花觀察" } });
+    expect(await restored.json()).toEqual({
+      artifact: { id: artifactId, title: "鳶尾花觀察", revokedShares: 1 },
+    });
 
     expect(await libraryIds(owner)).toContain(artifactId);
     expect(await searchIds(owner, "鳶尾花")).toEqual(expect.arrayContaining([artifactId, kept]));
     expect((await detail(owner, artifactId)).status).toBe(200);
-    expect(await resolveShare(db, link.token)).toMatchObject({ artifactId });
     expect((await listDeletedArtifacts(db, owner.actor, { limit: 10 })).items).toEqual([]);
+
+    // ADR-020: an undo of a deletion revokes the suspended links. Whoever was handed the old
+    // URL cannot read the artifact again; a new link works as usual.
+    expect(await resolveShare(db, link.token)).toBeNull();
+    expect(await listShares(db, owner.actor, artifactId)).toEqual([
+      expect.objectContaining({ id: link.share.id, active: false }),
+    ]);
+    const fresh = await createShare(
+      db,
+      owner.actor,
+      artifactId,
+      { allowPreview: false, allowReading: true, allowDownload: false },
+      meta,
+    );
+    expect(await resolveShare(db, fresh.token)).toMatchObject({ artifactId });
 
     // Restoring a live artifact is 404 too.
     expect((await restore(owner, artifactId)).status).toBe(404);
