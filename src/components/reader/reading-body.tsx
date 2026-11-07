@@ -1,4 +1,5 @@
 import { t } from "@/lib/i18n";
+import type { ReaderImages } from "@/lib/reader-images";
 import type { VersionContent } from "@/modules/artifacts";
 import { headingAnchors, MarkdownView, PlainTextView } from "./markdown-view";
 
@@ -9,6 +10,7 @@ export function ReadingBody({
   version,
   hasThumbnail,
   content,
+  images,
 }: {
   /** Where the version's thumbnail is served from: the member route, or a share link's. */
   thumbnailSrc: string;
@@ -17,6 +19,8 @@ export function ReadingBody({
   /** Whether the version's thumbnail exists (a restored image gets it only after re-extraction). */
   hasThumbnail: boolean;
   content: VersionContent | null;
+  /** Where the document's own images may come from (see `readerImageSrc`). */
+  images?: ReaderImages;
 }) {
   const note = (text: string) => <p className="text-muted-foreground mb-4 text-xs">{text}</p>;
   const busy = ["pending", "processing"].includes(version.processingStatus);
@@ -60,7 +64,11 @@ export function ReadingBody({
       {method === "text" ? (
         <PlainTextView text={markdown} />
       ) : (
-        <MarkdownView markdown={markdown} anchors={headingAnchors(content.sections)} />
+        <MarkdownView
+          markdown={markdown}
+          anchors={headingAnchors(content.sections)}
+          images={images}
+        />
       )}
     </div>
   );

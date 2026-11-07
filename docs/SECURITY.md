@@ -121,8 +121,21 @@ with an allow-list renderer into React elements:
 - Only `http(s)`, `mailto` and in-page `#` links stay links. External ones get
   `target="_blank" rel="noopener noreferrer nofollow"`; `javascript:`, `data:` and relative
   targets become plain text.
-- Images in documents are shown as their alt text (`［圖片：…］`), so reading never loads
-  anything from elsewhere (no tracking pixels). Image versions show our own thumbnail.
+- Reading never loads anything from elsewhere (no tracking pixels). An image in a document is
+  shown only when its bytes are already ours (`readerImageSrc`, `src/lib/reader-images.ts`):
+  - a `data:` raster image written into the document (PNG, JPEG, GIF, WebP, AVIF; base64;
+    at most about 6 MB). SVG is left out;
+  - a stored image file of the document's own bundle, served from the **preview origin**
+    with the version's preview token (the owner's, or a share link's that allows preview),
+    never from the app origin. The path must resolve, inside the bundle, to one of the
+    version's image preview files.
+
+  Everything else (http(s), protocol-relative, any other scheme, a file the bundle does not
+  hold) is shown as its alt text (`［圖片：…］`). Images are requested with
+  `referrerpolicy="no-referrer"`, and not lazily: a bundle image's preview token expires,
+  so it is fetched with the page rather than when the reader scrolls to it. Notes show no images at all. Image versions show our own
+  thumbnail.
+
 - Plain-text extractions are shown preformatted, never interpreted as Markdown.
 - Cost is bounded too: some Markdown makes the parser's work grow quadratically and its
   recursion overflow the stack (20 KB of `- - - …` blocks the server for about a minute).

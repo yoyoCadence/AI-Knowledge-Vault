@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 import { PreviewFrame } from "@/components/preview/preview-frame";
 import { ReadingBody } from "@/components/reader/reading-body";
+import { readerImagesFor } from "@/modules/preview";
 import { type ReaderView, ViewSwitch } from "@/components/reader/view-switch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -104,6 +105,17 @@ export default async function SharedArtifactPage({
         : (views[0] ?? null);
   const content =
     view === "read" && version ? await shareContent(getDb(), capability, version) : null;
+  // The document's own images: data: ones always; its bundle's files only if the link allows
+  // preview (they come from the preview origin with this link's preview token).
+  const images =
+    view === "read" && version
+      ? await readerImagesFor(
+          getDb(),
+          { versionId: version.id, workspaceId: capability.workspaceId },
+          preview,
+          version.previewEntryPath,
+        )
+      : undefined;
   const base = `/s/${encodeURIComponent(token)}`;
 
   return (
@@ -151,6 +163,7 @@ export default async function SharedArtifactPage({
                 version={version}
                 hasThumbnail={hasThumbnail}
                 content={content}
+                images={images}
               />
             ) : preview ? (
               <PreviewFrame
