@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import type { ReactNode } from "react";
 import { ThemeProvider } from "@/components/layout/theme-provider";
 import { t } from "@/lib/i18n";
@@ -23,10 +23,12 @@ export const viewport: Viewport = {
 export default async function RootLayout({ children }: { children: ReactNode }) {
   // The skin is chosen per browser (docs/THEME.md); reading it here avoids a flash of the other.
   const skin = skinOf((await cookies()).get(SKIN_COOKIE)?.value);
+  // This request's CSP nonce (proxy.ts): next-themes' inline theme script needs it to run.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html lang="zh-Hant-TW" data-skin={skin} suppressHydrationWarning>
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider nonce={nonce}>{children}</ThemeProvider>
       </body>
     </html>
   );

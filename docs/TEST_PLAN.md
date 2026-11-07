@@ -69,6 +69,7 @@ Rules:
 | CSRF                   | mutating request with a foreign `Origin` → 403                                                                       |
 | Immutability           | direct SQL `UPDATE file_assets SET sha256 = …` raises an error                                                       |
 | Host routing           | `/p/*` on the app host → 404; app routes on the preview host → 404                                                   |
+| App-origin CSP         | every app page runs its scripts with no violation; injected `<script>` / `onerror` markup is refused                 |
 
 ## 5. E2E scenarios (Phase 1B exit)
 

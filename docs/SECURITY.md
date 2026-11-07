@@ -293,6 +293,32 @@ nofollow`, are never cached, and are rate limited per client address
   bound parameters only. `sql.raw` is banned outside migrations.
 - **XSS:** React escapes by default. There is no raw HTML in the app origin, and search
   snippets are built as text segments, not HTML strings.
+- **Content-Security-Policy on the app origin** (`proxy.ts`), as defence in depth should
+  markup ever slip in:
+  ```
+  script-src 'self' 'nonce-<per request>' 'strict-dynamic'; object-src 'none';
+  base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  ```
+  - Only scripts carrying the request's nonce run: Next.js's own, and the theme script (the
+    root layout hands the nonce to next-themes). With `'strict-dynamic'`, scripts they load
+    run too. Inline handlers, `javascript:` URLs and scripts from other hosts never run.
+  - `next dev` adds `'unsafe-eval'`, which React needs there; production does not.
+  - A nonce needs a page rendered per request. Every page is: the root layout reads cookies.
+    A statically rendered page would get no nonce, and none of its scripts would run.
+  - Deliberately unset, with no `default-src`, so they stay unrestricted:
+    - `connect-src`: browser uploads go straight to object storage;
+    - `frame-src`: the preview iframe;
+    - `img-src`: reader images come from the preview origin;
+    - `style-src`: inline styles.
+
+    They carry no script. Narrowing them needs the deployed storage endpoint verified first
+    (DEPLOYMENT §5.2).
+
+  - The preview host never gets this policy: its route sets a stricter one (§5), and
+    `frame-ancestors 'none'` would stop the app from framing it.
+  - Tests: `tests/unit/proxy.test.ts` checks the headers. `tests/e2e/csp.spec.ts` checks that
+    every page runs its scripts with no violation, and that injected `<script>` and
+    `onerror` markup is refused.
 - **Path traversal:** storage keys are built only by `storageKeys.*` helpers from validated
   UUIDs and hashes. The local adapter resolves the key under its root and asserts
   containment.

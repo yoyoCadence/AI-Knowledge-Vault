@@ -1148,6 +1148,26 @@ conversations. Update it at the end of every PR.
     - Every shipped config (dev, test, E2E, CI) already uses two hostnames.
     - Test: `tests/unit/infrastructure/env.test.ts`.
 
+  - **PR 39, a Content-Security-Policy for the app origin (QP-11).**
+    - The app origin sent no CSP, so any markup that slipped into a page could run script
+      with the owner's session. No such sink is known: React escapes, and there is no raw
+      HTML.
+    - `proxy.ts` now sets a policy on every app-host response, with a fresh nonce per
+      request. It allows nonced scripts and what they load (`'strict-dynamic'`), and sets
+      `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and
+      `frame-ancestors 'none'`.
+    - Next.js reads the nonce from the request's policy. The root layout passes it to
+      next-themes for its inline script.
+    - Connect, frame, image and style sources are left unrestricted on purpose (direct
+      uploads, the preview iframe, reader images). See SECURITY §11.
+    - Verified under `next start` (full E2E) and under `next dev`, by hand: no violations,
+      and scripts run.
+    - Tests:
+      - `tests/unit/proxy.test.ts`: a fresh nonce per request, a client-sent `x-nonce` is
+        overwritten, and the preview host gets no app policy.
+      - `tests/e2e/csp.spec.ts`: 17 pages (signed in, the login page, a share page) run with
+        no violation; injected `<script>` and `onerror` markup is refused.
+
 **Not done or not verified**
 
 - Search folds Traditional and Simplified by character, not by word: 軟體 does not find 软件
@@ -1158,6 +1178,11 @@ conversations. Update it at the end of every PR.
   merged) must be reset: the migration was regenerated with a new timestamp.
 - Tag operations re-index every affected artifact synchronously. Fine for a personal
   library; a tag on many thousands of artifacts would make a rename slow.
+
+- The app-origin CSP (PR 39) restricts scripts, plugins, `<base>`, form targets and framing
+  only. Connect, frame, image and style sources stay open until the deployed storage endpoint
+  is known (DEPLOYMENT §5.2). It has no `report-to` endpoint, so a violation in production is
+  seen only in the browser console.
 
 - Reading mode shows a document's images only from a `data:` URL or its own bundle (PR 36).
   A Markdown or PDF bundle (`text_only`, `pdf`) stores no preview files, so its images stay
