@@ -2,6 +2,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { DbExecutor } from "@/infrastructure/database/client";
 import { artifacts, artifactVersions, derivedAssets } from "@/infrastructure/database/schema";
 import { isUuid } from "@/lib/ids";
+import type { ReaderImages } from "@/lib/reader-images";
 import { signToken, verifyToken, type SignedTokenClaims } from "@/lib/signed-token";
 import { getVersionWithOriginal } from "@/modules/artifacts";
 import type { Actor } from "@/modules/auth";
@@ -168,6 +169,40 @@ export function previewHeaders(input: {
     "cross-origin-resource-policy": "cross-origin",
     "cache-control": "private, max-age=300",
   };
+}
+
+/** `${PREVIEW_ORIGIN}/p/<token>/` of a preview URL issued here, or null for anything else. */
+export function previewBaseOf(url: string): string | null {
+  return /^(https?:\/\/[^/]+\/p\/[^/]+\/)/.exec(url)?.[1] ?? null;
+}
+
+/**
+ * What reading mode may show of a version's own images (`readerImageSrc`): `data:` images
+ * always; files of its bundle only with a live preview URL for it (the owner's, or a share
+ * link's that allows preview), from the preview origin.
+ */
+export async function readerImagesFor(
+  db: DbExecutor,
+  target: { versionId: string; workspaceId: string },
+  preview: { url: string } | null,
+  entryPath: string | null,
+): Promise<ReaderImages> {
+  const previewBase = preview ? previewBaseOf(preview.url) : null;
+  if (!previewBase) return { previewBase: null, entryPath: null, files: [] };
+  const rows = await db
+    .select({ path: derivedAssets.path })
+    .from(derivedAssets)
+    .where(
+      and(
+        eq(derivedAssets.artifactVersionId, target.versionId),
+        eq(derivedAssets.workspaceId, target.workspaceId),
+        eq(derivedAssets.kind, "preview_file"),
+      ),
+    );
+  const files = rows
+    .map((row) => row.path)
+    .filter((path) => mimeForPath(path).startsWith("image/"));
+  return { previewBase, entryPath, files };
 }
 
 /** Signed preview URL for a version the actor can read, or null when it has no preview. */

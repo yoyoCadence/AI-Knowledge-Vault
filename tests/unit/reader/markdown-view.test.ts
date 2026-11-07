@@ -71,6 +71,34 @@ describe("reading mode renderer (SECURITY.md §5 Reading mode)", () => {
     expect(html).toContain("［圖片：未提供說明］");
   });
 
+  it("shows the document's own images: data: ones and its bundle's files, nothing remote", () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const images = {
+      previewBase: "http://127.0.0.1:3100/p/TOKEN/",
+      entryPath: "index.html",
+      files: ["img/chart.png"],
+    };
+    const markdown =
+      `![內嵌圖](data:image/png;base64,${png}) ![長條圖](img/chart.png) ` +
+      "![外部圖](https://tracker.example/pixel.png) ![參照圖][fig]\n\n[fig]: img/chart.png";
+    const html = renderToStaticMarkup(
+      createElement(MarkdownView, { markdown, anchors: [], images }),
+    );
+    expect(html).toContain(`src="data:image/png;base64,${png}" alt="內嵌圖"`);
+    expect(html).toContain('src="http://127.0.0.1:3100/p/TOKEN/img/chart.png" alt="長條圖"');
+    expect(html).toContain('src="http://127.0.0.1:3100/p/TOKEN/img/chart.png" alt="參照圖"');
+    expect(html.match(/<img /g)).toHaveLength(3);
+    // No referrer is sent, and images below the fold wait until they are near.
+    expect(html.match(/referrerPolicy="no-referrer"/gi)).toHaveLength(3);
+    expect(html.match(/loading="lazy"/g)).toHaveLength(3);
+    expect(html).not.toContain("tracker.example");
+    expect(html).toContain("［圖片：外部圖］");
+
+    // Notes get no images: even a data: image stays text there.
+    expect(render(`![內嵌圖](data:image/png;base64,${png})`)).not.toContain("<img");
+  });
+
   it("renders structure: headings from h2, lists, tables, code", () => {
     const html = render(
       "# Title\n\n## Sub\n\n- a\n- [x] done\n\n1. one\n\n| k | v |\n|:-|-:|\n| a | 1 |\n\n```js\nconst x = '<b>';\n```",

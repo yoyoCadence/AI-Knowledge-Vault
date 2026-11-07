@@ -2,14 +2,17 @@ import type { Nodes, TableCell, TableRow } from "mdast";
 import type { ReactNode } from "react";
 import { t } from "@/lib/i18n";
 import { MARKDOWN_MAX_DEPTH, markdownDepth, parseMarkdown } from "@/lib/markdown";
+import { type ReaderImages, readerImageSrc } from "@/lib/reader-images";
 
 /**
  * Reading mode (docs/SECURITY.md §5 "Reading mode", FR-LIB-4): renders our own normalized
  * Markdown through an allow-list of node types into React elements. Nothing is ever passed
  * through as HTML: raw HTML in the source is shown as text, only http(s)/mailto and in-page
- * links stay links (with rel="noopener noreferrer nofollow"), and images are shown as their
- * alt text so reading never loads anything from elsewhere. `dangerouslySetInnerHTML` is
- * banned in this folder by lint.
+ * links stay links (with rel="noopener noreferrer nofollow"). Images are shown only when their
+ * bytes are already ours (`readerImageSrc`: a `data:` raster image in the document, or a file
+ * of its own bundle from the preview origin); any other image is shown as its alt text, so
+ * reading never loads anything from elsewhere. `dangerouslySetInnerHTML` is banned in this
+ * folder by lint.
  */
 
 export { parseMarkdown };
@@ -41,6 +44,8 @@ interface RenderContext {
   nextAnchor: number;
   /** Reference-style link targets (`[text][id]` + `[id]: url`), by normalized identifier. */
   definitions: Map<string, string>;
+  /** Where the document's own images may come from; none (notes): every image is alt text. */
+  images: ReaderImages | undefined;
 }
 
 /** Collects `[id]: url` definitions; identifiers compare case-insensitively (CommonMark). */
@@ -174,7 +179,25 @@ function render(node: Nodes, ctx: RenderContext, key: number, root: boolean): Re
       );
     }
     case "image":
-    case "imageReference":
+    case "imageReference": {
+      const url =
+        node.type === "image" ? node.url : ctx.definitions.get(node.identifier.toLowerCase());
+      // Without `images` (notes) nothing is shown, not even a data: image.
+      const src = url === undefined || !ctx.images ? null : readerImageSrc(url, ctx.images);
+      if (src) {
+        return (
+          // eslint-disable-next-line @next/next/no-img-element -- the document's own image: a data: URL or the preview origin, never optimizable
+          <img
+            key={key}
+            src={src}
+            alt={node.alt ?? ""}
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
+            className="border-border my-2 inline-block h-auto max-w-full rounded border"
+          />
+        );
+      }
       return (
         <span
           key={key}
@@ -183,6 +206,7 @@ function render(node: Nodes, ctx: RenderContext, key: number, root: boolean): Re
           {t("reader.image", { alt: node.alt || t("reader.imageNoAlt") })}
         </span>
       );
+    }
     case "linkReference": {
       const url = ctx.definitions.get(node.identifier.toLowerCase());
       const href = url === undefined ? null : safeHref(url);
@@ -251,7 +275,11 @@ function render(node: Nodes, ctx: RenderContext, key: number, root: boolean): Re
 }
 
 /** The Markdown's elements, or null when it is too deep to render (or does not parse). */
-function renderMarkdown(markdown: string, anchors: string[]): ReactNode | null {
+function renderMarkdown(
+  markdown: string,
+  anchors: string[],
+  images: ReaderImages | undefined,
+): ReactNode | null {
   try {
     const tree = parseMarkdown(markdown);
     // `render` and `collectDefinitions` recurse once per level: a deeper tree could overflow
@@ -261,6 +289,7 @@ function renderMarkdown(markdown: string, anchors: string[]): ReactNode | null {
       anchors,
       nextAnchor: 0,
       definitions: collectDefinitions(tree, new Map()),
+      images,
     };
     return render(tree, ctx, 0, true);
   } catch {
@@ -273,8 +302,17 @@ function renderMarkdown(markdown: string, anchors: string[]): ReactNode | null {
  * Text that cannot be rendered safely is shown as written: reading never fails because of
  * how a text is formatted.
  */
-export function MarkdownView({ markdown, anchors }: { markdown: string; anchors: string[] }) {
-  const content = renderMarkdown(markdown, anchors);
+export function MarkdownView({
+  markdown,
+  anchors,
+  images,
+}: {
+  markdown: string;
+  anchors: string[];
+  /** The document's own images (reading mode); left out for notes, whose images stay text. */
+  images?: ReaderImages;
+}) {
+  const content = renderMarkdown(markdown, anchors, images);
   if (content === null) return <PlainTextView text={markdown} />;
   return (
     <div className="text-foreground max-w-[72ch] text-[15px] break-words sm:text-base">

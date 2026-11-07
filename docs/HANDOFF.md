@@ -1089,6 +1089,27 @@ conversations. Update it at the end of every PR.
           then re-indexed and found by a Simplified one;
         - the re-index is queued once, not daily.
 
+  - **PR 36, images in reading mode.** Reading mode showed every image as its alt text. It
+    now shows an image when its bytes are already ours, and never loads anything from
+    elsewhere (SECURITY.md §5):
+    - a `data:` raster image in the document (SVG left out, about 6 MB at most);
+    - an image file of the document's own bundle (static sites, Claude Design), from the
+      **preview origin** with the version's preview token, so untrusted bytes stay off the
+      app origin (ADR-007). The path must resolve inside the bundle to one of its stored
+      image files: `readerImageSrc` in `src/lib/reader-images.ts`, and `readerImagesFor` in
+      the preview module.
+    - Remote images stay alt text and are never requested. Notes show no images at all.
+    - Tests:
+      - `tests/unit/lib/reader-images.test.ts`: allowed and refused `data:`, every remote
+        form, relative and `..` resolution, encoded names, missing files;
+      - `tests/unit/reader/markdown-view.test.ts`: what is rendered, including reference-style
+        images; notes stay text;
+      - `tests/integration/library/reader-images.test.ts`: a real static-site import, whose
+        built URL the preview route serves as `image/png`, scoped to the workspace;
+      - `tests/e2e/reader-images.spec.ts`: both images load in the browser, the remote one
+        stays text, and the reader requests nothing from the tracker. The preview frame's
+        own attempt is refused by its CSP before it is sent.
+
 **Not done or not verified**
 
 - Search folds Traditional and Simplified by character, not by word: 軟體 does not find 软件
@@ -1100,8 +1121,9 @@ conversations. Update it at the end of every PR.
 - Tag operations re-index every affected artifact synchronously. Fine for a personal
   library; a tag on many thousands of artifacts would make a rename slow.
 
-- Reading mode shows document images as alt text only. Serving derived images of imported
-  documents through an authorized route is not built.
+- Reading mode shows a document's images only from a `data:` URL or its own bundle (PR 36).
+  A Markdown or PDF bundle (`text_only`, `pdf`) stores no preview files, so its images stay
+  alt text. A share link without preview permission shows only the `data:` ones.
 
 - Preview limits:
   - Root-relative URLs (`/style.css`) inside imported sites resolve to the preview host root

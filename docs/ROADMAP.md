@@ -31,7 +31,7 @@
 | P1A-ZIP           | 安全 ZIP 讀取（限制、traversal、symlink、bomb）、分類 A/B/C/D、預覽檔衍生                            | ✅                                                        |
 | P1A-VERSION       | 版本比對規則、疑似重複標示                                                                           | ✅                                                        |
 | P1A-RECOVERY      | staging 清理、過期處理、reconciliation                                                               | ✅                                                        |
-| P1A-IMPORT-UI     | 拖曳/多選上傳、進度、匯入報告、重試                                                                  | ✅                                                        |
+| P1A-IMPORT-UI     | 拖曳/多選上傳、進度、匯入報告、重試                                                                  | ✅；匯入時選擇專案與收藏分類（PR 34）                     |
 | P1A-EXPORT        | 可攜式匯出 v1（manifest、checksums.sha256、metadata、originals、normalized）                         | ✅                                                        |
 | P1A-RESTORE       | 還原（驗證、ID mapping、衝突模式、重建、報告）+ CLI                                                  | ✅                                                        |
 | P1A-INTEGRITY     | 完整性檢查 job 與狀態                                                                                | ✅                                                        |
@@ -51,10 +51,10 @@
 | P1B-LIBRARY       | Library 首頁（最近新增/閱讀、收藏、分類、統計、保存狀態）、Grid/List Cards    | ✅ 首頁各區、統計與保存狀態、格狀/清單版面（PR 5、15、16、22、23） |
 | P1B-DETAIL        | Artifact Detail（版本、來源資訊、下載、metadata 編輯）                        | ✅ 標題、說明、專案（PR 14）；可見性（PR 17）；來源資訊（PR 19）   |
 | P1B-PREVIEW       | 獨立 Preview Origin、token、CSP、sandbox iframe                               | ✅                                                                 |
-| P1B-READER        | Reading Mode（安全 Markdown renderer、TOC、手機排版）                         | ✅                                                                 |
+| P1B-READER        | Reading Mode（安全 Markdown renderer、TOC、手機排版）                         | ✅；文件自身的圖片（PR 36）                                        |
 | P1B-ORG           | Research Projects、Collections（階層）、Tags（正規化、合併）                  | ✅ Tags（PR 13）、Projects（PR 14）、Collections（PR 15）          |
 | P1B-NOTES         | Notes、Reading Status、Favorites                                              | ✅（PR 16）                                                        |
-| P1B-SEARCH        | CJK bigram 全文搜尋、篩選、排序、片段 Highlight                               | ✅（PR 12–14；筆記內容 PR 16）                                     |
+| P1B-SEARCH        | CJK bigram 全文搜尋、篩選、排序、片段 Highlight                               | ✅（PR 12–14；筆記內容 PR 16）；繁簡互通（PR 35）                  |
 | P1B-SHARE         | Share links（權限分離、到期、撤銷）、分享前檢查、公開閱讀頁                   | ✅（PR 17）                                                        |
 | P1B-OPS           | Usage Dashboard（儲存、DB、Jobs、失敗、最後完整性檢查）                       | ✅（PR 18）                                                        |
 | P1B-E2E           | E2E：登入、批次上傳、進度、開啟作品、搜尋、改分類、筆記、分享、撤銷、匯出還原 | ✅（各功能 PR；手機版 PR 20）                                      |

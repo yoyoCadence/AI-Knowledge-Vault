@@ -36,7 +36,7 @@ import {
   tagsByArtifact,
 } from "@/modules/artifacts";
 import { roleAllows } from "@/modules/auth";
-import { issuePreviewUrl } from "@/modules/preview";
+import { issuePreviewUrl, readerImagesFor } from "@/modules/preview";
 import { collectionOptions, collectionsOf } from "@/modules/collections";
 import { listNotes, readingStateOf } from "@/modules/notes";
 import { listShares } from "@/modules/sharing";
@@ -60,6 +60,16 @@ async function load(id: string, requested?: string) {
       requested === "read" || requested === "preview" ? requested : preview ? "preview" : "read";
     const content =
       currentId && view === "read" ? await getVersionContent(getDb(), actor, id, currentId) : null;
+    // Reading mode shows the document's own images: data: ones, and its bundle's files.
+    const images =
+      view === "read" && overview
+        ? await readerImagesFor(
+            getDb(),
+            { versionId: overview.version.id, workspaceId: actor.workspaceId },
+            preview,
+            overview.version.previewEntryPath,
+          )
+        : undefined;
     const tags = (await tagsByArtifact(getDb(), actor.workspaceId, [id])).get(id) ?? [];
     const canEdit = roleAllows(actor.role, "library:write");
     const allTags = canEdit ? await listTags(getDb(), actor) : [];
@@ -84,6 +94,7 @@ async function load(id: string, requested?: string) {
       preview,
       view,
       content,
+      images,
       tags,
       allTags,
       collections,
@@ -147,6 +158,7 @@ export default async function ArtifactPage({
     preview,
     view,
     content,
+    images,
     tags,
     allTags,
     collections,
@@ -235,6 +247,7 @@ export default async function ArtifactPage({
                     version={version}
                     hasThumbnail={overview?.hasThumbnail ?? false}
                     content={content}
+                    images={images}
                   />
                 ) : preview ? (
                   <PreviewFrame
