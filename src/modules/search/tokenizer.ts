@@ -9,8 +9,13 @@
  * backslashes or tsquery operators from user input.
  */
 
-/** Bump to re-index everything (`search.reindex_all`). */
-export const TOKENIZER_VERSION = 1;
+import { T2S_PAIRS } from "./fold-data";
+
+/**
+ * Bump to re-index everything: the worker queues `search.reindex_all` once per version, at its
+ * first start with it (src/worker/scheduler.ts). 2: Traditional/Simplified folding.
+ */
+export const TOKENIZER_VERSION = 2;
 /** Postgres clamps tsvector positions to 1..16383. */
 const MAX_POSITION = 16_383;
 const MAX_WORD_LENGTH = 64;
@@ -27,7 +32,49 @@ export type Weight = "A" | "B" | "C" | "D";
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const WORD = /[\p{L}\p{N}]/u;
 
+/**
+ * Traditional → Simplified, one code point to one (OpenCC's character table), with every chain
+ * followed to its end (薴 → 苧 → 苎 becomes 薴 → 苎), so folding is idempotent. It must be: a
+ * query folds its text and then tokenizes it, folding again, while indexing folds once, and the
+ * two have to agree.
+ */
+const T2S: ReadonlyMap<string, string> = (() => {
+  const codePoints = Array.from(T2S_PAIRS);
+  const direct = new Map<string, string>();
+  for (let index = 0; index + 1 < codePoints.length; index += 2) {
+    direct.set(codePoints[index]!, codePoints[index + 1]!);
+  }
+  const map = new Map<string, string>();
+  for (const from of direct.keys()) {
+    let to = direct.get(from)!;
+    const seen = new Set([from, to]);
+    for (let next = direct.get(to); next !== undefined && !seen.has(next); next = direct.get(to)) {
+      seen.add(next);
+      to = next;
+    }
+    map.set(from, to);
+  }
+  return map;
+})();
+
+/**
+ * Script folding (docs/SEARCH_DESIGN.md §2): every Traditional character becomes its
+ * Simplified form, so 「形態」 and 「形态」 index and match alike. Per code point and one to one,
+ * so offsets still map back to the original text (snippets). Characters used in both scripts
+ * (著, 台) stay as they are.
+ */
+export function foldScript(text: string): string {
+  let folded = "";
+  for (const char of text) folded += T2S.get(char) ?? char;
+  return folded;
+}
+
 export function normalizeForSearch(text: string): string {
+  return foldScript(normalizeCase(text));
+}
+
+/** NFKC and lower case, without script folding (the literal form a query also matches). */
+function normalizeCase(text: string): string {
   return text.normalize("NFKC").toLowerCase();
 }
 
@@ -76,10 +123,10 @@ export interface Token {
  * run, so consecutive bigrams sit at consecutive positions (`<->` matches them) while
  * phrases never match across a separator. A bigram takes its first character's position.
  */
-export function indexTokens(text: string, startPosition = 1): Token[] {
+export function indexTokens(text: string, startPosition = 1, fold = true): Token[] {
   const tokens: Token[] = [];
   let position = startPosition;
-  for (const run of runsOf(normalizeForSearch(text))) {
+  for (const run of runsOf(fold ? normalizeForSearch(text) : normalizeCase(text))) {
     if (run === null) {
       position += 1;
     } else if (run.kind === "word") {
@@ -130,6 +177,12 @@ export function toTsvector(parts: { text: string; weight: Weight }[]): string {
 export interface QueryTerm {
   /** Index tokens of the term in order, with their relative positions. */
   tokens: Token[];
+  /**
+   * The same term without script folding, when folding changed it. A version indexed before
+   * folding (tokenizer 1) holds these lexemes until it is re-indexed, so the term matches either
+   * form and search keeps finding it meanwhile.
+   */
+  literalTokens?: Token[];
   /** Latin single words match as prefixes (`therm` → `thermal`). */
   prefix: boolean;
   /** The normalized text pieces to highlight (CJK runs, words). */
@@ -149,31 +202,58 @@ export function parseQuery(query: string): QueryTerm[] {
     if (quoted) {
       const tokens = phraseTokens(piece);
       if (tokens.length > 0) {
-        terms.push({
-          tokens,
-          prefix: false,
-          highlights: runs.flatMap((run) =>
-            run === null ? [] : [run.kind === "word" ? run.text : run.chars.join("")],
+        terms.push(
+          withLiteral(
+            {
+              tokens,
+              prefix: false,
+              highlights: runs.flatMap((run) =>
+                run === null ? [] : [run.kind === "word" ? run.text : run.chars.join("")],
+              ),
+            },
+            phraseTokens(piece, false),
           ),
-        });
+        );
       }
       return;
     }
-    for (const run of runs) {
-      if (run === null) continue;
+    // Folding keeps every character's class and count, so the literal runs line up one to one.
+    const literalRuns = runsOf(normalizeCase(piece));
+    runs.forEach((run, runIndex) => {
+      if (run === null) return;
       const text = run.kind === "word" ? run.text : run.chars.join("");
-      terms.push({ tokens: phraseTokens(text), prefix: run.kind === "word", highlights: [text] });
-    }
+      const literal = literalRuns[runIndex];
+      const literalText =
+        literal && literal.kind === run.kind
+          ? literal.kind === "word"
+            ? literal.text
+            : literal.chars.join("")
+          : text;
+      terms.push(
+        withLiteral(
+          { tokens: phraseTokens(text), prefix: run.kind === "word", highlights: [text] },
+          phraseTokens(literalText, false),
+        ),
+      );
+    });
   });
   return terms.slice(0, MAX_QUERY_TERMS);
+}
+
+/** Adds the literal (unfolded) tokens when they differ from the folded ones. */
+function withLiteral(term: QueryTerm, literal: Token[]): QueryTerm {
+  const differs =
+    literal.length !== term.tokens.length ||
+    literal.some((token, index) => token.lexeme !== term.tokens[index]!.lexeme);
+  return differs && literal.length > 0 ? { ...term, literalTokens: literal } : term;
 }
 
 /**
  * The tokens a phrase must match, in order: words, and for CJK runs their bigrams (a single
  * CJK character is its unigram). Unigrams of longer runs are redundant given the bigrams.
  */
-function phraseTokens(text: string): Token[] {
-  const all = indexTokens(text);
+function phraseTokens(text: string, fold = true): Token[] {
+  const all = indexTokens(text, 1, fold);
   const keep: Token[] = [];
   for (const token of all) {
     const chars = [...token.lexeme];
@@ -204,16 +284,24 @@ export function termTsqueries(terms: QueryTerm[]): string[] {
   return terms
     .filter((term) => term.tokens.length > 0)
     .map((term) => {
-      const [first, ...rest] = term.tokens;
-      let expression = `'${first!.lexeme}'${term.prefix && rest.length === 0 ? ":*" : ""}`;
-      let previous = first!.position;
-      for (const token of rest) {
-        const distance = token.position - previous;
-        expression += ` ${distance === 1 ? "<->" : `<${distance}>`} '${token.lexeme}'`;
-        previous = token.position;
-      }
-      return rest.length > 0 ? `(${expression})` : expression;
+      const folded = phraseTsquery(term.tokens, term.prefix);
+      return term.literalTokens
+        ? `(${folded} | ${phraseTsquery(term.literalTokens, term.prefix)})`
+        : folded;
     });
+}
+
+/** One phrase: its tokens at their relative distances (`<->`, `<2>` …). */
+function phraseTsquery(tokens: Token[], prefix: boolean): string {
+  const [first, ...rest] = tokens;
+  let expression = `'${first!.lexeme}'${prefix && rest.length === 0 ? ":*" : ""}`;
+  let previous = first!.position;
+  for (const token of rest) {
+    const distance = token.position - previous;
+    expression += ` ${distance === 1 ? "<->" : `<${distance}>`} '${token.lexeme}'`;
+    previous = token.position;
+  }
+  return rest.length > 0 ? `(${expression})` : expression;
 }
 
 /** All terms in one `tsquery` (`&`), or null when the query has nothing searchable. */

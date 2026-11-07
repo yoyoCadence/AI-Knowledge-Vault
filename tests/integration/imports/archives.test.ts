@@ -442,8 +442,9 @@ describe("maintenance (P1A-RECOVERY)", () => {
     const first = await enqueueDueMaintenance(db, now);
     const second = await enqueueDueMaintenance(db, now);
     expect(second).toBe(0);
-    // import, export and rate-limit cleanup, weekly integrity, search backfill
-    expect(first).toBeLessThanOrEqual(5);
+    // import, export and rate-limit cleanup, weekly integrity, search backfill, and the
+    // once-per-tokenizer re-index
+    expect(first).toBeLessThanOrEqual(6);
     const scheduled = await db
       .select()
       .from(processingJobs)
