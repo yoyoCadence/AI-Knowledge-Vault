@@ -83,6 +83,91 @@ describe("extractHtml", () => {
   });
 });
 
+describe("extractHtml keeps a page's text, and its words apart", () => {
+  const page = (body: string, title = "T") =>
+    extractHtml(
+      `<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`,
+      {
+        filename: "page.html",
+        filenameStem: "page",
+      },
+    ).result;
+
+  it("keeps a page wrapped in a form (ASP.NET WebForms), but not its controls", () => {
+    const result = page(
+      `<form id="form1" method="post" action="./news.aspx">
+        <input type="hidden" name="__VIEWSTATE" value="dDwtMTA4">
+        <div><h1>公告事項</h1><p>本府公布新版補助辦法。</p></div>
+        <button type="submit">送出查詢</button>
+      </form>`,
+    );
+    expect(result.status).toBe("succeeded");
+    expect(result.plainText).toBe("公告事項\n\n本府公布新版補助辦法。");
+    expect(result.markdown).toContain("# 公告事項");
+    expect(result.sections.map((section) => section.heading)).toEqual(["公告事項"]);
+  });
+
+  it("keeps an accordion's questions and its collapsed answers, and nothing else hidden", () => {
+    const result = page(
+      `<h3><button aria-expanded="false" aria-controls="a1">申請資格為何？</button></h3>
+       <div id="a1" role="region" hidden><p>設籍滿一年者。</p></div>
+       <button aria-expanded="false" aria-controls="a2 a3">More</button>
+       <div id="a2" style="display: none">Second panel</div>
+       <div hidden="until-found">Found by find-in-page</div>
+       <div hidden>Not shown</div>
+       <div style="display:none">Not shown either</div>
+       <p>Copy<button type="button">Copy code</button>done</p>`,
+    );
+    expect(result.plainText).toBe(
+      "申請資格為何？\n\n設籍滿一年者。\n\nMore\n\nSecond panel\n\nFound by find-in-page\n\nCopy done",
+    );
+    expect(result.sections.map((section) => section.heading)).toEqual(["申請資格為何？"]);
+  });
+
+  it("keeps words apart across line breaks, dropped controls, images and inline-styled boxes", () => {
+    const cases: [string, string][] = [
+      ["<p>Line one<br>Line two</p>", "Line one\nLine two"],
+      ["<p>Click<button>Save</button>now</p>", "Click now"],
+      ["<p>Email<input name=e>Phone<select><option>x</select>Fax</p>", "Email Phone Fax"],
+      ["<p>Before<img alt=chart src=c.png>After</p>", "Before chart After"],
+      ["<p>Icon<svg><text>logo</text></svg>Label</p>", "Icon Label"],
+      [
+        '<div style="display:flex"><span>Alpha</span><span>Beta</span>Gamma</div>',
+        "Alpha Beta Gamma",
+      ],
+      [
+        '<p><span style="display: block">Name</span><span style="display:block">Value</span></p>',
+        "Name Value",
+      ],
+      ['<div style="display:grid"><span>標籤</span><span>數值</span></div>', "標籤 數值"],
+      // Inline formatting inside a word is not a boundary.
+      ["<p><b>W</b>ord, un<em>believ</em>able, 標<span>籤</span></p>", "Word, unbelievable, 標籤"],
+      ['<p><span style="display:inline">in</span>line</p>', "inline"],
+    ];
+    for (const [body, text] of cases) expect(page(body).plainText, body).toBe(text);
+  });
+
+  it("gives a table without a header row no empty first line", () => {
+    const result = page(
+      "<table><tr><td>Price</td><td>Total</td></tr><tr><td>1</td><td>2</td></tr></table>",
+    );
+    expect(result.plainText).toBe("Price | Total\n1 | 2");
+  });
+
+  it("keeps section offsets exact around the new boundaries", () => {
+    const result = page(
+      `<h2>Intro<br>part</h2><p>a<button>x</button>b</p><h2>Next</h2><p>c<img alt=d>e</p>`,
+    );
+    expect(result.sections.map((section) => section.heading)).toEqual(["Intro part", "Next"]);
+    for (const section of result.sections) {
+      expect(result.plainText.slice(section.charStart).startsWith(section.heading ?? "")).toBe(
+        true,
+      );
+    }
+    expect(result.sections.at(-1)?.charEnd).toBe(result.plainText.length);
+  });
+});
+
 describe("extractMarkdown", () => {
   it("reads front matter explicitly and builds sections and references", () => {
     const result = extractMarkdown(markdownDocument(), { filenameStem: "x" });
@@ -99,6 +184,21 @@ describe("extractMarkdown", () => {
     ]);
     expect(result.references[0]?.url).toBe("https://doi.org/10.1111/j.1540-6261.1993.tb04702.x");
     expect(result.markdown.startsWith("# 量化交易研究摘要")).toBe(true);
+  });
+
+  it("keeps words apart at hard breaks, and reads raw HTML tags as markup, not text", () => {
+    const text = (markdown: string) => extractMarkdown(markdown, { filenameStem: "x" }).plainText;
+    expect(text("Line one  \nLine two\n")).toBe("Line one\nLine two");
+    expect(text("Line one\\\nLine two\n")).toBe("Line one\nLine two");
+    expect(text("Press <kbd>Ctrl</kbd>+<kbd>C</kbd>, then a<br>b<br/>c\n")).toBe(
+      "Press Ctrl+C, then a\nb\nc",
+    );
+    expect(text("| a | b |\n|---|---|\n| one<br>two | x |\n")).toBe("a | b\none two | x");
+    expect(text("# Head<br>line\n\nBody ![chart](c.png)text\n")).toBe(
+      "Head line\n\nBody chart text",
+    );
+    // Soft line breaks were already kept.
+    expect(text("Line one\nLine two\n")).toBe("Line one\nLine two");
   });
 
   it("parseFrontMatter ignores documents without front matter", () => {

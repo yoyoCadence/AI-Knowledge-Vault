@@ -1,7 +1,6 @@
 import type { Nodes as MdastNodes, Root as MdastRoot, RootContent } from "mdast";
 import { gfmToMarkdown } from "mdast-util-gfm";
 import { toMarkdown } from "mdast-util-to-markdown";
-import { toString } from "mdast-util-to-string";
 import type { ReferenceSource } from "@/infrastructure/database/schema";
 import { headingAnchor, normalizeWhitespace } from "./normalize";
 import type { SectionDraft } from "./types";
@@ -23,6 +22,37 @@ const REFERENCE_HEADING =
   /^(sources?|references?|bibliography|citations?|來源|参考|參考(資料|文獻|来源|來源)?|引用(資料|文獻)?|資料來源|文獻)$/i;
 const MAX_REFERENCES = 200;
 
+/** Raw `<br>` in Markdown is a line break, like a hard break. */
+const HTML_BREAK = /^<br\s*\/?>$/i;
+
+/**
+ * A node's text, as mdast-util-to-string reads it, but with words kept apart:
+ *
+ * - a hard break (`<br>`, or two trailing spaces or a backslash in Markdown) is a line break;
+ * - raw HTML in Markdown is markup, not text: `<kbd>Ctrl</kbd>` is "Ctrl" (the text between
+ *   two tags is a node of its own);
+ * - an image's alt text stands apart from its neighbours, as the image does on the page.
+ */
+function inlineText(node: MdastNodes): string {
+  switch (node.type) {
+    case "break":
+      return "\n";
+    case "html":
+      return HTML_BREAK.test(node.value.trim()) ? "\n" : "";
+    case "image":
+    case "imageReference":
+      return node.alt ? ` ${node.alt} ` : "";
+    default:
+      if ("value" in node) return node.value;
+      if ("children" in node)
+        return node.children.map((child) => inlineText(child as MdastNodes)).join("");
+      return "";
+  }
+}
+
+/** A node's text on one line: a heading, a table cell, a link's title. */
+const lineText = (node: MdastNodes) => normalizeWhitespace(inlineText(node).replace(/\n+/g, " "));
+
 function blockText(node: MdastNodes): string {
   switch (node.type) {
     case "code":
@@ -42,18 +72,23 @@ function blockText(node: MdastNodes): string {
         .filter(Boolean)
         .join("\n");
     case "table":
-      return node.children
-        .map((row) => row.children.map((cell) => normalizeWhitespace(toString(cell))).join(" | "))
-        .join("\n");
+      return (
+        node.children
+          .map((row) => row.children.map((cell) => lineText(cell)))
+          // A table with no header row gets an empty one in Markdown: it is no text.
+          .filter((cells) => cells.some(Boolean))
+          .map((cells) => cells.join(" | "))
+          .join("\n")
+      );
     default:
-      return normalizeWhitespace(toString(node, { includeImageAlt: true }));
+      return normalizeWhitespace(inlineText(node));
   }
 }
 
 function collectLinks(node: MdastNodes, out: ReferenceSource[]): void {
   if (out.length >= MAX_REFERENCES) return;
   if (node.type === "link" && /^https?:\/\//i.test(node.url)) {
-    const title = normalizeWhitespace(toString(node));
+    const title = lineText(node);
     out.push(title && title !== node.url ? { title, url: node.url } : { url: node.url });
     return;
   }
@@ -67,7 +102,7 @@ export function buildDocument(root: MdastRoot): DocumentParts {
 
   for (const child of root.children as RootContent[]) {
     if (child.type === "heading") {
-      const text = normalizeWhitespace(toString(child));
+      const text = lineText(child);
       if (referenceDepth !== null && child.depth <= referenceDepth) referenceDepth = null;
       if (REFERENCE_HEADING.test(text.replace(/[:：\s]+$/, ""))) referenceDepth = child.depth;
       blocks.push({ text, heading: { depth: child.depth, text } });

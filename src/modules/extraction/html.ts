@@ -14,23 +14,38 @@ import type { ExtractionResult, SourceMetadata } from "./types";
  * tree only. Non-content and active elements are dropped before conversion, so reading mode can
  * never surface raw scripts, styles or embedded frames.
  */
-export const HTML_EXTRACTOR_VERSION = 1;
+/**
+ * 2: forms and accordion headings and panels are kept; words around a dropped control, an
+ * image or a line break stay apart.
+ */
+export const HTML_EXTRACTOR_VERSION = 2;
 
-const DROP_ELEMENTS = new Set([
+/** Never drawn: dropped without a trace. */
+const INVISIBLE_ELEMENTS = new Set([
   "script",
   "style",
   "noscript",
   "template",
+  "link",
+  "meta",
+  "base",
+  "head",
+  // Claude Design runtime: <helmet> holds stylesheet/script includes, not content.
+  "helmet",
+  "sc-helmet",
+]);
+
+/**
+ * Drawn as a box of their own, but not content we keep: replaced by a space, so the words on
+ * either side stay apart ("Click<button>Save</button>now" is "Click now", not "Clicknow").
+ */
+const BOX_ELEMENTS = new Set([
   "iframe",
   "frame",
   "frameset",
   "object",
   "embed",
   "applet",
-  "link",
-  "meta",
-  "base",
-  "head",
   "svg",
   "math",
   "canvas",
@@ -38,15 +53,38 @@ const DROP_ELEMENTS = new Set([
   "audio",
   "source",
   "track",
-  "form",
   "input",
   "button",
   "select",
   "textarea",
-  // Claude Design runtime: <helmet> holds stylesheet/script includes, not content.
-  "helmet",
-  "sc-helmet",
 ]);
+
+/**
+ * A `<form>` is only a container: ASP.NET WebForms pages wrap their whole body in one, so it is
+ * kept (its controls are dropped above). A `<button>` is kept as text when it names content:
+ * in a heading (the WAI-ARIA accordion pattern) or as a disclosure toggle (`aria-expanded`).
+ */
+function keepsButton(element: Element, inHeading: boolean): boolean {
+  return inHeading || attr(element, "ariaExpanded") !== null;
+}
+
+const HEADING = /^h[1-6]$/;
+
+/**
+ * What an inline `style` says about the element's box. Only inline styles are read (no
+ * stylesheet is evaluated), but they are what generated pages (Claude Design among them)
+ * mostly use. A block box, or any child of a flex or grid container, is laid out apart from
+ * its neighbours: "<div style="display:flex"><span>Alpha</span><span>Beta</span></div>" reads
+ * "Alpha Beta".
+ */
+function displayOf(element: Element): { block: boolean; container: boolean } {
+  const style = attr(element, "style")?.replace(/\s+/g, "").toLowerCase() ?? "";
+  const display = /(?:^|;)display:([a-z-]+)/.exec(style)?.[1] ?? "";
+  return {
+    block: /^(block|flex|grid|list-item|table|flow-root)$/.test(display),
+    container: /^(inline-)?(flex|grid)$/.test(display),
+  };
+}
 
 /** `{{ binding }}` placeholders used by Claude Design (dc) templates (ARCHITECTURE_REVIEW F-03). */
 const TEMPLATE_BINDING = /\{\{\s*[^{}]{0,200}?\s*\}\}/g;
@@ -66,11 +104,29 @@ function attr(element: Element, name: string): string | null {
   return typeof value === "string" ? value : typeof value === "number" ? String(value) : null;
 }
 
-function isHidden(element: Element): boolean {
-  if (element.properties?.hidden !== undefined && element.properties.hidden !== false) return true;
+/**
+ * Not drawn, so not content, with two exceptions that are content waiting to be shown:
+ * `hidden="until-found"` (find-in-page reveals it) and the panel a collapsed accordion or
+ * disclosure toggles (named by `aria-controls` on an element with `aria-expanded`).
+ */
+function isHidden(element: Element, panels: ReadonlySet<string>): boolean {
+  const id = attr(element, "id");
+  if (id && panels.has(id)) return false;
+  const hidden = element.properties?.hidden;
+  if (hidden !== undefined && hidden !== false && hidden !== "until-found") return true;
   if (attr(element, "ariaHidden") === "true") return true;
   const style = attr(element, "style")?.replace(/\s+/g, "").toLowerCase() ?? "";
   return style.includes("display:none") || style.includes("visibility:hidden");
+}
+
+/** The ids of the panels that disclosure toggles control. */
+function disclosurePanels(tree: HastRoot): Set<string> {
+  const panels = new Set<string>();
+  walk(tree.children, (element) => {
+    if (attr(element, "ariaExpanded") === null) return;
+    for (const id of (attr(element, "ariaControls") ?? "").split(/\s+/)) if (id) panels.add(id);
+  });
+  return panels;
 }
 
 function walk(nodes: (RootContent | ElementContent)[], visit: (element: Element) => void): void {
@@ -153,27 +209,49 @@ function analyze(tree: HastRoot): {
   };
 }
 
+interface CleanContext {
+  stripBindings: boolean;
+  panels: ReadonlySet<string>;
+  inCode: boolean;
+  inHeading: boolean;
+  /** The parent is a flex or grid container: every child is a box of its own. */
+  inContainer: boolean;
+}
+
 /** Removes non-content elements and (for dc templates) binding placeholders. Mutates the tree. */
 function clean(
   nodes: (RootContent | ElementContent)[],
-  stripBindings: boolean,
-  inCode = false,
+  context: CleanContext,
 ): (RootContent | ElementContent)[] {
   const out: (RootContent | ElementContent)[] = [];
   for (const node of nodes) {
     if (node.type === "comment" || node.type === "doctype") continue;
     if (node.type === "element") {
       const tag = node.tagName.toLowerCase();
-      if (DROP_ELEMENTS.has(tag) || isHidden(node)) continue;
-      node.children = clean(
-        node.children,
-        stripBindings,
-        inCode || tag === "code" || tag === "pre",
-      ) as ElementContent[];
+      if (INVISIBLE_ELEMENTS.has(tag) || isHidden(node, context.panels)) continue;
+      if (BOX_ELEMENTS.has(tag) && !(tag === "button" && keepsButton(node, context.inHeading))) {
+        out.push({ type: "text", value: " " });
+        continue;
+      }
+      const display = displayOf(node);
+      node.children = clean(node.children, {
+        ...context,
+        inCode: context.inCode || tag === "code" || tag === "pre",
+        inHeading: context.inHeading || HEADING.test(tag),
+        inContainer: display.container,
+      }) as ElementContent[];
+      const apart = display.block || context.inContainer;
+      if (apart) out.push({ type: "text", value: " " });
       out.push(node);
+      if (apart) out.push({ type: "text", value: " " });
       continue;
     }
-    if (node.type === "text" && stripBindings && !inCode) {
+    if (node.type === "text" && context.inContainer && node.value.trim()) {
+      // A flex or grid container's bare text is an anonymous box of its own.
+      out.push({ type: "text", value: " " }, node, { type: "text", value: " " });
+      continue;
+    }
+    if (node.type === "text" && context.stripBindings && !context.inCode) {
       const value = node.value.replace(TEMPLATE_BINDING, "");
       if (value.trim() === "" && node.value.trim() !== "") continue;
       out.push({ ...node, value });
@@ -196,7 +274,13 @@ export function extractHtml(
   const isClaudeDesign = analysis.isClaudeDesign || /\.dc\.html?$/i.test(options.filename);
   if (isClaudeDesign) metadata.sourcePlatform = "claude_design";
 
-  tree.children = clean(tree.children, isClaudeDesign) as RootContent[];
+  tree.children = clean(tree.children, {
+    stripBindings: isClaudeDesign,
+    panels: disclosurePanels(tree),
+    inCode: false,
+    inHeading: false,
+    inContainer: false,
+  }) as RootContent[];
   const mdast = toMdast(tree) as MdastRoot;
   const parts = buildDocument(mdast);
 
