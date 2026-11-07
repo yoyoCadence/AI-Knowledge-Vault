@@ -32,7 +32,7 @@ import {
   pdfDocument,
   pngImage,
 } from "@tests/fixtures/builders";
-import { buildZip, corruptLocalHeader } from "@tests/fixtures/zip";
+import { big5, buildZip, corruptLocalHeader } from "@tests/fixtures/zip";
 import { closeTestDb, testDb } from "../helpers/db";
 import { createTestActor, drainJobs, newBatch, uploadFile } from "../helpers/imports";
 
@@ -105,6 +105,55 @@ describe("ZIP imports (P1A-ZIP)", () => {
     }
     const css = derived.find((asset) => asset.path === "_ds/modernist/styles.css")!;
     expect(await text((await getStorage().getObject(css.storageKey)).body)).toContain("--color-bg");
+  });
+
+  it("a site zipped on Windows in zh-TW (Big5 names, no UTF-8 flag) keeps its names, so its page finds its files", async () => {
+    const actor = await createTestActor();
+    const page = htmlDocument({
+      title: "臺北熱島報告",
+      body: '<h2>結論</h2><p>見圖。</p><img src="圖表/長條.png" alt="長條圖"><a href="許功蓋.html">附錄</a>',
+    }).replace("</head>", '<link rel="stylesheet" href="樣式.css"></head>');
+    const entry = (name: string, data: Buffer | string) => ({
+      name: "unused",
+      nameBytes: big5(name),
+      utf8Flag: false,
+      data,
+    });
+    const queued = await uploadFile(actor, (await newBatch(actor)).id, {
+      filename: "heat-report.zip",
+      bytes: buildZip([
+        entry("熱島網站/index.html", page),
+        entry("熱島網站/樣式.css", "body { color: #222 }"),
+        entry("熱島網站/圖表/長條.png", await pngImage(40, 20)),
+        entry("熱島網站/許功蓋.html", htmlDocument({ title: "附錄" })),
+      ]),
+    });
+    await drainJobs();
+
+    const item = await itemById(queued.id);
+    expect(item.status).toBe("succeeded");
+    const [version] = await db
+      .select()
+      .from(artifactVersions)
+      .where(eq(artifactVersions.id, item.resultVersionId!));
+    expect(version).toMatchObject({ previewKind: "static_site", previewEntryPath: "index.html" });
+    const previewPaths = (
+      await db
+        .select({ path: derivedAssets.path })
+        .from(derivedAssets)
+        .where(
+          and(
+            eq(derivedAssets.artifactVersionId, version!.id),
+            eq(derivedAssets.kind, "preview_file"),
+          ),
+        )
+    )
+      .map((asset) => asset.path)
+      .sort();
+    // The names the page links to, so the preview serves them.
+    expect(previewPaths).toEqual(["index.html", "圖表/長條.png", "樣式.css", "許功蓋.html"].sort());
+    const { artifact } = await getArtifactDetail(db, actor, item.resultArtifactId!);
+    expect(artifact.title).toBe("臺北熱島報告");
   });
 
   it("a hostile ZIP fails with ARCHIVE_REJECTED but its original is preserved for inspection", async () => {

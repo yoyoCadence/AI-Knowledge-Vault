@@ -6,8 +6,9 @@ import { AppError } from "@/lib/errors";
  * Safe ZIP reading (docs/IMPORT_PIPELINE.md §4, NFR-SEC-5).
  *
  * Defense layers:
- * - yauzl rejects absolute paths, drive letters, `..` segments and backslashes, and verifies each
- *   entry's actual decompressed size against its header (`validateEntrySizes`).
+ * - Names are decoded here (`entryName`), then checked with yauzl's own `validateFileName`:
+ *   absolute paths, drive letters and `..` segments are refused. yauzl verifies each entry's
+ *   actual decompressed size against its header (`validateEntrySizes`).
  * - We additionally reject symlinks, encrypted entries, NUL/control characters, over-deep or
  *   over-long paths, too many entries, suspicious compression ratios, and oversize totals — and
  *   count *actual* decompressed bytes while streaming, never trusting headers alone.
@@ -78,8 +79,44 @@ function mapYauzlError(error: Error): ZipRejectedError {
   return new ZipRejectedError("ZIP_INVALID", message);
 }
 
+const UTF8_FLAG = 0x0800;
+const INFO_ZIP_UNICODE_PATH = 0x7075;
+
+/**
+ * The entry's name. The format says a name without the UTF-8 flag is CP437, and yauzl reads it
+ * so. But the tools that leave the flag off rarely write CP437: macOS writes UTF-8, and Windows
+ * writes its code page, Big5 in a zh-TW locale. Read as CP437, "報告" became "│°ºi", and a
+ * Big5 trail byte of 0x5C (許, 功, 蓋…) became a folder separator. So such a name is read as
+ * strict UTF-8, then strict Big5 (the order text files are read in, ADR-010), and as CP437 only
+ * when neither fits. A flagged name, or one with an Info-ZIP Unicode Path field, is yauzl's.
+ */
+function entryName(entry: Entry): string {
+  const raw = entry.fileNameRaw;
+  // ASCII is UTF-8 too: read so, a control byte stays a control character (and is refused
+  // below) instead of becoming a CP437 glyph such as "☺".
+  const declared =
+    (entry.generalPurposeBitFlag & UTF8_FLAG) !== 0 ||
+    entry.extraFields.some((field) => field.id === INFO_ZIP_UNICODE_PATH);
+  if (!declared) {
+    for (const encoding of ["utf-8", "big5"]) {
+      try {
+        // Backslashes are separators (strictFileNames: false), but only once decoded: in Big5
+        // the byte 0x5C can be half of a character.
+        return new TextDecoder(encoding, { fatal: true }).decode(raw).replace(/\\/g, "/");
+      } catch {
+        // Not this encoding.
+      }
+    }
+  }
+  return yauzl.getFileNameLowLevel(entry.generalPurposeBitFlag, raw, entry.extraFields, false);
+}
+
 function validateEntry(entry: Entry, limits: ZipLimits): ZipEntryInfo {
-  const raw = entry.fileName;
+  const raw = entryName(entry);
+  // With decodeStrings off, yauzl leaves the name checks to us: absolute paths, drive letters,
+  // `..` segments.
+  const invalid = yauzl.validateFileName(raw);
+  if (invalid) throw mapYauzlError(new Error(invalid));
   if (/[\u0000-\u001f\u007f]/.test(raw))
     throw new ZipRejectedError("ZIP_ENTRY_INVALID_NAME", JSON.stringify(raw));
   const isDirectory = raw.endsWith("/");
@@ -131,7 +168,8 @@ export class SafeZip {
           {
             lazyEntries: true,
             autoClose: false,
-            decodeStrings: true,
+            // Names are decoded by entryName: yauzl would read every unflagged name as CP437.
+            decodeStrings: false,
             validateEntrySizes: true,
             strictFileNames: false,
           },

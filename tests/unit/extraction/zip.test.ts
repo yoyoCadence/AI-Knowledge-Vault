@@ -15,7 +15,7 @@ import {
   markdownDocument,
   pdfDocument,
 } from "@tests/fixtures/builders";
-import { buildZip, corruptLocalHeader, type ZipEntrySpec } from "@tests/fixtures/zip";
+import { big5, buildZip, corruptLocalHeader, type ZipEntrySpec } from "@tests/fixtures/zip";
 
 const MiB = 1024 * 1024;
 const limits: ArchiveLimits = {
@@ -128,6 +128,45 @@ describe("SafeZip rejects hostile archives (NFR-SEC-5)", () => {
     expect(zip.inventory.warnings.join()).toMatch(/NESTED_ARCHIVES_NOT_EXTRACTED/);
     expect(zip.inventory.warnings.join()).toMatch(/ZIP_DUPLICATE_ENTRY: README.md/);
     expect(zip.inventory.entries.map((entry) => entry.path)).toEqual(["inner.zip", "Readme.md"]);
+  });
+});
+
+describe("SafeZip reads entry names as the tools that wrote them meant", () => {
+  const names = async (entries: ZipEntrySpec[]) => {
+    const zip = await SafeZip.open(await zipFile(entries), limits);
+    zip.close();
+    return zip.inventory.entries.map((entry) => entry.path);
+  };
+  const unflagged = (nameBytes: Buffer): ZipEntrySpec => ({
+    name: "unused",
+    nameBytes,
+    utf8Flag: false,
+    data: "x",
+  });
+
+  it("reads UTF-8 without the flag (macOS) and Big5 (Windows, zh-TW) as such", async () => {
+    expect(await names([{ name: "報告/index.html", data: "x" }])).toEqual(["報告/index.html"]);
+    expect(await names([unflagged(Buffer.from("報告/index.html"))])).toEqual(["報告/index.html"]);
+    expect(await names([unflagged(big5("報告/圖表 2.png"))])).toEqual(["報告/圖表 2.png"]);
+    // In Big5 the byte 0x5C (a backslash) is half of 許, 功, 蓋…: not a folder separator.
+    expect(big5("許功蓋").includes(0x5c)).toBe(true);
+    expect(await names([unflagged(big5("許功蓋.html"))])).toEqual(["許功蓋.html"]);
+    // A backslash written as a separator still is one.
+    expect(await names([unflagged(Buffer.from("dir\\a.html"))])).toEqual(["dir/a.html"]);
+    // A name that is neither UTF-8 nor Big5 stays CP437, as the format says.
+    expect(
+      await names([unflagged(Buffer.from([0x63, 0x61, 0x66, 0x82, 0x2e, 0x74, 0x78, 0x74]))]),
+    ).toEqual(["café.txt"]);
+  });
+
+  it("still refuses unsafe names, however they are encoded", async () => {
+    const reason = async (entry: ZipEntrySpec) => rejection([entry]);
+    expect(await reason(unflagged(Buffer.from("../evil.html")))).toBe("ZIP_ENTRY_PATH_TRAVERSAL");
+    expect(await reason(unflagged(big5("..\\報告.html")))).toBe("ZIP_ENTRY_PATH_TRAVERSAL");
+    expect(await reason(unflagged(big5("報告/../../x.html")))).toBe("ZIP_ENTRY_PATH_TRAVERSAL");
+    expect(await reason(unflagged(Buffer.from("/etc/passwd")))).toBe("ZIP_ENTRY_ABSOLUTE_PATH");
+    expect(await reason(unflagged(Buffer.from("C:\\x.html")))).toBe("ZIP_ENTRY_ABSOLUTE_PATH");
+    expect(await reason(unflagged(Buffer.from("a\u0001b.html")))).toBe("ZIP_ENTRY_INVALID_NAME");
   });
 });
 
