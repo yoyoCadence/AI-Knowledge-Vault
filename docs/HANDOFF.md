@@ -1141,9 +1141,9 @@ Phase 1A item remains, and it needs the owner:
    runs on the owner's machine (a cloud session cannot sign S3 requests without the secret).
    Run `pnpm storage:verify` as DEPLOYMENT.md §5.2, step 5 shows, staging first, then
    production. §5.2 has a table that says what to do with each failure.
-   - A failed conditional-write test is survivable here, because originals are written from
-     the worker's own hashed temporary file. If it fails, set up the independent copy
-     (BACKUP_RECOVERY layer 4) before importing anything irreplaceable, and record it.
+   - A failed conditional-write test means stop: store nothing there. Immutable originals
+     are non-negotiable (AGENTS.md §1). Only the owner can change that, in a new ADR; §5.2
+     lists what such a decision would have to weigh.
    - A failure of put, get, list or delete means the provider cannot be used.
 2. **After every deployment, run the client-address checks** (DEPLOYMENT.md §5.7).
    - An empty or wrong `TRUSTED_PROXIES` behind a proxy that appends `X-Forwarded-For`

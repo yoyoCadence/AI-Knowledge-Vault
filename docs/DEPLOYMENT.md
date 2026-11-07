@@ -120,25 +120,28 @@ See `.env.example` for the full annotated list. Required in staging and producti
      agent session cannot run it for you: S3 requests are signed with the secret key inside
      the process, so a proxy that injects a header cannot stand in for it.
 
-   **If a test fails** (recommendation recorded 2026-11-07):
+   **If a test fails:**
 
-   | Failing test            | What it means                                                | Decision                                                                                                                                                              |
-   | ----------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | CORS                    | The rule from step 3 is missing, or names another origin     | Fix the rule, wait a minute, rerun. Required: browser uploads fail without it.                                                                                        |
-   | Presigned upload bounds | The provider accepts another size or type on a presigned PUT | Acceptable. `completeItem` compares the stored size with the declared one and fails the item (`SIZE_MISMATCH`), and the worker hashes what it reads. Record it in §7. |
-   | Conditional write       | The provider ignores `If-None-Match: *` and overwrites       | Acceptable for this app, with the conditions below. Record it in §7 and as an ADR.                                                                                    |
-   | Anything else           | The adapter cannot work with this provider                   | Stop. Do not store anything there.                                                                                                                                    |
+   | Failing test            | What it means                                                | What to do                                                                                                                                                                                                                                             |
+   | ----------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+   | CORS                    | The rule from step 3 is missing, or names another origin     | Fix the rule, wait a minute, rerun. Required: browser uploads fail without it.                                                                                                                                                                         |
+   | Presigned upload bounds | The provider accepts another size or type on a presigned PUT | Acceptable. `completeItem` compares the stored size with the declared one and fails the item (`SIZE_MISMATCH`), and the worker hashes what it reads. Record it in §7.                                                                                  |
+   | Conditional write       | The provider ignores `If-None-Match: *` and overwrites       | **Stop. Store nothing there.** Immutable originals are a non-negotiable rule (AGENTS.md §1, ADR-006), and conditional writes are one of the two things that enforce it. Use a provider that honours them, or the owner decides otherwise in a new ADR. |
+   | Anything else           | The adapter cannot work with this provider                   | Stop. Do not store anything there.                                                                                                                                                                                                                     |
 
-   Why a failed conditional write is survivable here: `storeOriginal`
-   (`src/modules/files/originals.ts`) writes from the worker's own temporary file, the same
-   file whose SHA-256 became the key. A repeated write to an existing key therefore carries
-   the same bytes, and an S3 PUT replaces an object only once it has completed, never with a
-   partial body. The conditional write is a further guard against a future bug, not the only
-   one. The others are the `file_assets` immutability trigger, the weekly integrity check that
-   re-hashes every original, and the independent copy. So, only if this test fails:
-   - set up layer 4 of BACKUP_RECOVERY.md (an independent copy with versioning or Object
-     Lock) before importing anything you could not import again;
-   - and keep the weekly integrity check running (it is scheduled by default).
+   Input for that decision, should it ever be needed (not a decision):
+   - `storeOriginal` (`src/modules/files/originals.ts`) writes from the worker's own
+     temporary file, the same file whose SHA-256 became the key, and a restore verifies every
+     archived original's hash before writing it. So without conditional writes, a repeated
+     write still carries the same bytes.
+   - It is still an overwrite. A restore passes every archived original to `storeOriginal`,
+     existing ones included, so on such a provider existing objects are rewritten. Neither the
+     `file_assets` trigger nor the integrity check prevents that; the check only finds damage
+     afterwards. Write-once would then rest on the code alone, and a future bug could replace
+     an original.
+   - A decision to accept that would need, at least, the independent copy with versioning or
+     Object Lock (BACKUP_RECOVERY layer 4) before anything irreplaceable is imported, and an ADR
+     that changes the rule in AGENTS.md §1.
 
 ### 5.3 Domains
 
