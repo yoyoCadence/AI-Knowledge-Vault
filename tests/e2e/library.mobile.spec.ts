@@ -144,6 +144,16 @@ test.describe("on a phone (Pixel 7)", () => {
     await expect(page.getByTestId("reader")).toContainText("窄螢幕閱讀");
     await expectNoHorizontalOverflow(page, "the same artifact in reading mode");
 
+    // The import page offers them in its project and collection pickers.
+    await page.goto("/import");
+    await expect(
+      page.getByTestId("import-project").locator("option", { hasText: project }),
+    ).toHaveCount(1);
+    await expect(
+      page.getByTestId("import-collection").locator("option", { hasText: collection }),
+    ).toHaveCount(1);
+    await expectNoHorizontalOverflow(page, "/import with long project and collection names");
+
     // The sidebar is a drawer behind the menu button.
     await page.goto("/");
     await page.getByRole("button", { name: "開啟選單" }).click();

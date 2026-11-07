@@ -130,14 +130,15 @@ test.describe("import → library → artifact (Scenario A)", () => {
     await page.goto(`/?q=${encodeURIComponent("熱島專題")}`);
     await expect(page.getByTestId("search-results").getByRole("link")).toHaveCount(1);
     await page.goto("/tags");
-    await expect(page.getByTestId("tag-row")).toContainText("#熱島專題");
-    await expect(page.getByTestId("tag-row")).toContainText("1 份作品");
+    // Rows are found by name: specs share one database, so other specs' rows may be listed too.
+    const tagRow = page.getByTestId("tag-row").filter({ hasText: "#熱島專題" });
+    await expect(tagRow).toContainText("1 份作品");
 
     // Research project: create it, put the artifact in it, follow it to the filtered library.
     await page.goto("/projects");
     await page.getByRole("textbox", { name: "新專案名稱" }).fill("熱島研究計畫");
     await page.getByRole("button", { name: "建立專案" }).click();
-    await expect(page.getByTestId("project-row")).toContainText("熱島研究計畫");
+    await expect(page.getByTestId("project-row").filter({ hasText: "熱島研究計畫" })).toBeVisible();
     await page.goto("/");
     await page.getByRole("heading", { name: "端對端 Claude Design 報告" }).click();
     await page.getByTestId("artifact-meta").getByRole("button", { name: "編輯" }).click();
@@ -166,7 +167,7 @@ test.describe("import → library → artifact (Scenario A)", () => {
     const createCollection = page.getByTestId("collection-create");
     await createCollection.getByRole("textbox", { name: "分類或集合名稱" }).fill("城市氣候");
     await createCollection.getByRole("button", { name: "建立" }).click();
-    await expect(page.getByTestId("collection-row")).toContainText("城市氣候");
+    await expect(page.getByTestId("collection-row").filter({ hasText: "城市氣候" })).toBeVisible();
     await createCollection.getByRole("textbox", { name: "分類或集合名稱" }).fill("熱島效應");
     await createCollection.getByRole("combobox", { name: "種類" }).selectOption("collection");
     const parentOption = createCollection.locator("option", { hasText: "城市氣候" });
@@ -174,7 +175,7 @@ test.describe("import → library → artifact (Scenario A)", () => {
       .getByRole("combobox", { name: "放在哪一層" })
       .selectOption((await parentOption.getAttribute("value"))!);
     await createCollection.getByRole("button", { name: "建立" }).click();
-    await expect(page.getByTestId("collection-row")).toHaveCount(2);
+    await expect(page.getByTestId("collection-row").filter({ hasText: "熱島效應" })).toBeVisible();
     await page.goto("/");
     await page.getByRole("heading", { name: "端對端 Claude Design 報告" }).click();
     const picker = page.getByTestId("collection-picker");

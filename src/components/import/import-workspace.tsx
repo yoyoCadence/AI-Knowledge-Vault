@@ -95,9 +95,15 @@ function extensionOf(name: string) {
 export function ImportWorkspace({
   maxFileBytes,
   allowedExtensions,
+  projects = [],
+  collections = [],
 }: {
   maxFileBytes: number;
   allowedExtensions: string[];
+  /** Active research projects the batch's works can go into. */
+  projects?: { id: string; title: string }[];
+  /** Collections in tree order; `depth` indents them in the picker. */
+  collections?: { id: string; name: string; depth: number }[];
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -109,6 +115,8 @@ export function ImportWorkspace({
   const [running, setRunning] = useState(false);
   const [autoVersion, setAutoVersion] = useState(true);
   const [platform, setPlatform] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [collectionId, setCollectionId] = useState("");
   const [error, setError] = useState<string | null>(null);
   /** Poll numbering: a retry discards reports requested before it (they predate the retry). */
   const pollSeq = useRef(0);
@@ -181,6 +189,8 @@ export function ImportWorkspace({
       let batch = batchId;
       if (!batch) {
         const created = await api<{ batch: { id: string } }>("/api/imports", {
+          ...(projectId ? { projectId } : {}),
+          ...(collectionId ? { collectionId } : {}),
           options: {
             autoVersionByFilename: autoVersion,
             ...(platform ? { sourcePlatform: platform } : {}),
@@ -347,7 +357,7 @@ export function ImportWorkspace({
         </ul>
       ) : null}
 
-      <div className="surface-panel flex flex-col gap-3 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="surface-panel flex flex-col gap-3 p-4 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
@@ -373,6 +383,44 @@ export function ImportWorkspace({
             ))}
           </select>
         </label>
+        {projects.length > 0 ? (
+          <label className="flex min-w-0 items-center gap-2">
+            <span className="text-muted-foreground shrink-0">{t("import.options.project")}</span>
+            <select
+              value={projectId}
+              disabled={batchId !== null}
+              onChange={(event) => setProjectId(event.target.value)}
+              className="border-border-strong bg-surface h-8 w-full max-w-64 min-w-0 rounded-md border px-2"
+              data-testid="import-project"
+            >
+              <option value="">{t("import.options.none")}</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.title}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {collections.length > 0 ? (
+          <label className="flex min-w-0 items-center gap-2">
+            <span className="text-muted-foreground shrink-0">{t("import.options.collection")}</span>
+            <select
+              value={collectionId}
+              disabled={batchId !== null}
+              onChange={(event) => setCollectionId(event.target.value)}
+              className="border-border-strong bg-surface h-8 w-full max-w-64 min-w-0 rounded-md border px-2"
+              data-testid="import-collection"
+            >
+              <option value="">{t("import.options.none")}</option>
+              {collections.map((collection) => (
+                <option key={collection.id} value={collection.id}>
+                  {`${"\u3000".repeat(collection.depth)}${collection.name}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
 
       {entries.length > 0 ? (
