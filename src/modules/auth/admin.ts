@@ -1,9 +1,10 @@
 import { hashPassword } from "better-auth/crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "@/infrastructure/database/client";
 import {
   authAccounts,
+  sessions,
   users,
   workspaceMembers,
   workspaces,
@@ -87,5 +88,55 @@ export async function createAdmin(
       metadata: { via: "cli" },
     });
     return { userId, workspaceId, workspaceSlug };
+  });
+}
+
+export const PasswordResetInput = z.object({
+  // Trimmed before it is checked: an address pasted into ADMIN_EMAIL often carries a space.
+  email: z
+    .string()
+    .trim()
+    .pipe(z.email())
+    .transform((value) => value.toLowerCase()),
+  password: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
+});
+export type PasswordResetInput = z.input<typeof PasswordResetInput>;
+
+/**
+ * Sets a new password for an existing user and signs them out everywhere (`pnpm
+ * admin:reset-password`). Like `createAdmin`, it is never exposed over HTTP: it is the way back
+ * in for an owner who forgot their password, run by whoever operates the server. There is no
+ * email reset (no mail is sent). Audited.
+ */
+export async function resetPassword(
+  db: Database,
+  input: PasswordResetInput,
+): Promise<{ userId: string; revokedSessions: number }> {
+  const parsed = PasswordResetInput.parse(input);
+  const passwordHash = await hashPassword(parsed.password);
+  return db.transaction(async (tx) => {
+    const [user] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, parsed.email));
+    if (!user) throw new AppError("NOT_FOUND", "No user with this email");
+    const [account] = await tx
+      .update(authAccounts)
+      .set({ password: passwordHash, updatedAt: new Date() })
+      .where(and(eq(authAccounts.userId, user.id), eq(authAccounts.providerId, "credential")))
+      .returning({ id: authAccounts.id });
+    if (!account) throw new AppError("NOT_FOUND", "This user has no password sign-in");
+    const revoked = await tx
+      .delete(sessions)
+      .where(eq(sessions.userId, user.id))
+      .returning({ id: sessions.id });
+    await recordAudit(tx, {
+      action: "auth.password.reset",
+      actorUserId: null,
+      targetType: "user",
+      targetId: user.id,
+      metadata: { via: "cli", revokedSessions: revoked.length },
+    });
+    return { userId: user.id, revokedSessions: revoked.length };
   });
 }

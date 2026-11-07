@@ -387,6 +387,19 @@ export const zhTW = {
   "backup.restoreHint":
     "還原：使用下方的「從備份還原」，或在伺服器上執行 pnpm backup:restore <檔案> --workspace <slug>。加密的備份（.age）請先解密成 ZIP 再還原。",
   "settings.title": "設定",
+  "password.title": "變更密碼",
+  "password.description":
+    "變更後，其他已登入的裝置都會被登出，這台裝置保持登入。忘記密碼時，請由伺服器管理者執行 pnpm admin:reset-password。",
+  "password.current": "目前的密碼",
+  "password.new": "新密碼（至少 {min} 個字元）",
+  "password.confirm": "再輸入一次新密碼",
+  "password.submit": "變更密碼",
+  "password.done": "已變更密碼，其他裝置都已登出。",
+  "password.error.mismatch": "兩次輸入的新密碼不一致。",
+  "password.error.length": "新密碼需為 {min} 到 {max} 個字元。",
+  "password.error.current": "目前的密碼不正確。",
+  "password.error.tooMany": "嘗試次數太多，請稍候一分鐘再試。",
+  "password.error.generic": "沒有變更成功，請再試一次。",
   "collections.title": "收藏分類",
   "collections.description":
     "以分類與集合整理作品：分類可以有子分類，一份作品可以放進多個集合。篩選某個分類時，也會包含它底下所有子分類的作品。",

@@ -156,6 +156,18 @@ assignment.
   created by `pnpm admin:create`, which reads the password from a prompt or the
   `ADMIN_PASSWORD` env var (never from argv, which can leak through `ps`).
 - Password policy: minimum 12 characters, maximum 128.
+- Changing a password (Settings, Better Auth's `/change-password`, PR 37):
+  - a before-hook forces `revokeOtherSessions`, so every other device is signed out whatever
+    the client sends; this device continues with a new session;
+  - audited: `auth.password.changed`, or `auth.password.change_failed` with the error code;
+  - rate limited like other auth routes, with Better Auth's stricter rule for this path.
+- A forgotten password has no email reset (no mail is sent). Whoever operates the server runs
+  `pnpm admin:reset-password` (`node dist/admin-reset-password.mjs` in the container):
+  - it sets a new password, read like `admin:create`'s, never from argv;
+  - it signs the user out of every session;
+  - it is audited as `auth.password.reset` (`via: "cli"`).
+- `/update-user` (name and image) is disabled like every endpoint the app does not use. Left
+  open, any session could set an image URL, unaudited.
 - Sessions:
   - 7-day expiry, refreshed daily
   - cookie `__Secure-vault.session_token` (production), `HttpOnly`, `Secure`, `SameSite=Lax`, host-only

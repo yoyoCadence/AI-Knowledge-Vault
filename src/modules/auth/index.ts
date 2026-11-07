@@ -13,7 +13,7 @@ export {
 export { rateLimitAddress, resolveClientIp } from "./client-ip";
 export { resolveActor, assertCan, requireActorOrThrow, type Actor } from "./actor";
 export { roleAllows, ACTIONS, type Action } from "./policy";
-export { createAdmin, AdminInput, slugify } from "./admin";
+export { createAdmin, AdminInput, slugify, resetPassword, PasswordResetInput } from "./admin";
 export {
   listActiveSessions,
   revokeSession,

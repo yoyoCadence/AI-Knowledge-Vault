@@ -1113,6 +1113,31 @@ conversations. Update it at the end of every PR.
         stays text, and the reader requests nothing from the tracker. The preview frame's
         own attempt is refused by its CSP before it is sent.
 
+- **Quality pass, second batch (2026-11-07).** Checked, no change:
+  - A fuzz of every route handler: about 5,000 requests with malformed JSON, wrong types,
+    huge strings, control characters, lone surrogates, deep nesting and junk query
+    parameters, as a signed-in owner with real and junk ids. No 5xx.
+  - An accessibility sweep of every page, desktop and phone: every control has a name.
+  - Counts and lists after soft delete: all already exclude deleted artifacts.
+  - **PR 37, passwords (QP-8, QP-9).** Found by calling the real auth handler:
+    - `/api/auth/change-password` worked but left no audit row, and kept other sessions
+      unless the client asked otherwise.
+    - `/update-user` was open (it accepted a remote image URL), though the app never uses it.
+    - There was no way back from a forgotten password (no email reset, and `admin:create`
+      refuses an existing email).
+    - Now:
+      - a before-hook forces `revokeOtherSessions`;
+      - the after-hook audits `auth.password.changed` and `auth.password.change_failed`;
+      - `/update-user` is disabled;
+      - Settings has a 變更密碼 panel;
+      - `pnpm admin:reset-password` (`resetPassword`, bundled as `dist/admin-reset-password.mjs`)
+        resets the password, signs the user out everywhere and audits `auth.password.reset`.
+    - Tests:
+      - `tests/integration/auth/password.test.ts` (5 tests);
+      - `tests/e2e/password.spec.ts`, which uses an owner of its own so the shared session
+        survives.
+    - The CLI was also run against a real database, both through `tsx` and as the bundle.
+
 **Not done or not verified**
 
 - Search folds Traditional and Simplified by character, not by word: 軟體 does not find 软件

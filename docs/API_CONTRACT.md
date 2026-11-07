@@ -29,12 +29,13 @@ REST-oriented JSON API served by Next.js route handlers under `/api`. Status col
 
 ## 3. Auth (Better Auth, mounted at `/api/auth/[...all]`)
 
-| Method | Path                                                 | Description                                                                                                                                                                       | Status |
-| ------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| POST   | `/api/auth/sign-in/email`                            | `{email, password, rememberMe?}` → HttpOnly `vault.session_token` cookie. 401 on bad credentials, 429 after 5/min/IP. (A: success and failure; failures store only an email hash) | ✅     |
-| POST   | `/api/auth/sign-out`                                 | revoke the current session (A)                                                                                                                                                    | ✅     |
-| GET    | `/api/auth/get-session`                              | current session (used internally; pages resolve the actor server-side)                                                                                                            | ✅     |
-| —      | `/api/auth/sign-up/email` and other unused endpoints | **disabled** via `disabledPaths` (404). Admins are created only by `pnpm admin:create`                                                                                            | ✅     |
+| Method | Path                                                 | Description                                                                                                                                                                            | Status |
+| ------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| POST   | `/api/auth/sign-in/email`                            | `{email, password, rememberMe?}` → HttpOnly `vault.session_token` cookie. 401 on bad credentials, 429 after 5/min/IP. (A: success and failure; failures store only an email hash)      | ✅     |
+| POST   | `/api/auth/sign-out`                                 | revoke the current session (A)                                                                                                                                                         | ✅     |
+| POST   | `/api/auth/change-password`                          | `{currentPassword, newPassword}` → 200 with a new session cookie; every other session is revoked (forced server-side). 400 `INVALID_PASSWORD`; 401 without a session; rate limited (A) | ✅     |
+| GET    | `/api/auth/get-session`                              | current session (used internally; pages resolve the actor server-side)                                                                                                                 | ✅     |
+| —      | `/api/auth/sign-up/email` and other unused endpoints | **disabled** via `disabledPaths` (404), `/update-user` included. Admins are created by `pnpm admin:create`; a forgotten password is reset by `pnpm admin:reset-password`               | ✅     |
 
 ### Sessions (our API; never exposes session tokens)
 
