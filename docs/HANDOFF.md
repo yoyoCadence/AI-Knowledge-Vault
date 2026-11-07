@@ -1099,6 +1099,9 @@ conversations. Update it at the end of every PR.
       image files: `readerImageSrc` in `src/lib/reader-images.ts`, and `readerImagesFor` in
       the preview module.
     - Remote images stay alt text and are never requested. Notes show no images at all.
+    - Images load with the page, not lazily. A bundle image's preview token expires (15
+      minutes, or at most an hour for a share link), so a lazy image requested on scroll
+      could arrive too late. This was the Codex review's finding.
     - Tests:
       - `tests/unit/lib/reader-images.test.ts`: allowed and refused `data:`, every remote
         form, relative and `..` resolution, encoded names, missing files;

@@ -191,7 +191,9 @@ function render(node: Nodes, ctx: RenderContext, key: number, root: boolean): Re
             key={key}
             src={src}
             alt={node.alt ?? ""}
-            loading="lazy"
+            // Not lazy: a bundle image's URL carries a preview token that expires (15 minutes
+            // for the owner, at most an hour for a share link). Loaded with the page, it stays
+            // shown however long the reader stays; requested on scroll, it could arrive too late.
             decoding="async"
             referrerPolicy="no-referrer"
             className="border-border my-2 inline-block h-auto max-w-full rounded border"

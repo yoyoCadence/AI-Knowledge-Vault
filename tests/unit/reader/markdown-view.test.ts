@@ -89,9 +89,14 @@ describe("reading mode renderer (SECURITY.md §5 Reading mode)", () => {
     expect(html).toContain('src="http://127.0.0.1:3100/p/TOKEN/img/chart.png" alt="長條圖"');
     expect(html).toContain('src="http://127.0.0.1:3100/p/TOKEN/img/chart.png" alt="參照圖"');
     expect(html.match(/<img /g)).toHaveLength(3);
-    // No referrer is sent, and images below the fold wait until they are near.
-    expect(html.match(/referrerPolicy="no-referrer"/gi)).toHaveLength(3);
-    expect(html.match(/loading="lazy"/g)).toHaveLength(3);
+    // No referrer is sent. Not lazy: a bundle image's preview token could expire before the
+    // reader scrolls to it.
+    expect(html.match(/<img [^>]*referrerPolicy="no-referrer"/g)).toHaveLength(3);
+    expect(html).not.toContain('loading="lazy"');
+    // React preloads eager images; the preload goes without a referrer too.
+    for (const link of html.match(/<link [^>]*>/g) ?? []) {
+      expect(link).toContain('referrerPolicy="no-referrer"');
+    }
     expect(html).not.toContain("tracker.example");
     expect(html).toContain("［圖片：外部圖］");
 

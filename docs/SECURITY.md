@@ -132,7 +132,8 @@ with an allow-list renderer into React elements:
 
   Everything else (http(s), protocol-relative, any other scheme, a file the bundle does not
   hold) is shown as its alt text (`［圖片：…］`). Images are requested with
-  `referrerpolicy="no-referrer"`. Notes show no images at all. Image versions show our own
+  `referrerpolicy="no-referrer"`, and not lazily: a bundle image's preview token expires,
+  so it is fetched with the page rather than when the reader scrolls to it. Notes show no images at all. Image versions show our own
   thumbnail.
 
 - Plain-text extractions are shown preformatted, never interpreted as Markdown.
