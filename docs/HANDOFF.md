@@ -1057,12 +1057,20 @@ conversations. Update it at the end of every PR.
         code has a reason;
       - `tests/e2e/import.spec.ts` checks the zh-TW reason and the detail line.
 
+- **Owner-requested follow-ups (2026-11-07).**
+  - **PR 34, import into a project and a collection.** `POST /api/imports` always took
+    `projectId` and `collectionId`, but the import page offered neither. It now has two
+    pickers: active projects, and collections in tree order. They lock once the batch exists,
+    like the other batch options.
+    - E2E: `tests/e2e/import-target.spec.ts` checks the work lands in both.
+    - The phone spec measures `/import` again once long names exist.
+    - `import.spec.ts` no longer assumes it creates the only tag, project or collection row.
+
 **Not done or not verified**
 
 - No Simplified↔Traditional folding in search (SEARCH_DESIGN §9).
 - Collections: no manual ordering yet (`sort_order` and item `position` are stored; the UI
-  sorts by name and lists items like the library). The import page has no project or
-  collection picker; both work through `POST /api/imports`.
+  sorts by name and lists items like the library).
 - Development databases that applied an earlier draft of `0006_search_index` (before PR 12
   merged) must be reset: the migration was regenerated with a new timestamp.
 - Tag operations re-index every affected artifact synchronously. Fine for a personal

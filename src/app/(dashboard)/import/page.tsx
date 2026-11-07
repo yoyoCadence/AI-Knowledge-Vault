@@ -18,13 +18,20 @@ import {
   toIntegrityDto,
   toRestoreDto,
 } from "@/modules/backup";
+import { collectionOptions } from "@/modules/collections";
 import { ALLOWED_EXTENSIONS, listBatches } from "@/modules/imports";
+import { listProjects } from "@/modules/projects";
 
 export const metadata: Metadata = { title: t("nav.importBackup") };
 
 export default async function ImportPage() {
   const actor = await requirePageActor();
   const { items: batches } = await listBatches(getDb(), actor, { limit: 10 });
+  // Where the batch's works can go (POST /api/imports projectId/collectionId).
+  const [projects, collections] = await Promise.all([
+    listProjects(getDb(), actor),
+    collectionOptions(getDb(), actor),
+  ]);
   const canExport = roleAllows(actor.role, "backup:export");
   // Serialized for the client component (dates become ISO strings).
   const exports: ExportView[] = canExport
@@ -50,6 +57,14 @@ export default async function ImportPage() {
       <ImportWorkspace
         maxFileBytes={getEnv().IMPORT_MAX_FILE_BYTES}
         allowedExtensions={[...ALLOWED_EXTENSIONS]}
+        projects={projects
+          .filter((project) => project.status === "active")
+          .map((project) => ({ id: project.id, title: project.title }))}
+        collections={collections.map((collection) => ({
+          id: collection.id,
+          name: collection.name,
+          depth: collection.depth,
+        }))}
       />
 
       <section className="flex flex-col gap-3" aria-labelledby="recent-imports">
