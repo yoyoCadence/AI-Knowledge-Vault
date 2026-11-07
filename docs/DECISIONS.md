@@ -194,6 +194,15 @@ peer dependencies). Anything not verified that way is marked _assumption_.
   - HTML: `rehype-parse` → custom hast sanitization (remove script, style, template,
     noscript and hidden nodes; strip `{{…}}` bindings) → `hast-util-to-mdast` →
     `mdast-util-to-markdown` (GFM).
+    - Since extractor version 2, controls, frames, embeds, media, SVG and canvas become a
+      space, so the words on either side stay apart. So do inline-styled block, flex and grid
+      boxes, and image alt text.
+    - `<form>` is kept as a container (ASP.NET WebForms wraps the whole page in one).
+    - A `<button>` in a heading, or one that toggles a panel (`aria-expanded`), keeps its text,
+      as does the panel it controls and `hidden="until-found"` content (WAI-ARIA accordion and
+      disclosure patterns).
+  - Plain text (all formats): a hard break is a line break, and raw HTML in Markdown is
+    markup, not text.
   - Markdown: `mdast-util-from-markdown` (GFM) for sections.
   - PDF: `unpdf`, which wraps pdf.js.
   - ZIP: `yauzl` streaming with our own limits. Writing exports uses `yazl`.

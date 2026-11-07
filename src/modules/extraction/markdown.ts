@@ -5,7 +5,8 @@ import { buildDocument } from "./document";
 import { detectLanguage } from "./language";
 import type { ExtractionResult, SourceMetadata } from "./types";
 
-export const MARKDOWN_EXTRACTOR_VERSION = 1;
+/** 2: hard breaks keep words apart; raw HTML tags are not text. */
+export const MARKDOWN_EXTRACTOR_VERSION = 2;
 
 /**
  * Minimal YAML front matter reader (flat `key: value` pairs only). Unknown keys are ignored;

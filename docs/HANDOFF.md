@@ -1168,6 +1168,26 @@ conversations. Update it at the end of every PR.
       - `tests/e2e/csp.spec.ts`: 17 pages (signed in, the login page, a share page) run with
         no violation; injected `<script>` and `onerror` markup is refused.
 
+  - **PR 40, extraction keeps a page's text, with its words apart (QP-12).** All reproduced
+    first:
+    - **Whole page lost.** A page wrapped in a `<form>` (ASP.NET WebForms, common on
+      government sites) extracted as nothing: the extractor dropped the form with everything
+      in it. The form is now kept; its controls are not.
+    - **Accordions lost.** A WAI-ARIA accordion lost its questions (`<h3><button>`) and its
+      collapsed answers (`hidden` panels). Kept now: a button in a heading or with
+      `aria-expanded`, the panel it controls (`aria-controls`), and `hidden="until-found"`.
+      Other hidden content is still dropped.
+    - **Words joined.** `<br>`, Markdown hard breaks, a dropped control and image alt text
+      joined the words around them ("Line oneLine two", "Clicknow"), so neither word could be
+      found. Markdown's raw HTML tags were indexed as text ("<kbd>"). Inline-styled
+      block/flex/grid boxes joined too ("AlphaBeta").
+    - A table with no header row no longer starts with an empty " | " line.
+    - HTML and Markdown extractor versions are now 2 (ADR-010 describes the rules).
+    - Tests:
+      - `tests/unit/extraction/extractors.test.ts`: 6 new tests, which failed before.
+      - `tests/integration/search/extracted-words.test.ts`: search finds each of these
+        words; before, it found none.
+
 **Not done or not verified**
 
 - Search folds Traditional and Simplified by character, not by word: 軟體 does not find 软件
@@ -1216,7 +1236,13 @@ conversations. Update it at the end of every PR.
   post-quantum, SSH). Decrypt those with `age -d` first.
 - Decrypting with a passphrase uses typage's synchronous scrypt, which is fine for a CLI. Its
   decrypter refuses scrypt work factors above 2^20; age's default is 2^18.
-- HTML extraction can join adjacent inline labels without a space. This is cosmetic.
+- HTML extraction reads inline styles only, not stylesheets. Boxes laid apart only by a
+  stylesheet (`.nav a { margin }`, class-based flex) still join: `<nav><a>Home</a><a>About</a>
+  </nav>` reads "HomeAbout".
+- Versions extracted before HTML/Markdown extractor 2 (PR 40) keep their text. There is no
+  re-extraction job for them, and re-importing the same bytes is a duplicate. Nothing is
+  deployed (DEPLOYMENT §7), so this affects development data only. Their content hashes also
+  differ from a fresh extraction's, so a suspected-duplicate check between the two can miss.
 - The S3 adapter has not been verified against real R2: that needs the owner's bucket and
   token. `pnpm storage:verify` runs the check (DEPLOYMENT.md §5.2, step 5). So far the suite is
   verified only against moto, which checks neither signatures nor the signed size.
