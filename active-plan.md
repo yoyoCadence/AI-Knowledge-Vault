@@ -17,8 +17,15 @@ its evidence and class:
 - request failures and sign-out failures that say what happened (PR 31);
 - import failure reasons in zh-TW (PR 32).
 
-**Next, needs the owner:** verify R2 with `pnpm storage:verify`, as DEPLOYMENT.md §5.2,
-step 5 shows. Then deploy (DEPLOYMENT.md), with the owner's domains, accounts and secrets.
+**Next, needs the owner:**
+
+1. Verify R2 with `pnpm storage:verify` (DEPLOYMENT.md §5.2, step 5). §5.2 also has a table
+   saying what to do with each failure.
+2. Deploy (DEPLOYMENT.md), with the owner's domains, accounts and secrets.
+3. After deploying, run the client-address checks (§5.7) and fill in the deployment record
+   (§7).
+
+Decided by the owner: artifacts are never purged (ADR-023).
 Phase 2 (AI retrieval) has not started. Its design is in `docs/AI_RESEARCH.md`.
 
 **Merge rule:** CI must be green **and** the PR's code review must have been read and its
