@@ -147,6 +147,20 @@ describe("extractHtml keeps a page's text, and its words apart", () => {
     for (const [body, text] of cases) expect(page(body).plainText, body).toBe(text);
   });
 
+  it("strips Claude Design bindings inside flex and grid containers too", () => {
+    const dc = (body: string) =>
+      extractHtml(`<html><head><title>T</title></head><body>${body}</body></html>`, {
+        filename: "card.dc.html",
+        filenameStem: "card",
+      }).result.plainText;
+    expect(dc('<div style="display:flex">{{ selectedLabel }}</div><p>Body</p>')).toBe("Body");
+    expect(dc('<div style="display:grid">Total: {{ total }}<span>NT$</span></div>')).toBe(
+      "Total: NT$",
+    );
+    // Code keeps its braces, in a container or not.
+    expect(dc('<div style="display:flex"><code>{{ x }}</code></div>')).toBe("{{ x }}");
+  });
+
   it("gives a table without a header row no empty first line", () => {
     const result = page(
       "<table><tr><td>Price</td><td>Total</td></tr><tr><td>1</td><td>2</td></tr></table>",

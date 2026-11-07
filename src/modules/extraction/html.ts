@@ -246,15 +246,19 @@ function clean(
       if (apart) out.push({ type: "text", value: " " });
       continue;
     }
-    if (node.type === "text" && context.inContainer && node.value.trim()) {
+    if (node.type === "text") {
+      let text = node;
+      if (context.stripBindings && !context.inCode) {
+        const value = node.value.replace(TEMPLATE_BINDING, "");
+        if (value.trim() === "" && node.value.trim() !== "") continue;
+        text = { ...node, value };
+      }
       // A flex or grid container's bare text is an anonymous box of its own.
-      out.push({ type: "text", value: " " }, node, { type: "text", value: " " });
-      continue;
-    }
-    if (node.type === "text" && context.stripBindings && !context.inCode) {
-      const value = node.value.replace(TEMPLATE_BINDING, "");
-      if (value.trim() === "" && node.value.trim() !== "") continue;
-      out.push({ ...node, value });
+      if (context.inContainer && text.value.trim()) {
+        out.push({ type: "text", value: " " }, text, { type: "text", value: " " });
+      } else {
+        out.push(text);
+      }
       continue;
     }
     out.push(node);
