@@ -3,7 +3,7 @@ import type { Logger } from "@/infrastructure/observability/logger";
 import { EXPORT_CLEANUP_JOB_TYPE, INTEGRITY_SCHEDULE_JOB_TYPE } from "@/modules/backup";
 import { IMPORT_CLEANUP_JOB_TYPE } from "@/modules/imports";
 import { enqueueJob } from "@/modules/jobs";
-import { SEARCH_REINDEX_ALL_JOB_TYPE } from "@/modules/search";
+import { SEARCH_REINDEX_ALL_JOB_TYPE, TOKENIZER_VERSION } from "@/modules/search";
 import { RATE_LIMIT_CLEANUP_JOB_TYPE } from "@/modules/sharing";
 
 /**
@@ -20,6 +20,18 @@ export const MAINTENANCE_JOBS = [
   { type: SEARCH_REINDEX_ALL_JOB_TYPE, everyMs: 24 * 60 * 60 * 1000 },
 ] as const;
 
+/**
+ * Jobs that run once per value of their key, whenever a worker first sees it. A new tokenizer
+ * re-indexes everything at once, instead of at the next daily backfill: until then a folded
+ * query meets an index built the old way (docs/SEARCH_DESIGN.md §6).
+ */
+export const ONCE_JOBS = [
+  {
+    type: SEARCH_REINDEX_ALL_JOB_TYPE,
+    idempotencyKey: `${SEARCH_REINDEX_ALL_JOB_TYPE}:tokenizer:${TOKENIZER_VERSION}`,
+  },
+] as const;
+
 export async function enqueueDueMaintenance(db: Database, now = new Date()): Promise<number> {
   let created = 0;
   for (const job of MAINTENANCE_JOBS) {
@@ -29,6 +41,10 @@ export async function enqueueDueMaintenance(db: Database, now = new Date()): Pro
       idempotencyKey: `${job.type}:${bucket}`,
       priority: -10,
     });
+    if (result.created) created += 1;
+  }
+  for (const job of ONCE_JOBS) {
+    const result = await enqueueJob(db, { ...job, priority: -10 });
     if (result.created) created += 1;
   }
   return created;

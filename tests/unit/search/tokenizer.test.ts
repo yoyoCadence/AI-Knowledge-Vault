@@ -7,6 +7,7 @@ import {
   toTsquery,
   toTsvector,
 } from "@/modules/search/tokenizer";
+import { buildSnippet } from "@/modules/search/query";
 
 const query = (text: string) => toTsquery(parseQuery(text));
 
@@ -36,16 +37,43 @@ describe("search tokenizer (SEARCH_DESIGN §2)", () => {
     expect(normalizeForSearch("ＡＩ　Ｍｏｄｅｌ")).toBe("ai model");
   });
 
-  it("indexes CJK runs as bigrams and unigrams at consecutive positions", () => {
+  it("indexes CJK runs as bigrams and unigrams at consecutive positions (folded)", () => {
     expect(indexTokens("城市熱島")).toEqual([
       { lexeme: "城", position: 1 },
       { lexeme: "城市", position: 1 },
       { lexeme: "市", position: 2 },
-      { lexeme: "市熱", position: 2 },
-      { lexeme: "熱", position: 3 },
-      { lexeme: "熱島", position: 3 },
-      { lexeme: "島", position: 4 },
+      { lexeme: "市热", position: 2 },
+      { lexeme: "热", position: 3 },
+      { lexeme: "热岛", position: 3 },
+      { lexeme: "岛", position: 4 },
     ]);
+  });
+
+  it("folds Traditional and Simplified to the same lexemes, character by character", () => {
+    expect(indexTokens("形態")).toEqual(indexTokens("形态"));
+    expect(normalizeForSearch("臺灣的資訊網絡")).toBe("台湾的资讯网络");
+    // Characters both scripts use are not merged with others (OpenCC's character table).
+    expect(normalizeForSearch("著作")).toBe("著作");
+    // One code point for one: offsets into the original text stay valid.
+    const text = "都市熱島效應與資訊網絡";
+    expect([...normalizeForSearch(text)]).toHaveLength([...text].length);
+  });
+
+  it("matches a Traditional query also in its literal form, for not yet re-indexed text", () => {
+    // Simplified is already folded: nothing to add.
+    expect(query("形态")).toBe("'形态'");
+    expect(query("形態")).toBe("('形态' | '形態')");
+    const [term] = parseQuery("形態");
+    expect(term!.highlights).toEqual(["形态"]);
+  });
+
+  it("highlights the original text whichever script the query uses", () => {
+    for (const q of ["热岛", "熱島"]) {
+      const snippet = buildSnippet("城市的熱島效應很明顯", parseQuery(q));
+      expect(snippet.segments.filter((segment) => segment.highlight)).toEqual([
+        { text: "熱島", highlight: true },
+      ]);
+    }
   });
 
   it("separates runs: words, CJK and punctuation each advance the position", () => {
@@ -66,7 +94,7 @@ describe("search tokenizer (SEARCH_DESIGN §2)", () => {
         { text: "熱島", weight: "A" },
         { text: "熱", weight: "C" },
       ]),
-    ).toBe("'熱':1A,102C '熱島':1A '島':2A");
+    ).toBe("'热':1A,102C '热岛':1A '岛':2A");
   });
 
   it("truncates long words by code point, never inside a surrogate pair", () => {
@@ -77,12 +105,17 @@ describe("search tokenizer (SEARCH_DESIGN §2)", () => {
   });
 
   it("turns CJK runs into adjacency phrases and words into prefixes", () => {
-    expect(query("城市熱島")).toBe("('城市' <-> '市熱' <-> '熱島')");
-    expect(query("熱島")).toBe("'熱島'");
-    expect(query("熱")).toBe("'熱'");
+    expect(query("城市热岛")).toBe("('城市' <-> '市热' <-> '热岛')");
+    expect(query("热岛")).toBe("'热岛'");
+    expect(query("热")).toBe("'热'");
     expect(query("therm")).toBe("'therm':*");
-    expect(query("ＡＩ 熱島")).toBe("'ai':* & '熱島'");
-    expect(query('"urban heat" 島')).toBe("('urban' <2> 'heat') & '島'");
+    expect(query("ＡＩ 热岛")).toBe("'ai':* & '热岛'");
+    expect(query('"urban heat" 岛')).toBe("('urban' <2> 'heat') & '岛'");
+    // Traditional: the folded phrase, or the literal one.
+    expect(query("城市熱島")).toBe(
+      "(('城市' <-> '市热' <-> '热岛') | ('城市' <-> '市熱' <-> '熱島'))",
+    );
+    expect(query('"urban heat" 島')).toBe("('urban' <2> 'heat') & ('岛' | '島')");
   });
 
   it("cannot be steered into tsquery syntax by the user", () => {
@@ -100,8 +133,8 @@ describe("search tokenizer (SEARCH_DESIGN §2)", () => {
   });
 
   it("gives each term its own tsquery, so terms can match in different places", () => {
-    expect(termTsqueries(parseQuery('城市熱島 ai "urban heat"'))).toEqual([
-      "('城市' <-> '市熱' <-> '熱島')",
+    expect(termTsqueries(parseQuery('城市热岛 ai "urban heat"'))).toEqual([
+      "('城市' <-> '市热' <-> '热岛')",
       "'ai':*",
       "('urban' <2> 'heat')",
     ]);
