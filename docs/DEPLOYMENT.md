@@ -148,7 +148,8 @@ See `.env.example` for the full annotated list. Required in staging and producti
 - App: `vault.<your-domain>` → web.
 - Preview: `preview.<another-domain>` → **the same web service**. `proxy.ts` routes by host.
   A separate registrable domain avoids same-site cookie and permission bleed. A subdomain of
-  the app domain works, but is weaker.
+  the app domain works, but is weaker. The same hostname on another port or scheme is refused
+  at startup: browsers send a host's cookies to all its ports.
 - Both need TLS. Set HSTS on the app domain.
 
 ### 5.4 First run
