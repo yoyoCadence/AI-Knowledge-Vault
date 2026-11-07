@@ -106,12 +106,15 @@ const EnvSchema = z
     }
     const isProd = env.APP_ENV === "production" || env.APP_ENV === "staging";
 
-    if (env.APP_ORIGIN === env.PREVIEW_ORIGIN) {
+    // A different origin is not enough: browsers send a host's cookies to every port and scheme
+    // of it (RFC 6265 §8.5), so a preview on another port of the app's host would receive the
+    // session cookie. ADR-007: the preview has a hostname of its own.
+    if (new URL(env.APP_ORIGIN).hostname === new URL(env.PREVIEW_ORIGIN).hostname) {
       ctx.addIssue({
         code: "custom",
         path: ["PREVIEW_ORIGIN"],
         message:
-          "PREVIEW_ORIGIN must differ from APP_ORIGIN (untrusted content isolation, ADR-007)",
+          "PREVIEW_ORIGIN must be on another hostname than APP_ORIGIN, not just another port or scheme (untrusted content isolation, ADR-007)",
       });
     }
 

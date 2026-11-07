@@ -33,8 +33,24 @@ describe("parseEnv", () => {
       "http://localhost:3000",
     );
     expect(issuesOf({ ...base, PREVIEW_ORIGIN: "http://localhost:3000" }).join()).toMatch(
-      /PREVIEW_ORIGIN must differ/,
+      /PREVIEW_ORIGIN must be on another hostname/,
     );
+  });
+
+  it("puts the preview on a hostname of its own: cookies cross ports and schemes", () => {
+    // RFC 6265: a cookie is sent to every port and scheme of its host, so another port is not
+    // isolation for untrusted previews (ADR-007).
+    for (const preview of [
+      "http://localhost:3001",
+      "https://localhost:3000",
+      "http://LOCALHOST:3000",
+    ]) {
+      expect(issuesOf({ ...base, PREVIEW_ORIGIN: preview }).join(), preview).toMatch(
+        /PREVIEW_ORIGIN must be on another hostname/,
+      );
+    }
+    // A sibling or child hostname is fine: the app's cookies are host-only.
+    expect(issuesOf({ ...base, PREVIEW_ORIGIN: "http://preview.localhost:3000" })).toEqual([]);
   });
 
   it("rejects short secrets without echoing their values", () => {

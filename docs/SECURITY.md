@@ -67,7 +67,9 @@ Untrusted inputs include:
 
 Layers:
 
-1. **Separate origin.** `PREVIEW_ORIGIN` differs from `APP_ORIGIN` in host. In production
+1. **Separate origin.** `PREVIEW_ORIGIN` differs from `APP_ORIGIN` in host, which config
+   validation enforces at startup: another port or scheme of the same host is refused,
+   because cookies are sent to all of a host's ports (RFC 6265 §8.5). In production
    it should also differ in registrable domain (eTLD+1), so "same-site" cookie semantics
    do not apply.
 2. **Host routing.** `proxy.ts` refuses everything except `/p/*` on the preview host
