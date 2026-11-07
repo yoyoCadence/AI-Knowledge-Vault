@@ -1138,6 +1138,16 @@ conversations. Update it at the end of every PR.
         survives.
     - The CLI was also run against a real database, both through `tsx` and as the bundle.
 
+  - **PR 38, the preview's own hostname (QP-10).**
+    - Config validation refused only identical origins. `APP_ORIGIN=https://vault.example.com`
+      with `PREVIEW_ORIGIN=https://vault.example.com:8443` passed. Browsers send a host's
+      cookies to all its ports, so the preview origin, which serves untrusted HTML, would
+      have received the session cookie.
+    - CSP and the sandbox kept previews from using it, but ADR-007's "a second hostname"
+      was not enforced. Startup now refuses the same hostname.
+    - Every shipped config (dev, test, E2E, CI) already uses two hostnames.
+    - Test: `tests/unit/infrastructure/env.test.ts`.
+
 **Not done or not verified**
 
 - Search folds Traditional and Simplified by character, not by word: 軟體 does not find 软件
