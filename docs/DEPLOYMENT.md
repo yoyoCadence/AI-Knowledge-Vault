@@ -116,6 +116,29 @@ See `.env.example` for the full annotated list. Required in staging and producti
      edit.
    - Only an interrupted run leaves objects behind. Delete the `vault-adapter-test-` prefix
      by hand.
+   - Run it from your own machine, never paste the token into a chat or commit it. A cloud
+     agent session cannot run it for you: S3 requests are signed with the secret key inside
+     the process, so a proxy that injects a header cannot stand in for it.
+
+   **If a test fails** (recommendation recorded 2026-11-07):
+
+   | Failing test            | What it means                                                | Decision                                                                                                                                                              |
+   | ----------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | CORS                    | The rule from step 3 is missing, or names another origin     | Fix the rule, wait a minute, rerun. Required: browser uploads fail without it.                                                                                        |
+   | Presigned upload bounds | The provider accepts another size or type on a presigned PUT | Acceptable. `completeItem` compares the stored size with the declared one and fails the item (`SIZE_MISMATCH`), and the worker hashes what it reads. Record it in §7. |
+   | Conditional write       | The provider ignores `If-None-Match: *` and overwrites       | Acceptable for this app, with the conditions below. Record it in §7 and as an ADR.                                                                                    |
+   | Anything else           | The adapter cannot work with this provider                   | Stop. Do not store anything there.                                                                                                                                    |
+
+   Why a failed conditional write is survivable here: `storeOriginal`
+   (`src/modules/files/originals.ts`) writes from the worker's own temporary file, the same
+   file whose SHA-256 became the key. A repeated write to an existing key therefore carries
+   the same bytes, and an S3 PUT replaces an object only once it has completed, never with a
+   partial body. The conditional write is a further guard against a future bug, not the only
+   one. The others are the `file_assets` immutability trigger, the weekly integrity check that
+   re-hashes every original, and the independent copy. So, only if this test fails:
+   - set up layer 4 of BACKUP_RECOVERY.md (an independent copy with versioning or Object
+     Lock) before importing anything you could not import again;
+   - and keep the weekly integrity check running (it is scheduled by default).
 
 ### 5.3 Domains
 
@@ -153,6 +176,47 @@ overwrites the header, a client chooses its own address: it can evade the limit,
 another address's budget. Requests with no usable address share one "unknown" budget (120 a
 minute for all of them together). Deploy behind the platform proxy and configure it.
 
+### 5.7 After every deployment: check the client address (required)
+
+Sign-in is limited to 5 attempts a minute **per client address**; share links are limited per
+address too (§5.6). Both are only as good as the address the app believes. A platform proxy
+that appends to `X-Forwarded-For` (most do) plus an empty `TRUSTED_PROXIES` has one of two
+results, and neither is visible in normal use:
+
+- the app believes the client's own header, so anyone can rotate fake addresses and guess
+  passwords without limit;
+- or no request has a usable address, so every visitor shares one budget, and one person can
+  lock everyone out.
+
+Run both checks after the first deployment and after any change of host, proxy, CDN or
+`TRUSTED_PROXIES`. Record the result in §7.
+
+1. **Forged addresses are not believed.** From your own machine (replace `APP`):
+
+   ```bash
+   for i in 1 2 3 4 5 6; do
+     curl -s -o /dev/null -w "%{http_code}\n" -X POST "https://APP/api/auth/sign-in/email" \
+       -H "content-type: application/json" -H "origin: https://APP" \
+       -H "X-Forwarded-For: 203.0.113.$i" \
+       -d '{"email":"nobody@example.invalid","password":"not-the-password-123"}'
+   done
+   ```
+
+   Expected: five `401`, then `429`. Six `401` means each forged address got its own
+   budget. Fix the proxy (overwrite the header) or set `TRUSTED_PROXIES`, then rerun. Wait a
+   minute before running it again: the limit window is 60 s.
+
+2. **The real address is recorded.** In the database:
+
+   ```sql
+   select ip_address, created_at from audit_logs
+   where action = 'auth.login.failed' order by created_at desc limit 6;
+   ```
+
+   Expected: your own public address on every row. `203.0.113.x` means forged headers are
+   believed (check 1 should have caught it). An empty address, or the proxy's address, means
+   every visitor shares one budget: set `TRUSTED_PROXIES` to the platform's proxy ranges.
+
 ## 6. What the owner must provide to deploy
 
 1. A Neon project, with its connection strings (pooled and direct).
@@ -161,3 +225,13 @@ minute for all of them together). Deploy behind the platform proxy and configure
 4. A container host account (Fly.io, Railway or Render) or a VPS.
 5. An independent backup destination (B2 bucket, NAS, etc.) and its credentials.
 6. Generated secrets (`openssl rand -base64 48` × 3).
+
+## 7. Deployment record
+
+One row per environment, kept current. An agent that finds a deployed environment here whose
+checks are not all done asks the owner to finish them before other work (AGENTS.md §0).
+
+| Environment | Host and proxy   | `TRUSTED_PROXIES` | R2 verify (§5.2) | Client address checks (§5.7) | Date |
+| ----------- | ---------------- | ----------------- | ---------------- | ---------------------------- | ---- |
+| production  | not deployed yet | —                 | not run          | not run                      | —    |
+| staging     | not deployed yet | —                 | not run          | not run                      | —    |

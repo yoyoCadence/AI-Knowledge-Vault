@@ -9,6 +9,9 @@
    `docs/BACKUP_RECOVERY.md`, `docs/API_CONTRACT.md`.
 4. Decisions with rationale are in `docs/DECISIONS.md` (ADRs). Do not silently reverse one; add a
    new ADR instead.
+5. If `docs/DEPLOYMENT.md` §7 records a deployed environment, check that its R2 verification
+   and client-address checks (§5.2, §5.7) are done. If not, raise it with the owner first: a
+   wrong `TRUSTED_PROXIES` silently disables the sign-in rate limit.
 
 ## Next.js: this is NOT the Next.js you know
 

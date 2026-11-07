@@ -996,7 +996,7 @@ conversations. Update it at the end of every PR.
       restore check expected exactly 2 skipped works. `delete.spec.ts` sorts before it and
       broke that in CI. The check now reads the archive's own count from the export row.
       Specs share one database, so a spec must not count the whole workspace.
-    - Purging (removing data and originals for good) is still a later task (ADR-017).
+    - Nothing is ever purged: the owner decided against permanent deletion (ADR-023).
 
   - **PR 30, search time limit (QP-3):** a search used to have no time limit, so a
     pathological query held a pooled connection for its whole run.
@@ -1137,7 +1137,16 @@ pnpm build && pnpm test:e2e                                  # E2E (uses vault_e
 **Phase 1B is complete** (ROADMAP, PR 23), and so is P1A-ENC (PR 24 web, PR 25 CLI). One
 Phase 1A item remains, and it needs the owner:
 
-1. **Verify the S3 adapter against real R2.** This needs the owner's bucket and token. With
-   them, run `pnpm storage:verify` as DEPLOYMENT.md §5.2, step 5 shows, for each bucket; all
-   7 tests must pass. If the conditional-write test fails, the immutability of originals cannot
-   rely on the provider. Stop and decide (SECURITY.md) before storing anything there.
+1. **Verify the S3 adapter against real R2.** This needs the owner's bucket and token, so it
+   runs on the owner's machine (a cloud session cannot sign S3 requests without the secret).
+   Run `pnpm storage:verify` as DEPLOYMENT.md §5.2, step 5 shows, staging first, then
+   production. §5.2 has a table that says what to do with each failure.
+   - A failed conditional-write test is survivable here, because originals are written from
+     the worker's own hashed temporary file. If it fails, set up the independent copy
+     (BACKUP_RECOVERY layer 4) before importing anything irreplaceable, and record it.
+   - A failure of put, get, list or delete means the provider cannot be used.
+2. **After every deployment, run the client-address checks** (DEPLOYMENT.md §5.7).
+   - An empty or wrong `TRUSTED_PROXIES` behind a proxy that appends `X-Forwarded-For`
+     silently lets anyone bypass the sign-in rate limit, or puts every visitor in one budget.
+   - Record each environment and its checks in DEPLOYMENT.md §7, which AGENTS.md §0 tells
+     every agent to read.

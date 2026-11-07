@@ -281,6 +281,7 @@ peer dependencies). Anything not verified that way is marked _assumption_.
   - Deleting an artifact sets `deleted_at`. It is hidden everywhere, recoverable, and
     excluded from search and shares.
   - Purge (a later task) hard-deletes versions; the cascade removes `artifact_files` rows.
+    **Superseded by ADR-023: nothing is ever purged.**
   - `file_assets` are deleted only by a GC job when no `artifact_files` row references them
     and a grace period has elapsed. `artifact_files.file_asset_id` is `ON DELETE NO ACTION`,
     so the database refuses to delete a file asset that is still in use.
@@ -464,3 +465,26 @@ peer dependencies). Anything not verified that way is marked _assumption_.
   not change its status. Errors the panel cannot foresee (429 when busy, a damaged archive)
   still show as a JSON page. The vault carries its own copy of the scrypt stanza, about 20
   lines, checked against typage's decrypter and the age CLI.
+
+## ADR-023 No permanent deletion: deleted artifacts are kept for good
+
+- **Status:** accepted (2026-11-07, owner decision; supersedes the purge in ADR-017)
+- **Context:** PR 29 built soft delete and undo. ADR-017 left "purge" (hard-deleting
+  versions, then garbage-collecting their originals) as a later task. The owner decided it
+  will not be built: a preservation vault should not have an irreversible delete, and a
+  mistaken purge cannot be undone.
+- **Decision:**
+  - Deleting an artifact only sets `deleted_at` (ADR-017). No purge endpoint, job, CLI or UI
+    exists, and none is to be added without a new ADR from the owner.
+  - Deleted artifacts keep everything: originals, versions, extractions, derived files,
+    notes, tags, collections and search chunks. They stay in exports (with `deletedAt`) and
+    in backups, and a backup restore keeps them deleted.
+  - The `file_assets` garbage collection of ADR-017 still applies, but only to originals no
+    version references (for example after an aborted import). It never touches a deleted
+    artifact's files.
+- **Consequences:**
+  - Storage only grows; the usage page counts deleted artifacts' originals.
+  - Something imported by mistake (a file with a secret in it, say) is hidden from every
+    reader and share link, but is still stored, exported and backed up. Removing it would
+    take manual database and storage work that the app does not support. If that need
+    arises, it is a new decision (and a new ADR), not a quiet addition.
