@@ -2,10 +2,16 @@ import { Gauge, Trash2 } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requirePageActor } from "@/app/_lib/session";
+import { PasswordPanel } from "@/components/settings/password-panel";
 import { SessionsPanel } from "@/components/settings/sessions-panel";
 import { getDb } from "@/infrastructure/database/client";
 import { t } from "@/lib/i18n";
-import { listActiveSessions, roleAllows } from "@/modules/auth";
+import {
+  listActiveSessions,
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+  roleAllows,
+} from "@/modules/auth";
 
 export const metadata: Metadata = { title: t("nav.settings") };
 
@@ -36,6 +42,15 @@ export default async function SettingsPage() {
           {t("deleted.title")}
         </Link>
       ) : null}
+      <section className="flex flex-col gap-3" aria-labelledby="password-heading">
+        <div>
+          <h2 id="password-heading" className="text-base font-semibold">
+            {t("password.title")}
+          </h2>
+          <p className="text-muted-foreground mt-1 text-sm">{t("password.description")}</p>
+        </div>
+        <PasswordPanel minLength={MIN_PASSWORD_LENGTH} maxLength={MAX_PASSWORD_LENGTH} />
+      </section>
       <section className="flex flex-col gap-3" aria-labelledby="sessions-heading">
         <div>
           <h2 id="sessions-heading" className="text-base font-semibold">

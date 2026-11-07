@@ -159,6 +159,10 @@ See `.env.example` for the full annotated list. Required in staging and producti
    there is no TTY, and creates the user, workspace and owner membership.
 3. Log in at `APP_ORIGIN/login`.
 
+A forgotten password: there is no email reset. In the container, run
+`ADMIN_EMAIL=… node dist/admin-reset-password.mjs` (`pnpm admin:reset-password` locally). It
+reads the new password like `admin:create`, signs the user out everywhere and is audited.
+
 ### 5.5 Backups
 
 See BACKUP_RECOVERY §5. Schedule `scripts/backup/pg-dump.sh` and `rclone sync` on a machine

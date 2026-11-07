@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { createAuthMiddleware } from "better-auth/api";
+import { createAuthMiddleware, isAPIError } from "better-auth/api";
 import type { Env } from "@/infrastructure/config/env";
 import type { Database } from "@/infrastructure/database/client";
 import {
@@ -38,6 +38,8 @@ const DISABLED_PATHS = [
   "/verify-email",
   "/send-verification-email",
   "/link-social",
+  // Name and image are not edited in this app; left open, any session could set an image URL.
+  "/update-user",
   "/unlink-account",
   "/list-accounts",
   "/sign-in/social",
@@ -108,8 +110,19 @@ export function createAuth(
       database: { generateId: () => newId() },
     },
     hooks: {
+      // A password change always signs out every other device, whatever the client asks: it is
+      // what someone changing a leaked password needs, and they cannot forget to ask for it.
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/change-password") return;
+        return { context: { body: { ...(ctx.body ?? {}), revokeOtherSessions: true } } };
+      }),
       after: createAuthMiddleware(async (ctx) => {
-        if (ctx.path !== "/sign-in/email" && ctx.path !== "/sign-out") return;
+        if (
+          ctx.path !== "/sign-in/email" &&
+          ctx.path !== "/sign-out" &&
+          ctx.path !== "/change-password"
+        )
+          return;
         const headers = ctx.headers ?? new Headers();
         const meta = {
           // Same resolver as the rate limiter: honours TRUSTED_PROXIES, so a client-supplied
@@ -131,6 +144,24 @@ export function createAuth(
               await recordAudit(db, {
                 action: "auth.login.failed",
                 metadata: { emailHash: hashEmailForAudit(email) },
+                ...meta,
+              });
+            }
+          } else if (ctx.path === "/change-password") {
+            // Only with a session: without one the endpoint refused before doing anything.
+            const userId = ctx.context.session?.user.id;
+            if (userId) {
+              const returned = ctx.context.returned;
+              await recordAudit(db, {
+                action: isAPIError(returned)
+                  ? "auth.password.change_failed"
+                  : "auth.password.changed",
+                actorUserId: userId,
+                targetType: "user",
+                targetId: userId,
+                metadata: isAPIError(returned)
+                  ? { code: (returned.body as { code?: string } | undefined)?.code ?? null }
+                  : { revokedOtherSessions: true },
                 ...meta,
               });
             }

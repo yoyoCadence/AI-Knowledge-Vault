@@ -31,6 +31,8 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "admin:create": "tsx --env-file-if-exists=.env.local scripts/admin-create.ts",
     "admin:create:prod": "node dist/admin-create.mjs",
+    "admin:reset-password": "tsx --env-file-if-exists=.env.local scripts/admin-reset-password.ts",
+    "admin:reset-password:prod": "node dist/admin-reset-password.mjs",
     "backup:export": "tsx --env-file-if-exists=.env.local scripts/backup-export.ts",
     "backup:export:prod": "node dist/backup-export.mjs",
     "backup:restore": "tsx --env-file-if-exists=.env.local scripts/backup-restore.ts",
