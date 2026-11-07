@@ -1074,6 +1074,8 @@ conversations. Update it at the end of every PR.
       and `licenses/`. No runtime dependency.
     - Folding is one code point for one, so highlights still land on the original
       characters.
+    - Folding is idempotent: table chains (薴 → 苧 → 苎) are followed to their end. Codex
+      found the first version folding queries twice but indexes once, so 薴麻 never matched.
     - **Moving from tokenizer 1:**
       - the scheduler queues `search.reindex_all` once per tokenizer version, so the first
         worker start after deploy re-indexes everything;

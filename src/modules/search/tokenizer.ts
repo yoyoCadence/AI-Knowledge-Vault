@@ -32,12 +32,27 @@ export type Weight = "A" | "B" | "C" | "D";
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const WORD = /[\p{L}\p{N}]/u;
 
-/** Traditional → Simplified, one code point to one (OpenCC's character table). */
+/**
+ * Traditional → Simplified, one code point to one (OpenCC's character table), with every chain
+ * followed to its end (薴 → 苧 → 苎 becomes 薴 → 苎), so folding is idempotent. It must be: a
+ * query folds its text and then tokenizes it, folding again, while indexing folds once, and the
+ * two have to agree.
+ */
 const T2S: ReadonlyMap<string, string> = (() => {
   const codePoints = Array.from(T2S_PAIRS);
-  const map = new Map<string, string>();
+  const direct = new Map<string, string>();
   for (let index = 0; index + 1 < codePoints.length; index += 2) {
-    map.set(codePoints[index]!, codePoints[index + 1]!);
+    direct.set(codePoints[index]!, codePoints[index + 1]!);
+  }
+  const map = new Map<string, string>();
+  for (const from of direct.keys()) {
+    let to = direct.get(from)!;
+    const seen = new Set([from, to]);
+    for (let next = direct.get(to); next !== undefined && !seen.has(next); next = direct.get(to)) {
+      seen.add(next);
+      to = next;
+    }
+    map.set(from, to);
   }
   return map;
 })();

@@ -23,6 +23,9 @@ behaviour depends on the database `LC_CTYPE`.
      a Traditional document is found by a Simplified query and the other way round.
    - Folding is one code point for one, so snippet highlights still map back to the
      original characters.
+   - It is idempotent: a chain in the table (薴 → 苧 → 苎) is followed to its end. A query
+     folds its text and then tokenizes it, folding again, while indexing folds once; without
+     this, the two disagreed for 薴.
    - Characters both scripts use (著, 台) are not merged.
    - Distinct Traditional characters with one Simplified form (發/髮 → 发, 後/后 → 后)
      match each other. This costs some precision for recall, as bigrams already do (§9).

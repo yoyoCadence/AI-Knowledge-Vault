@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { T2S_PAIRS } from "@/modules/search/fold-data";
 import {
+  foldScript,
   indexTokens,
   normalizeForSearch,
   parseQuery,
@@ -57,6 +59,17 @@ describe("search tokenizer (SEARCH_DESIGN §2)", () => {
     // One code point for one: offsets into the original text stay valid.
     const text = "都市熱島效應與資訊網絡";
     expect([...normalizeForSearch(text)]).toHaveLength([...text].length);
+  });
+
+  it("folds idempotently, so a query matches what indexing stored (chains like 薴 → 苧 → 苎)", () => {
+    // Indexing folds once; a query folds its run and then tokenizes it, folding again.
+    for (const char of Array.from(T2S_PAIRS)) {
+      expect(foldScript(foldScript(char)), char).toBe(foldScript(char));
+    }
+    const indexed = new Set(indexTokens("薴麻").map((token) => token.lexeme));
+    const [term] = parseQuery("薴麻");
+    for (const token of term!.tokens) expect(indexed, token.lexeme).toContain(token.lexeme);
+    expect(query("薴麻")).toBe("('苎麻' | '薴麻')");
   });
 
   it("matches a Traditional query also in its literal form, for not yet re-indexed text", () => {
