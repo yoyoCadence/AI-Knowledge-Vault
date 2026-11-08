@@ -448,6 +448,26 @@ describe("JobWorker", () => {
       }
     });
 
+    it("wakes the worker for a job made runnable again by a manual retry", async () => {
+      let wakes = 0;
+      setJobWakeHandler(() => (wakes += 1));
+      try {
+        const { job } = await enqueueJob(db, { type: "test.retry", idempotencyKey: "retry-1" });
+        expect(wakes).toBe(1);
+        // Not failed: nothing to retry, no wake.
+        expect(await retryJob(db, job.id)).toBeNull();
+        expect(wakes).toBe(1);
+        await db
+          .update(processingJobs)
+          .set({ status: "failed" })
+          .where(eq(processingJobs.id, job.id));
+        expect((await retryJob(db, job.id))?.status).toBe("queued");
+        expect(wakes).toBe(2);
+      } finally {
+        setJobWakeHandler(undefined);
+      }
+    });
+
     it("runs periodic work inside the poll, when due, and claims the jobs it creates", async () => {
       const done: string[] = [];
       let runs = 0;

@@ -523,7 +523,8 @@ peer dependencies). Anything not verified that way is marked _assumption_.
     schedule. A deployment on a database that scales to zero sets 30 minutes.
   - **One wake-up per poll.** Lease recovery and maintenance scheduling run inside the poll
     cycle (JobWorker `periodic`), not on timers of their own.
-  - **Wake on enqueue.** `enqueueJob` calls `notifyJobEnqueued`:
+  - **Wake on enqueue.** `enqueueJob`, and `retryJob` (a manual retry), call
+    `notifyJobEnqueued`:
     - In the worker process, it calls `worker.wake()` directly.
     - Elsewhere (the web, a CLI), it POSTs to `WORKER_WAKE_URL`, authorized by
       `WORKER_WAKE_SECRET`. The worker's health server answers `POST /wake` only with that
@@ -540,6 +541,10 @@ peer dependencies). Anything not verified that way is marked _assumption_.
   - A lost wake (the worker unreachable, a missing URL) costs time, never a job: the job
     waits for the next idle poll, at most `WORKER_IDLE_POLL_INTERVAL_MS`. Hourly maintenance
     can run up to one idle interval late.
+  - A failed attempt's automatic retry backs off at most about 48 s (5 to 40 s with ±20%
+    jitter, `maxAttempts` 5 or 3). That is inside the active window that the attempt's end
+    opened. A job given more attempts could back off
+    past it, and then waits for an idle poll.
   - The web needs a private-network route to the worker. Every hosting option in DEPLOYMENT
     §2 has one, but the URL is platform-specific (DEPLOYMENT §5.8).
   - E2E runs in this mode (10-minute idle poll), so a web path that enqueues without waking

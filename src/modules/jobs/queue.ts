@@ -243,6 +243,8 @@ export async function retryJob(db: DbExecutor, jobId: string): Promise<JobRow | 
       and(eq(processingJobs.id, jobId), inArray(processingJobs.status, ["failed", "cancelled"])),
     )
     .returning();
+  // Runnable again: an idle worker must hear of it like a new job (ADR-024).
+  if (row) notifyJobEnqueued();
   return row ?? null;
 }
 
