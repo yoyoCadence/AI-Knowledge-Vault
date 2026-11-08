@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import type { DbExecutor } from "@/infrastructure/database/client";
 import { processingJobs, type JobProgress } from "@/infrastructure/database/schema";
+import { notifyJobEnqueued } from "./wake";
 
 /**
  * PostgreSQL-backed durable job queue (ADR-005).
@@ -42,13 +43,19 @@ export async function enqueueJob(
     })
     .onConflictDoNothing({ target: processingJobs.idempotencyKey })
     .returning();
-  if (inserted[0]) return { job: inserted[0], created: true };
+  if (inserted[0]) {
+    notifyJobEnqueued();
+    return { job: inserted[0], created: true };
+  }
 
   const [existing] = await db
     .select()
     .from(processingJobs)
     .where(eq(processingJobs.idempotencyKey, input.idempotencyKey));
   if (!existing) throw new Error("job vanished between insert conflict and select");
+  // Already queued and runnable: wake too (its first wake may have been missed). A job waiting
+  // for a retry later needs none, and repeated enqueues must not keep the worker awake.
+  if (existing.status === "queued" && existing.runAfter <= new Date()) notifyJobEnqueued();
   return { job: existing, created: false };
 }
 

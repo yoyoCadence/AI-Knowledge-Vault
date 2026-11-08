@@ -1,5 +1,4 @@
 import type { Database } from "@/infrastructure/database/client";
-import type { Logger } from "@/infrastructure/observability/logger";
 import { EXPORT_CLEANUP_JOB_TYPE, INTEGRITY_SCHEDULE_JOB_TYPE } from "@/modules/backup";
 import { IMPORT_CLEANUP_JOB_TYPE } from "@/modules/imports";
 import { enqueueJob } from "@/modules/jobs";
@@ -50,14 +49,10 @@ export async function enqueueDueMaintenance(db: Database, now = new Date()): Pro
   return created;
 }
 
-/** Starts the scheduler loop; returns a stop function. */
-export function startScheduler(db: Database, logger: Logger, tickMs = 5 * 60 * 1000): () => void {
-  const tick = () =>
-    enqueueDueMaintenance(db).catch((error: unknown) =>
-      logger.error({ err: error }, "maintenance scheduling failed"),
-    );
-  void tick();
-  const timer = setInterval(tick, tickMs);
-  timer.unref();
-  return () => clearInterval(timer);
-}
+/**
+ * How often maintenance scheduling runs. It runs inside the worker's poll cycle (JobWorker
+ * `periodic`), not on a timer of its own: an idle worker then wakes the database once per idle
+ * poll, not again for this (ADR-024). An idle poll longer than this delays a run until the
+ * next poll; the jobs are hourly or slower, so a run is late, never lost.
+ */
+export const MAINTENANCE_TICK_MS = 5 * 60 * 1000;

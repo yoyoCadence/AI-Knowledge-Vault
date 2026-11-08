@@ -1228,6 +1228,37 @@ conversations. Update it at the end of every PR.
       the page's scripts ran, and the expected violations were reported. `attempt()` also
       names `--repeat-each` runs, so a flaky test can be repeated against one database.
 
+  - **PR 43, the database may sleep (QP-16, ADR-024; owner decision: Neon's free plan).**
+    - **The problem.** Neon's free plan has 100 CU-hours a month, and a compute sleeps after
+      5 minutes without queries. Four things queried it around the clock:
+      - the worker's claim poll (1 to 5 s);
+      - lease recovery (30 s);
+      - maintenance scheduling (5 min);
+      - health checks on `/api/health` (`select 1`).
+
+      It would never sleep: about 182 CU-hours, so it would be suspended from about day 16.
+
+    - **Idle mode.** Two minutes after its last job or wake, the worker polls only every
+      `WORKER_IDLE_POLL_INTERVAL_MS` (30 minutes in that deployment). Recovery and
+      maintenance run inside the poll, not on timers of their own.
+    - **Wake on enqueue.** `enqueueJob` wakes the worker: directly in the worker process,
+      and from the web by `POST /wake` on the worker's health server, with
+      `WORKER_WAKE_SECRET`.
+    - **A health check without the database:** `GET /api/health/live`.
+    - **Defaults keep the old schedule**, so development, tests and an always-on database
+      are unchanged. DEPLOYMENT §5.8 has the settings, per-platform wake URLs, and the checks
+      after deploying.
+    - Tests:
+      - `tests/unit/jobs/poll-delay.test.ts`, `tests/unit/jobs/wake.test.ts`;
+      - `/wake` in `tests/unit/worker/health.test.ts`;
+      - `tests/unit/infrastructure/health-live.test.ts` and `env.test.ts`;
+      - `tests/integration/jobs/queue.test.ts`: an idle worker makes no query for a second,
+        while a default one makes many; a wake brings it back in under a second; in-process
+        wakes and periodic work.
+    - **E2E now runs in this mode** (10-minute idle poll), so every job a spec waits for
+      reaches the worker through the web's wake: 24 passed. A control run with the wake URL
+      pointing at a dead port left the import spec's files "processing" until it failed.
+
 **Not done or not verified**
 
 - Search folds Traditional and Simplified by character, not by word: 軟體 does not find 软件
@@ -1292,6 +1323,9 @@ conversations. Update it at the end of every PR.
   plain text changed too, so content hashes differ from a fresh extraction's, and a
   suspected-duplicate check between the two can miss. PDF and text changed only what reading
   mode shows.
+- ADR-024's wake URLs per platform (Railway, Fly.io, Render, Compose) come from their docs,
+  not from a deployment, and the Neon compute-hour figures are estimates. DEPLOYMENT §5.8
+  says how to check both after deploying.
 - The S3 adapter has not been verified against real R2: that needs the owner's bucket and
   token. `pnpm storage:verify` runs the check (DEPLOYMENT.md §5.2, step 5). So far the suite is
   verified only against moto, which checks neither signatures nor the signed size.

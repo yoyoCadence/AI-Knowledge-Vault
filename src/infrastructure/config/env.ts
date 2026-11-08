@@ -89,10 +89,30 @@ const EnvSchema = z
 
     WORKER_CONCURRENCY: positiveInt(2),
     WORKER_POLL_INTERVAL_MS: positiveInt(1_000),
+    /**
+     * How often an idle worker polls (ADR-024). The default keeps it polling every few seconds.
+     * With a database that scales to zero (Neon), raise it (30 minutes: 1800000) and set
+     * WORKER_WAKE_URL, so the database can sleep and new work still starts at once.
+     */
+    WORKER_IDLE_POLL_INTERVAL_MS: positiveInt(5_000),
+    /** How long after its last job or wake the worker keeps polling fast. */
+    WORKER_ACTIVE_WINDOW_MS: positiveInt(120_000),
     WORKER_SHUTDOWN_GRACE_MS: positiveInt(30_000),
     JOB_LEASE_SECONDS: positiveInt(120),
-    /** Optional localhost-only liveness port for the worker (GET /healthz). */
+    /** Optional port for the worker's health (GET /healthz) and wake (POST /wake) endpoints. */
     WORKER_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).optional(),
+    /**
+     * Where that port listens. Localhost by default (reachable from inside the container only);
+     * `::` to receive wakes from the web over the platform's private network.
+     */
+    WORKER_HEALTH_HOST: z.string().min(1).default("127.0.0.1"),
+    /** The worker's wake endpoint, as the web reaches it: http://<worker host>:<port>/wake. */
+    WORKER_WAKE_URL: z.url().optional(),
+    /** Shared by web and worker: authorizes wakes. Without it /wake is off. */
+    WORKER_WAKE_SECRET: z
+      .string()
+      .min(32, { error: "WORKER_WAKE_SECRET must be at least 32 characters" })
+      .optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && !env.APP_ENV) {
@@ -118,10 +138,20 @@ const EnvSchema = z
       });
     }
 
+    // A wake URL with no secret would send unauthorized wakes the worker refuses (ADR-024).
+    if (env.WORKER_WAKE_URL && !env.WORKER_WAKE_SECRET) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["WORKER_WAKE_SECRET"],
+        message: "WORKER_WAKE_SECRET (≥ 32 chars) is required when WORKER_WAKE_URL is set",
+      });
+    }
+
     const secrets = [
       env.BETTER_AUTH_SECRET,
       env.PREVIEW_TOKEN_SECRET,
       env.LOCAL_STORAGE_SIGNING_SECRET,
+      env.WORKER_WAKE_SECRET,
     ];
     if (new Set(secrets.filter(Boolean)).size !== secrets.filter(Boolean).length) {
       ctx.addIssue({
