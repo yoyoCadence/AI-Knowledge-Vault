@@ -258,8 +258,15 @@ nofollow`, are never cached, and are rate limited per client address
 ## 10. Secrets
 
 - These live only in env or a platform secret store: `BETTER_AUTH_SECRET`,
-  `PREVIEW_TOKEN_SECRET`, `LOCAL_STORAGE_SIGNING_SECRET`, `DATABASE_URL` and `S3_*`.
-- Each secret must be ≥ 32 characters (validated at startup).
+  `PREVIEW_TOKEN_SECRET`, `LOCAL_STORAGE_SIGNING_SECRET`, `WORKER_WAKE_SECRET`,
+  `DATABASE_URL` and `S3_*`.
+- Each secret must be ≥ 32 characters, and the signing secrets distinct (validated at
+  startup).
+- **The worker's wake endpoint** (`POST /wake`, ADR-024) takes only
+  `Authorization: Bearer <WORKER_WAKE_SECRET>`, compared in constant time, and is off without
+  a secret. A wake can only make the worker poll sooner. Unauthenticated, anyone who could
+  reach it could keep a database that scales to zero awake and spend its compute. It listens
+  on the platform's private network (`WORKER_HEALTH_HOST`), never on a public port.
 - `.env*` files are git-ignored. `.env.example` contains only placeholders.
 - Pino redaction covers secrets, and the env validation error output prints variable names,
   never values.

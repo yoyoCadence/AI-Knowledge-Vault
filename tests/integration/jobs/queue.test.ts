@@ -1,5 +1,6 @@
 import { eq, sql } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDatabase } from "@/infrastructure/database/client";
 import { processingJobs } from "@/infrastructure/database/schema";
 import { getLogger } from "@/infrastructure/observability/logger";
 import { LocalStorageAdapter } from "@/infrastructure/storage";
@@ -14,6 +15,7 @@ import {
   JobWorker,
   recoverExpiredLeases,
   retryJob,
+  setJobWakeHandler,
 } from "@/modules/jobs";
 import { closeTestDb, testDb, truncate } from "../helpers/db";
 
@@ -346,5 +348,161 @@ describe("JobWorker", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     await worker.stop();
     expect(seen.sort()).toEqual([0, 1, 2]);
+  });
+
+  describe("idle mode, for a database that scales to zero (ADR-024)", () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const idle = {
+      pollIntervalMs: 10,
+      maxIdlePollIntervalMs: 50,
+      idlePollIntervalMs: 60_000,
+      activeWindowMs: 200,
+    };
+    async function until(condition: () => boolean, ms = 3_000) {
+      const deadline = Date.now() + ms;
+      while (!condition() && Date.now() < deadline) await sleep(10);
+      return condition();
+    }
+
+    it("leaves the database alone while idle, and a wake brings it back at once", async () => {
+      // The worker gets a pool of its own, so every query it makes is counted.
+      const workerDb = createDatabase(process.env.DATABASE_URL!, { max: 2 });
+      const query = vi.spyOn(workerDb.$client, "query");
+      const connect = vi.spyOn(workerDb.$client, "connect");
+      const done: string[] = [];
+      const registry = new JobRegistry().register({
+        type: "test.idle",
+        handler: async ({ job }) => {
+          done.push(job.idempotencyKey);
+        },
+      });
+      const worker = makeWorker(registry, { db: workerDb, ...idle });
+      try {
+        worker.start();
+        await sleep(500); // past the active window: the worker now waits its idle interval
+        query.mockClear();
+        connect.mockClear();
+        await sleep(1_000);
+        expect(query.mock.calls.length + connect.mock.calls.length).toBe(0);
+
+        // Enqueued elsewhere (the web) and no wake: it waits for the idle poll.
+        await enqueueJob(db, { type: "test.idle", idempotencyKey: "idle-1" });
+        await sleep(300);
+        expect(done).toEqual([]);
+
+        const woken = Date.now();
+        worker.wake();
+        expect(await until(() => done.length === 1)).toBe(true);
+        expect(Date.now() - woken).toBeLessThan(1_000);
+      } finally {
+        await worker.stop();
+        await workerDb.$client.end();
+      }
+    });
+
+    it("keeps polling as before when no idle interval is configured (the default)", async () => {
+      const workerDb = createDatabase(process.env.DATABASE_URL!, { max: 2 });
+      const query = vi.spyOn(workerDb.$client, "query");
+      const connect = vi.spyOn(workerDb.$client, "connect");
+      const worker = makeWorker(
+        new JobRegistry().register({ type: "test.x", handler: async () => {} }),
+        {
+          db: workerDb,
+          pollIntervalMs: 10,
+          maxIdlePollIntervalMs: 50,
+          activeWindowMs: 200,
+        },
+      );
+      try {
+        worker.start();
+        await sleep(500);
+        query.mockClear();
+        connect.mockClear();
+        await sleep(1_000);
+        // The same window as above: the counter sees the polls.
+        expect(query.mock.calls.length + connect.mock.calls.length).toBeGreaterThan(5);
+      } finally {
+        await worker.stop();
+        await workerDb.$client.end();
+      }
+    });
+
+    it("is woken by jobs enqueued in its own process", async () => {
+      const done: string[] = [];
+      const registry = new JobRegistry().register({
+        type: "test.self",
+        handler: async ({ job }) => {
+          done.push(job.idempotencyKey);
+        },
+      });
+      const worker = makeWorker(registry, idle);
+      setJobWakeHandler(() => worker.wake());
+      try {
+        worker.start();
+        await sleep(500);
+        await enqueueJob(db, { type: "test.self", idempotencyKey: "self-1" });
+        expect(await until(() => done.length === 1, 1_000)).toBe(true);
+      } finally {
+        setJobWakeHandler(undefined);
+        await worker.stop();
+      }
+    });
+
+    it("wakes the worker for a job made runnable again by a manual retry", async () => {
+      let wakes = 0;
+      setJobWakeHandler(() => (wakes += 1));
+      try {
+        const { job } = await enqueueJob(db, { type: "test.retry", idempotencyKey: "retry-1" });
+        expect(wakes).toBe(1);
+        // Not failed: nothing to retry, no wake.
+        expect(await retryJob(db, job.id)).toBeNull();
+        expect(wakes).toBe(1);
+        await db
+          .update(processingJobs)
+          .set({ status: "failed" })
+          .where(eq(processingJobs.id, job.id));
+        expect((await retryJob(db, job.id))?.status).toBe("queued");
+        expect(wakes).toBe(2);
+      } finally {
+        setJobWakeHandler(undefined);
+      }
+    });
+
+    it("runs periodic work inside the poll, when due, and claims the jobs it creates", async () => {
+      const done: string[] = [];
+      let runs = 0;
+      const registry = new JobRegistry().register({
+        type: "test.periodic",
+        handler: async ({ job }) => {
+          done.push(job.idempotencyKey);
+        },
+      });
+      const worker = makeWorker(registry, {
+        ...idle,
+        periodic: [
+          {
+            everyMs: 60 * 60_000,
+            run: async () => {
+              runs += 1;
+              const { created } = await enqueueJob(db, {
+                type: "test.periodic",
+                idempotencyKey: `periodic-${runs}`,
+              });
+              return created ? 1 : 0;
+            },
+          },
+        ],
+      });
+      try {
+        worker.start();
+        expect(await until(() => done.length === 1, 1_000)).toBe(true);
+        await sleep(500);
+        // Many polls happened; the hourly task ran once.
+        expect(runs).toBe(1);
+        expect(done).toEqual(["periodic-1"]);
+      } finally {
+        await worker.stop();
+      }
+    });
   });
 });

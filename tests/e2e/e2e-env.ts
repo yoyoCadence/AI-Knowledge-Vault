@@ -31,4 +31,10 @@ export const e2eEnv: Record<string, string> = {
   STORAGE_DRIVER: "local",
   LOCAL_STORAGE_DIR: path.join(root, ".data", "e2e-storage"),
   WORKER_POLL_INTERVAL_MS: "200",
+  // Run as a deployment on a database that scales to zero does (ADR-024): an idle worker polls
+  // every 10 minutes, so every job a spec waits for must reach it through the web's wake.
+  WORKER_IDLE_POLL_INTERVAL_MS: "600000",
+  WORKER_ACTIVE_WINDOW_MS: "5000",
+  WORKER_WAKE_URL: `http://127.0.0.1:${E2E_WORKER_HEALTH_PORT}/wake`,
+  WORKER_WAKE_SECRET: "e2e-only-worker-wake-secret-0123456789abcdef",
 };

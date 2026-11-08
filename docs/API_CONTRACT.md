@@ -5,7 +5,8 @@ REST-oriented JSON API served by Next.js route handlers under `/api`. Status col
 
 ## 1. Conventions
 
-- **Auth:** session cookie (Better Auth). Every endpoint except `/api/health`, `/api/auth/*`,
+- **Auth:** session cookie (Better Auth). Every endpoint except `/api/health` (and
+  `/api/health/live`), `/api/auth/*`,
   the storage token routes, share resolution and preview requires an authenticated actor.
   Unauthenticated → `401 UNAUTHENTICATED`.
 - **CSRF:** mutating methods require a same-origin `Origin` (or `Sec-Fetch-Site: same-origin`).
@@ -23,9 +24,10 @@ REST-oriented JSON API served by Next.js route handlers under `/api`. Status col
 
 ## 2. System
 
-| Method | Path          | Description                                                             | Status |
-| ------ | ------------- | ----------------------------------------------------------------------- | ------ |
-| GET    | `/api/health` | `{status: ok/degraded, db, storage, version}`; no auth; leaks no config | ✅     |
+| Method | Path               | Description                                                                                           | Status |
+| ------ | ------------------ | ----------------------------------------------------------------------------------------------------- | ------ |
+| GET    | `/api/health`      | `{status: ok/degraded, db, storage, version}`; no auth; leaks no config                               | ✅     |
+| GET    | `/api/health/live` | `{status: ok, version}`; no auth; touches neither database nor storage, for platform probes (ADR-024) | ✅     |
 
 ## 3. Auth (Better Auth, mounted at `/api/auth/[...all]`)
 

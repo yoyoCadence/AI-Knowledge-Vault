@@ -23,11 +23,56 @@ export interface JobWorkerOptions {
   concurrency: number;
   leaseSeconds: number;
   pollIntervalMs: number;
+  /** While active, polls back off from `pollIntervalMs` up to this. Default 5 s. */
   maxIdlePollIntervalMs?: number;
+  /**
+   * Once nothing has happened for `activeWindowMs`, the worker polls only this often, so a
+   * database that scales to zero can sleep in between (ADR-024). A wake() ends the wait.
+   * Default: `maxIdlePollIntervalMs` (no idle mode).
+   */
+  idlePollIntervalMs?: number;
+  /** How long after the last job or wake the worker stays active. Default 2 minutes. */
+  activeWindowMs?: number;
+  /**
+   * Work that runs inside the poll cycle when due (maintenance scheduling), so it shares the
+   * poll's database wake-up instead of waking the database on a timer of its own. A positive
+   * result counts as activity: the jobs it created are claimed right away.
+   */
+  periodic?: readonly { everyMs: number; run: () => Promise<number> }[];
   defaultTimeoutMs: number;
   recoveryIntervalMs?: number;
   shutdownGraceMs: number;
   workerId?: string;
+}
+
+/**
+ * The wait before the worker's next poll (ADR-024).
+ *
+ * - A claim that left capacity polls again at once.
+ * - Within `activeWindowMs` of the last job or wake, polls back off from `pollIntervalMs` to
+ *   `fastMaxMs`.
+ * - After that the worker polls every `idlePollIntervalMs`. A database that scales to zero
+ *   after a few quiet minutes (Neon: 5) can then sleep, instead of being woken every few
+ *   seconds by the worker alone.
+ */
+export function nextPollDelay(input: {
+  claimed: number;
+  canClaimMore: boolean;
+  previousDelayMs: number;
+  sinceActivityMs: number;
+  pollIntervalMs: number;
+  fastMaxMs: number;
+  idlePollIntervalMs: number;
+  activeWindowMs: number;
+}): number {
+  if (input.claimed > 0) return input.canClaimMore ? 0 : input.pollIntervalMs;
+  if (input.idlePollIntervalMs > input.fastMaxMs && input.sinceActivityMs >= input.activeWindowMs) {
+    return input.idlePollIntervalMs;
+  }
+  // Back from an idle wait (a wake), the backoff starts over.
+  const previous =
+    input.previousDelayMs > input.fastMaxMs ? input.pollIntervalMs : input.previousDelayMs;
+  return Math.min(input.fastMaxMs, Math.round(Math.max(previous, input.pollIntervalMs) * 1.5));
 }
 
 /** Thrown into a handler's AbortSignal when its lease is lost to recovery. */
@@ -59,6 +104,8 @@ export class JobWorker {
   private loopPromise: Promise<void> | undefined;
   private wakeUp: (() => void) | undefined;
   private lastRecoveryAt = 0;
+  private lastActivityAt = Date.now();
+  private readonly periodicLastRun = new Map<number, number>();
 
   constructor(private readonly options: JobWorkerOptions) {
     this.workerId = options.workerId ?? `${hostname()}:${process.pid}:${newId().slice(-8)}`;
@@ -91,6 +138,16 @@ export class JobWorker {
     this.options.logger.info({ workerId: this.workerId }, "job worker stopped");
   }
 
+  /**
+   * New work may be waiting (a job was enqueued): poll now, and stay active for the active
+   * window. A job enqueued in a transaction that has not committed yet is found by the polls
+   * that follow, so a wake may come early.
+   */
+  wake(): void {
+    this.lastActivityAt = Date.now();
+    this.wakeUp?.();
+  }
+
   /** Runs claim/execute cycles until no runnable jobs remain. Used by tests and CLI tools. */
   async drain(): Promise<number> {
     let processed = 0;
@@ -104,23 +161,43 @@ export class JobWorker {
   }
 
   private async loop(): Promise<void> {
-    let idleDelay = this.options.pollIntervalMs;
-    const maxIdle = this.options.maxIdlePollIntervalMs ?? 5_000;
+    const fastMaxMs = this.options.maxIdlePollIntervalMs ?? 5_000;
+    let delay = this.options.pollIntervalMs;
     while (!this.stopping) {
       let claimed: JobRow[] = [];
       try {
         await this.maybeRecover();
+        await this.runPeriodic();
         claimed = await this.claim();
       } catch (error) {
         this.options.logger.error({ err: error }, "job claim cycle failed");
       }
-      idleDelay =
-        claimed.length > 0
-          ? this.options.pollIntervalMs
-          : Math.min(maxIdle, Math.round(idleDelay * 1.5));
-      await this.sleep(
-        claimed.length > 0 && this.running.size < this.options.concurrency ? 0 : idleDelay,
-      );
+      if (claimed.length > 0) this.lastActivityAt = Date.now();
+      delay = nextPollDelay({
+        claimed: claimed.length,
+        canClaimMore: this.running.size < this.options.concurrency,
+        previousDelayMs: delay,
+        sinceActivityMs: Date.now() - this.lastActivityAt,
+        pollIntervalMs: this.options.pollIntervalMs,
+        fastMaxMs,
+        idlePollIntervalMs: this.options.idlePollIntervalMs ?? fastMaxMs,
+        activeWindowMs: this.options.activeWindowMs ?? 120_000,
+      });
+      await this.sleep(delay);
+    }
+  }
+
+  private async runPeriodic(): Promise<void> {
+    const tasks = this.options.periodic ?? [];
+    for (const [index, task] of tasks.entries()) {
+      const last = this.periodicLastRun.get(index);
+      if (last !== undefined && Date.now() - last < task.everyMs) continue;
+      this.periodicLastRun.set(index, Date.now());
+      try {
+        if ((await task.run()) > 0) this.lastActivityAt = Date.now();
+      } catch (error) {
+        this.options.logger.error({ err: error }, "periodic worker task failed");
+      }
     }
   }
 
@@ -173,6 +250,8 @@ export class JobWorker {
         })
         .finally(() => {
           this.running.delete(job.id);
+          // A job that ran longer than the active window may have enqueued follow-ups.
+          this.lastActivityAt = Date.now();
           this.wakeUp?.();
         });
       this.running.set(job.id, { controller, done });

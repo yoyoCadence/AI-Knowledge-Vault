@@ -59,6 +59,37 @@ describe("parseEnv", () => {
     expect(issues.join()).not.toContain("short-secret-value");
   });
 
+  it("keeps the worker's polling unless an idle mode is configured, and guards the wake (ADR-024)", () => {
+    const env = parseEnv(base);
+    expect(env.WORKER_IDLE_POLL_INTERVAL_MS).toBe(5_000);
+    expect(env.WORKER_HEALTH_HOST).toBe("127.0.0.1");
+    expect(env.WORKER_WAKE_URL).toBeUndefined();
+
+    const wakeUrl = "http://worker.railway.internal:3901/wake";
+    expect(issuesOf({ ...base, WORKER_WAKE_URL: wakeUrl }).join("\n")).toMatch(
+      /WORKER_WAKE_SECRET .*required when WORKER_WAKE_URL is set/,
+    );
+    expect(issuesOf({ ...base, WORKER_WAKE_SECRET: "short" }).join("\n")).toMatch(
+      /WORKER_WAKE_SECRET must be at least 32 characters/,
+    );
+    // Not the same value as another secret.
+    expect(issuesOf({ ...base, WORKER_WAKE_SECRET: "a".repeat(40) }).join("\n")).toMatch(
+      /secrets must be distinct/,
+    );
+    const configured = parseEnv({
+      ...base,
+      WORKER_IDLE_POLL_INTERVAL_MS: "1800000",
+      WORKER_HEALTH_HOST: "::",
+      WORKER_WAKE_URL: wakeUrl,
+      WORKER_WAKE_SECRET: "d".repeat(40),
+    });
+    expect(configured).toMatchObject({
+      WORKER_IDLE_POLL_INTERVAL_MS: 1_800_000,
+      WORKER_HEALTH_HOST: "::",
+      WORKER_WAKE_URL: wakeUrl,
+    });
+  });
+
   it("rejects reused secrets", () => {
     expect(issuesOf({ ...base, PREVIEW_TOKEN_SECRET: base.BETTER_AUTH_SECRET }).join()).toMatch(
       /distinct/,

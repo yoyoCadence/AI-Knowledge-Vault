@@ -104,7 +104,8 @@ peer dependencies). Anything not verified that way is marked _assumption_.
 - **Reasoning:** No extra infrastructure, transactional enqueue (a job is created in the
   same transaction as the business row), and durable across crashes.
 - **Trade-offs:**
-  - Polling latency (default 1 s, with exponential idle backoff up to 5 s).
+  - Polling latency (default 1 s, with exponential idle backoff up to 5 s; an idle mode
+    for databases that scale to zero, ADR-024).
   - Throughput is limited to roughly hundreds of jobs per second, far above need.
 - **Reversal:** `modules/jobs/queue.ts` is the only module touching the table. A Cloudflare
   Queues or SQS implementation can replace enqueue and claim while keeping
@@ -500,3 +501,53 @@ peer dependencies). Anything not verified that way is marked _assumption_.
     reader and share link, but is still stored, exported and backed up. Removing it would
     take manual database and storage work that the app does not support. If that need
     arises, it is a new decision (and a new ADR), not a quiet addition.
+
+## ADR-024 Let a database that scales to zero sleep: idle worker, wake on enqueue
+
+- **Status:** accepted (2026-11-08, owner decision: run on Neon's free plan)
+- **Context:**
+  - Neon's free plan gives 100 CU-hours a month. A compute suspends after 5 minutes with no
+    queries, and resumes on the next one in a few hundred milliseconds. A 0.25 CU compute
+    that never sleeps uses about 182 CU-hours a month: the database would be suspended until
+    the next month from about day 16.
+  - Four things queried it around the clock:
+    - the worker's claim poll (1 s, backing off to 5 s);
+    - lease recovery (every 30 s);
+    - maintenance scheduling (a 5-minute timer of its own);
+    - a platform health check on `/api/health`, which runs `select 1`.
+  - The owner chose to change the worker rather than pay for the database (2026-11-08).
+- **Decision:**
+  - **Idle mode.** Within `WORKER_ACTIVE_WINDOW_MS` (default 2 minutes) of its last job or
+    wake, the worker polls as before. After that it polls every
+    `WORKER_IDLE_POLL_INTERVAL_MS` (`nextPollDelay`). The default, 5 s, keeps the old
+    schedule. A deployment on a database that scales to zero sets 30 minutes.
+  - **One wake-up per poll.** Lease recovery and maintenance scheduling run inside the poll
+    cycle (JobWorker `periodic`), not on timers of their own.
+  - **Wake on enqueue.** `enqueueJob`, and `retryJob` (a manual retry), call
+    `notifyJobEnqueued`:
+    - In the worker process, it calls `worker.wake()` directly.
+    - Elsewhere (the web, a CLI), it POSTs to `WORKER_WAKE_URL`, authorized by
+      `WORKER_WAKE_SECRET`. The worker's health server answers `POST /wake` only with that
+      secret, and is off without one. Its host is configurable (`WORKER_HEALTH_HOST`), so it
+      can listen on the platform's private network.
+    - A wake keeps the worker active for its window, so a wake that arrives before the
+      enqueueing transaction commits is harmless: the following polls find the job.
+  - **A liveness probe without the database:** `GET /api/health/live`. Platform health checks
+    and uptime monitors use it; `/api/health` stays the full check.
+- **Consequences:**
+  - On Neon's free plan the database is awake while the owner uses the app, plus about 5
+    minutes, plus about 5 minutes after each idle poll. With a 30-minute idle poll that is
+    about 4 hours a day when idle (about 30 CU-hours a month at 0.25 CU), plus use.
+  - A lost wake (the worker unreachable, a missing URL) costs time, never a job: the job
+    waits for the next idle poll, at most `WORKER_IDLE_POLL_INTERVAL_MS`. Hourly maintenance
+    can run up to one idle interval late.
+  - A failed attempt's automatic retry backs off at most about 48 s (5 to 40 s with ±20%
+    jitter, `maxAttempts` 5 or 3). That is inside the active window that the attempt's end
+    opened. A job given more attempts could back off
+    past it, and then waits for an idle poll.
+  - The web needs a private-network route to the worker. Every hosting option in DEPLOYMENT
+    §2 has one, but the URL is platform-specific (DEPLOYMENT §5.8).
+  - E2E runs in this mode (10-minute idle poll), so a web path that enqueues without waking
+    the worker fails the suite.
+- **Reversal:** unset `WORKER_IDLE_POLL_INTERVAL_MS` (and the wake settings) for an always-on
+  database, or replace the wake with a queue service (ADR-005 "Reversal").

@@ -27,7 +27,13 @@ The worker must be a long-lived process. Serverless functions cannot host it (AR
 Free tiers change. Do not plan on any free tier being permanent. Known constraints (as of
 writing, to be re-verified):
 
-- **Neon free:** small storage cap; compute suspends when idle (cold-start latency).
+- **Neon free:** 100 CU-hours a month and 1 GB of storage per project (2026-11). Compute
+  suspends after 5 minutes without queries and resumes in a few hundred milliseconds. A
+  compute that never sleeps uses about 182 CU-hours a month (0.25 CU), and the free plan then
+  suspends it until the next month, from about day 16. **On the free plan, follow §5.8**, or
+  the worker's polling and the platform's health checks keep it awake. The alternatives are a
+  paid plan (always on at 0.25 CU: about 19 USD a month at the Launch rate) or a Postgres
+  that does not bill by compute hour.
 - **R2 free:** 10 GB storage, plus Class A/B operation limits.
 - **Container platforms:** usually no free always-on worker.
 
@@ -55,6 +61,7 @@ See `.env.example` for the full annotated list. Required in staging and producti
 | `DATABASE_URL`                                                                                                                                             | Neon **pooled** connection string for web/worker; `DATABASE_URL_DIRECT` (non-pooled) for migrations |
 | `BETTER_AUTH_SECRET`, `PREVIEW_TOKEN_SECRET`, `LOCAL_STORAGE_SIGNING_SECRET`                                                                               | ≥ 32 random chars each, all different (`openssl rand -base64 48`)                                   |
 | `STORAGE_DRIVER=s3`, `S3_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com`, `S3_REGION=auto`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | R2 API token scoped to one bucket                                                                   |
+| `WORKER_IDLE_POLL_INTERVAL_MS`, `WORKER_WAKE_URL`, `WORKER_WAKE_SECRET`, `WORKER_HEALTH_PORT`, `WORKER_HEALTH_HOST`                                        | Only for a database that scales to zero (Neon free plan): §5.8                                      |
 
 ## 5. Procedures
 
@@ -225,6 +232,51 @@ Run both checks after the first deployment and after any change of host, proxy, 
    believed (check 1 should have caught it). An empty address, or the proxy's address, means
    every visitor shares one budget: set `TRUSTED_PROXIES` to the platform's proxy ranges.
 
+### 5.8 A database that scales to zero (Neon free plan)
+
+ADR-024 has the reasoning. The database must be left alone when nobody uses the app: the
+worker polls rarely when idle, the web wakes it when it enqueues work, and nothing probes the
+database on a timer.
+
+1. **Neon:** fix the compute at 0.25 CU (minimum = maximum), so a burst of work cannot
+   autoscale it and spend the month's hours faster. Keep scale to zero on (the free plan
+   cannot turn it off).
+2. **Worker** (environment of the `worker` process):
+
+   | Variable                       | Value                                                    |
+   | ------------------------------ | -------------------------------------------------------- |
+   | `WORKER_IDLE_POLL_INTERVAL_MS` | `1800000` (30 minutes)                                   |
+   | `WORKER_HEALTH_PORT`           | `3901` (any free port)                                   |
+   | `WORKER_HEALTH_HOST`           | `::` (listen on the private network; IPv4 and IPv6)      |
+   | `WORKER_WAKE_SECRET`           | `openssl rand -base64 48`; not equal to any other secret |
+
+3. **Web** (environment of the `web` process):
+   - `WORKER_WAKE_SECRET`: the same value.
+   - `WORKER_WAKE_URL`: the worker's port on the platform's private network, ending in
+     `/wake`. The platform docs give the exact host name. Typical forms (verify them):
+     - Railway: `http://<worker service>.railway.internal:3901/wake`.
+     - Fly.io, one app with two process groups: `http://worker.process.<app>.internal:3901/wake`.
+     - Render: a background worker takes no inbound traffic. Run the worker as a private
+       service instead (same image, same command): `http://<service>:3901/wake`.
+     - Docker Compose: `http://worker:3901/wake`.
+   - The web and worker images are the same, so setting all of the above on both is fine.
+     The worker wakes itself directly; it never calls its own URL.
+4. **Health checks:** point the platform's health check, and any uptime monitor, at
+   `/api/health/live`. It touches neither database nor storage. `/api/health` runs a query,
+   so probing it every few seconds keeps the database awake all month. Use it by hand, or
+   in a deploy step.
+5. **Check, after deploying:**
+   - Leave the app alone for 10 minutes, then import a small file. It should be processed
+     within seconds. If it waits (up to 30 minutes), no wake arrived: check
+     `WORKER_WAKE_URL` and the secret on the web. An unreachable or refusing worker makes the
+     web log "could not wake the worker" (at most once a minute).
+   - After a quiet hour, Neon's console should show the compute as idle.
+   - Check the month's compute usage after a few days. Expected: about 1 to 1.5 CU-hours
+     a day idle (48 polls × about 5 minutes awake × 0.25 CU, a little more for the hourly
+     maintenance jobs), plus about 0.25 CU-hour per hour of use. The free plan has 100 a
+     month.
+   - Record the result in §7 ("Wake check").
+
 ## 6. What the owner must provide to deploy
 
 1. A Neon project, with its connection strings (pooled and direct).
@@ -232,14 +284,15 @@ Run both checks after the first deployment and after any change of host, proxy, 
 3. Two domains or hostnames, for the app and the preview.
 4. A container host account (Fly.io, Railway or Render) or a VPS.
 5. An independent backup destination (B2 bucket, NAS, etc.) and its credentials.
-6. Generated secrets (`openssl rand -base64 48` × 3).
+6. Generated secrets (`openssl rand -base64 48` × 3, and a fourth, `WORKER_WAKE_SECRET`, on a
+   database that scales to zero, §5.8).
 
 ## 7. Deployment record
 
 One row per environment, kept current. An agent that finds a deployed environment here whose
 checks are not all done asks the owner to finish them before other work (AGENTS.md §0).
 
-| Environment | Host and proxy   | `TRUSTED_PROXIES` | R2 verify (§5.2) | Client address checks (§5.7) | Date |
-| ----------- | ---------------- | ----------------- | ---------------- | ---------------------------- | ---- |
-| production  | not deployed yet | —                 | not run          | not run                      | —    |
-| staging     | not deployed yet | —                 | not run          | not run                      | —    |
+| Environment | Host and proxy   | `TRUSTED_PROXIES` | R2 verify (§5.2) | Client address checks (§5.7) | Wake check (§5.8, scale-to-zero only) | Date |
+| ----------- | ---------------- | ----------------- | ---------------- | ---------------------------- | ------------------------------------- | ---- |
+| production  | not deployed yet | —                 | not run          | not run                      | not run                               | —    |
+| staging     | not deployed yet | —                 | not run          | not run                      | not run                               | —    |
