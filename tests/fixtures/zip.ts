@@ -15,6 +15,14 @@ export interface ZipEntrySpec {
   encrypted?: boolean;
   /** Overrides the uncompressed size written in the headers (to simulate lying headers). */
   declaredSize?: number;
+  /**
+   * The name's bytes as written, for archives from tools that write their own encoding: macOS
+   * writes UTF-8 without the UTF-8 flag, Windows in a zh-TW locale writes Big5. Default: `name`
+   * as UTF-8.
+   */
+  nameBytes?: Buffer;
+  /** General-purpose bit 11, "the name is UTF-8". Default true. */
+  utf8Flag?: boolean;
 }
 
 export function buildZip(entries: ZipEntrySpec[]): Buffer {
@@ -28,8 +36,9 @@ export function buildZip(entries: ZipEntrySpec[]): Buffer {
     const isDirectory = spec.name.endsWith("/");
     const method = isDirectory ? 0 : spec.method === "deflate" ? 8 : 0;
     const body = method === 8 ? deflateRawSync(raw) : raw;
-    const name = Buffer.from(spec.name, "utf8");
-    const flags = 0x0800 | (spec.encrypted ? 0x0001 : 0); // UTF-8 names (+ encrypted)
+    const name = spec.nameBytes ?? Buffer.from(spec.name, "utf8");
+    // UTF-8 names (unless told otherwise), + encrypted.
+    const flags = (spec.utf8Flag === false ? 0 : 0x0800) | (spec.encrypted ? 0x0001 : 0);
     const checksum = crc32(raw);
     const uncompressed = spec.declaredSize ?? raw.length;
     const mode = spec.mode ?? (isDirectory ? 0o40755 : 0o100644);
@@ -92,4 +101,35 @@ export function corruptLocalHeader(zip: Buffer, entryName: string): Buffer {
     throw new Error(`no local header for ${entryName}`);
   copy.writeUInt32LE(0xdeadbeef, at);
   return copy;
+}
+
+let big5Codes: Map<string, Buffer> | undefined;
+
+/**
+ * Text as Big5 bytes, as Windows in a zh-TW locale writes ZIP entry names. Test-only: built
+ * once by decoding every two-byte Big5 code (Node has a Big5 decoder, not an encoder).
+ */
+export function big5(text: string): Buffer {
+  if (!big5Codes) {
+    const codes = new Map<string, Buffer>();
+    const decoder = new TextDecoder("big5");
+    for (let lead = 0x81; lead <= 0xfe; lead += 1) {
+      for (let trail = 0x40; trail <= 0xfe; trail += 1) {
+        if (trail > 0x7e && trail < 0xa1) continue;
+        const bytes = Buffer.from([lead, trail]);
+        const char = decoder.decode(bytes);
+        if ([...char].length === 1 && char !== "\ufffd" && !codes.has(char)) codes.set(char, bytes);
+      }
+    }
+    big5Codes = codes;
+  }
+  const codes = big5Codes;
+  return Buffer.concat(
+    [...text].map((char) => {
+      if (char.charCodeAt(0) < 0x80) return Buffer.from(char, "ascii");
+      const bytes = codes.get(char);
+      if (!bytes) throw new Error(`not in Big5: ${char}`);
+      return bytes;
+    }),
+  );
 }

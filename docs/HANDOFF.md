@@ -1188,6 +1188,23 @@ conversations. Update it at the end of every PR.
       - `tests/integration/search/extracted-words.test.ts`: search finds each of these
         words; before, it found none.
 
+  - **PR 41, ZIP entry names as their tools wrote them (QP-13).**
+    - Names without the UTF-8 flag were read as CP437, as the format says. But macOS writes
+      UTF-8 without the flag, and Windows in a zh-TW locale writes Big5. So "報告" became
+      "σá▒σæè" or "│°ºi".
+    - Big5's trail byte 0x5C (許, 功, 蓋…) became a folder separator, which moved files into
+      folders that do not exist.
+    - The site's own links ("圖表/長條.png") then matched no stored file, so its CSS and images
+      were missing in the preview and in reading mode.
+    - Now such a name is read as strict UTF-8, then strict Big5, then CP437. Flagged names and
+      Info-ZIP Unicode Path fields are read by yauzl, as before.
+    - The traversal checks run on the decoded name (yauzl's `validateFileName`). Control bytes
+      in an unflagged ASCII name are now refused rather than read as CP437 glyphs.
+    - Tests:
+      - `tests/unit/extraction/zip.test.ts`: 2 new tests.
+      - `tests/integration/imports/archives.test.ts`: a Big5 site imports with its names.
+      - All of them failed before.
+
 **Not done or not verified**
 
 - Search folds Traditional and Simplified by character, not by word: 軟體 does not find 软件
@@ -1232,6 +1249,9 @@ conversations. Update it at the end of every PR.
     "unlisted" artifact restores without links (readable by no one outside the workspace).
   - The rate-limited reader page answers 200 with a message (a Server Component cannot set
     a 429); the `/s/*` routes answer 429.
+- ZIP names without the UTF-8 flag that are neither UTF-8 nor Big5 are read as CP437. GBK
+  (zh-CN Windows) or Shift_JIS (ja-JP) names that also decode as Big5 come out as the wrong
+  characters; that ambiguity cannot be settled from the bytes alone.
 - The CLI does not read ASCII-armored age files, or identities other than X25519 (plugin,
   post-quantum, SSH). Decrypt those with `age -d` first.
 - Decrypting with a passphrase uses typage's synchronous scrypt, which is fine for a CLI. Its
