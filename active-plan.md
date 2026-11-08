@@ -1,6 +1,6 @@
 # Active Plan
 
-_Last updated: 2026-11-06 by the implementing agent (quality pass)._
+_Last updated: 2026-11-08 by the implementing agent (quality pass)._
 
 ## Current focus
 
@@ -8,14 +8,25 @@ _Last updated: 2026-11-06 by the implementing agent (quality pass)._
 real bucket. The last PR, 27, makes development work on Windows and adds the "archive" skin
 (docs/THEME.md).
 
-**Quality pass (2026-11), PRs 28–32:** each finding is in `task.md` § Quality pass, with
+**Quality pass (2026-11), PRs 28–42:** each finding is in `task.md` § Quality pass, with
 its evidence and class:
 
 - download names (PR 28);
 - delete and undo (PR 29);
 - a search time limit (PR 30);
 - request failures and sign-out failures that say what happened (PR 31);
-- import failure reasons in zh-TW (PR 32).
+- import failure reasons in zh-TW (PR 32);
+- deployment checks written down for agents, and ADR-023 (PR 33);
+- features the owner asked for:
+  - a project/collection picker on import (PR 34);
+  - Traditional/Simplified search folding (PR 35);
+  - images in reading mode (PR 36);
+- password change and reset (PR 37);
+- the preview's own hostname (PR 38);
+- a nonce-based CSP on the app origin (PR 39);
+- extraction that keeps form-wrapped pages, accordions and word boundaries (PR 40);
+- ZIP names from macOS and zh-TW Windows (PR 41);
+- PDF and text files shown as written (PR 42).
 
 **Next, needs the owner:**
 
@@ -84,6 +95,8 @@ findings handled. If the review bot is unavailable, run an independent review fi
 10. ✅ Windows development and the archive skin, P1B-SKIN (PR 27).
 11. ✅ Quality pass: download names (PR 28), delete and undo (PR 29), search time limit
     (PR 30), request and sign-out failures (PR 31), import failure reasons (PR 32).
+12. ✅ Quality pass, continued (PRs 33–42): see "Current focus" above and `task.md`
+    QP-8 to QP-15.
 
 ## Open questions for the owner
 

@@ -1205,6 +1205,29 @@ conversations. Update it at the end of every PR.
       - `tests/integration/imports/archives.test.ts`: a Big5 site imports with its names.
       - All of them failed before.
 
+  - **PR 42, reading mode shows PDF and text files as written (QP-14, QP-15).**
+    - **PDF outline links jumped to the wrong page.** Page text went into reading mode's
+      Markdown raw. A line of dashes under a line (a setext heading) or a `#` at a line start
+      made a heading, and root headings get the page sections' anchors in order. So `#page-2`
+      landed on a heading from page 1's text, and the last page lost its anchor. `*` and `_`
+      also turned into emphasis.
+    - The Markdown is now written through mdast (`pagesMarkdown`), which escapes such text.
+      URLs stay links and read exactly. Tested by round trip on adversarial samples and by
+      3,000 seeded random ones: none adds or removes a block.
+    - **Plain text lost its layout.** Reading mode shows it preformatted, but the stored text
+      had its whitespace collapsed, so indentation, space-aligned tables and the `　　`
+      paragraph indent were gone. It now shows the text as written; search still uses the
+      normalized text.
+    - PDF and text extractor versions are now 2.
+    - Tests, all failing before:
+      - `tests/unit/extraction/extractors.test.ts`: 3 new tests;
+      - `tests/unit/reader/markdown-view.test.ts`: the anchors of a PDF whose text looks
+        like Markdown.
+    - Also a test fix: `csp.spec.ts` (PR 39) waited for "networkidle", which timed out once
+      in a full run, when a request outlived the test timeout. It now waits on what it checks:
+      the page's scripts ran, and the expected violations were reported. `attempt()` also
+      names `--repeat-each` runs, so a flaky test can be repeated against one database.
+
 **Not done or not verified**
 
 - Search folds Traditional and Simplified by character, not by word: 軟體 does not find 软件
@@ -1249,6 +1272,9 @@ conversations. Update it at the end of every PR.
     "unlisted" artifact restores without links (readable by no one outside the workspace).
   - The rate-limited reader page answers 200 with a message (a Server Component cannot set
     a 429); the `/s/*` routes answer 429.
+- In a PDF's text, Markdown punctuation right after a bare `www.` or `http://` can show a
+  stray backslash: GFM reads a bare URL literally, so the escape stays. This needs symbol
+  runs such as `www.*!b`; real URLs read exactly.
 - ZIP names without the UTF-8 flag that are neither UTF-8 nor Big5 are read as CP437. GBK
   (zh-CN Windows) or Shift_JIS (ja-JP) names that also decode as Big5 come out as the wrong
   characters; that ambiguity cannot be settled from the bytes alone.
@@ -1259,10 +1285,13 @@ conversations. Update it at the end of every PR.
 - HTML extraction reads inline styles only, not stylesheets. Boxes laid apart only by a
   stylesheet (`.nav a { margin }`, class-based flex) still join: `<nav><a>Home</a><a>About</a>
   </nav>` reads "HomeAbout".
-- Versions extracted before HTML/Markdown extractor 2 (PR 40) keep their text. There is no
+- Versions extracted before HTML/Markdown extractor 2 (PR 40), or PDF/text extractor 2
+  (PR 42), keep their text. There is no
   re-extraction job for them, and re-importing the same bytes is a duplicate. Nothing is
-  deployed (DEPLOYMENT §7), so this affects development data only. Their content hashes also
-  differ from a fresh extraction's, so a suspected-duplicate check between the two can miss.
+  deployed (DEPLOYMENT §7), so this affects development data only. For HTML and Markdown the
+  plain text changed too, so content hashes differ from a fresh extraction's, and a
+  suspected-duplicate check between the two can miss. PDF and text changed only what reading
+  mode shows.
 - The S3 adapter has not been verified against real R2: that needs the owner's bucket and
   token. `pnpm storage:verify` runs the check (DEPLOYMENT.md §5.2, step 5). So far the suite is
   verified only against moto, which checks neither signatures nor the signed size.

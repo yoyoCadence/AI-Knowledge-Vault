@@ -2,7 +2,22 @@ import { detectLanguage } from "./language";
 import { normalizeWhitespace } from "./normalize";
 import type { ExtractionResult } from "./types";
 
-export const TEXT_EXTRACTOR_VERSION = 1;
+/** 2: reading mode shows the text as written: indentation and alignment are kept. */
+export const TEXT_EXTRACTOR_VERSION = 2;
+
+/**
+ * The text as written, for reading mode, which shows it preformatted (PlainTextView). Line
+ * endings are unified, trailing spaces cut, and blank lines at either end dropped. Indentation,
+ * runs of spaces and blank lines inside are kept: code, a table aligned with spaces, and a
+ * paragraph's full-width indent (　　) read as in the file. Search and sections use the
+ * normalized plain text.
+ */
+function asWritten(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[^\S\n]+$/gm, "")
+    .replace(/^\n+|\n+$/g, "");
+}
 
 /** Plain text: one preamble section; title is the first non-empty line (capped) or the filename. */
 export function extractPlainText(
@@ -27,7 +42,7 @@ export function extractPlainText(
     language: detectLanguage(plainText),
     plainText,
     // Escape nothing: reading mode renders this as preformatted text, never as HTML.
-    markdown: plainText,
+    markdown: plainText ? asWritten(text) : "",
     sections: plainText
       ? [
           {

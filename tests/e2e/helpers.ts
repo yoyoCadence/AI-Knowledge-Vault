@@ -27,8 +27,10 @@ export async function login(page: Page) {
  * the same database (global-setup resets it once per run), so a retry must not meet the first
  * attempt's leftovers: the same bytes are a duplicate import, a known filename becomes a new
  * version of the earlier work (its shares included), a taken collection name is a conflict, and
- * two works with one title make a locator match twice.
+ * two works with one title make a locator match twice. The same holds for `--repeat-each`.
  */
 export function attempt() {
-  return `attempt${test.info().retry}`;
+  // `--repeat-each` (hunting a flaky test) runs a test again in the same database too.
+  const { retry, repeatEachIndex } = test.info();
+  return `attempt${retry}${repeatEachIndex > 0 ? `r${repeatEachIndex}` : ""}`;
 }

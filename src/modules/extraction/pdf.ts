@@ -1,9 +1,38 @@
+import type { Root as MdastRoot, RootContent } from "mdast";
+import { gfmToMarkdown } from "mdast-util-gfm";
+import { toMarkdown } from "mdast-util-to-markdown";
 import { extractText, getDocumentProxy, getMeta } from "unpdf";
 import { detectLanguage } from "./language";
 import { normalizeWhitespace } from "./normalize";
 import type { ExtractionResult, SectionDraft } from "./types";
 
-export const PDF_EXTRACTOR_VERSION = 1;
+/** 2: page text is escaped in the Markdown, so it can never add headings (pagesMarkdown). */
+export const PDF_EXTRACTOR_VERSION = 2;
+
+/**
+ * Reading mode's Markdown for the pages: a heading per page, and the page's text as text.
+ *
+ * It is written through mdast, so text that looks like Markdown is escaped and reads as
+ * written: a line of dashes under a line (a setext heading), `#` at the start of a line, `*`
+ * between numbers, a table delimiter row. So the only headings are the pages'. Reading mode
+ * gives root headings the page sections' anchors in order (markdown-view `headingAnchors`), and
+ * one heading more would move every later page's anchor.
+ */
+export function pagesMarkdown(pages: readonly { number: number; text: string }[]): string {
+  const children: RootContent[] = [];
+  for (const page of pages) {
+    children.push({
+      type: "heading",
+      depth: 2,
+      children: [{ type: "text", value: `第 ${page.number} 頁` }],
+    });
+    for (const block of page.text.split(/\n{2,}/)) {
+      if (block) children.push({ type: "paragraph", children: [{ type: "text", value: block }] });
+    }
+  }
+  const root: MdastRoot = { type: "root", children };
+  return toMarkdown(root, { extensions: [gfmToMarkdown()] }).trim();
+}
 
 /**
  * PDF text per page via pdf.js (unpdf). Text extraction never runs embedded JavaScript.
@@ -65,13 +94,11 @@ export async function extractPdf(
       title: title.slice(0, 500) || null,
       language: detectLanguage(plainText),
       plainText,
-      markdown: limited
-        .map((pageText, index) => {
-          const text = normalizeWhitespace(pageText);
-          return text ? `## 第 ${index + 1} 頁\n\n${text}` : "";
-        })
-        .filter(Boolean)
-        .join("\n\n"),
+      markdown: pagesMarkdown(
+        limited
+          .map((pageText, index) => ({ number: index + 1, text: normalizeWhitespace(pageText) }))
+          .filter((page) => page.text),
+      ),
       sections,
       metadata: author ? { author: author.slice(0, 200) } : {},
       references: [],

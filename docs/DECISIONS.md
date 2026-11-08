@@ -204,7 +204,10 @@ peer dependencies). Anything not verified that way is marked _assumption_.
   - Plain text (all formats): a hard break is a line break, and raw HTML in Markdown is
     markup, not text.
   - Markdown: `mdast-util-from-markdown` (GFM) for sections.
-  - PDF: `unpdf`, which wraps pdf.js.
+  - PDF: `unpdf`, which wraps pdf.js. Since version 2, reading mode's Markdown is written
+    through mdast, so page text that looks like Markdown is escaped and adds no heading.
+  - Plain text: since version 2, reading mode shows the text as written (indentation and
+    alignment kept); search uses the normalized text.
   - ZIP: `yauzl` streaming with our own limits. Writing exports uses `yazl`.
   - Images: `sharp`, with `limitInputPixels`.
   - Text encoding: strict UTF-8, then Big5 and UTF-16 fallbacks via `TextDecoder`.

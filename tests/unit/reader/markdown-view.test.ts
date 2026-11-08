@@ -184,4 +184,33 @@ describe("table of contents anchors match the rendered headings", () => {
     expect(anchors).toEqual(["page-1", "page-2"]);
     expect(ids(render(result.markdown, anchors))).toEqual(anchors);
   });
+
+  it("PDF pages whose text looks like Markdown keep their own anchors, and read as written", async () => {
+    // A line of dashes under a line is a setext heading in Markdown, `#` an ATX one: as raw
+    // Markdown they added headings, which took the next pages' anchors.
+    const result = await extractPdf(
+      pdfDocument([
+        "Results\n-------\np < 0.05 and 2 * 3 * 4 = 24",
+        "# 1 Introduction\n1. first item\n> not a quote\na | b\n--- | ---",
+        "Summary\n=======\nSee https://en.wikipedia.org/wiki/Urban_heat_island",
+      ]),
+      { filenameStem: "p", maxPages: 10 },
+    );
+    const anchors = headingAnchors(result.sections);
+    const html = render(result.markdown, anchors);
+    expect(ids(html)).toEqual(["page-1", "page-2", "page-3"]);
+    expect([...html.matchAll(/<h\d[^>]*>([^<]*)<\/h\d>/g)].map((match) => match[1])).toEqual([
+      "第 1 頁",
+      "第 2 頁",
+      "第 3 頁",
+    ]);
+    for (const page of [1, 2, 3]) {
+      expect(html).toMatch(new RegExp(`<h3 id="page-${page}"[^>]*>第 ${page} 頁</h3>`));
+    }
+    expect(html).not.toMatch(/<(em|ol|blockquote|table)[\s>]/);
+    expect(html).toContain("2 * 3 * 4 = 24");
+    expect(html).toContain("# 1 Introduction");
+    // Links in the text stay links.
+    expect(html).toContain('href="https://en.wikipedia.org/wiki/Urban_heat_island"');
+  });
 });
