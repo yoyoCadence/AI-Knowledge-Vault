@@ -32,9 +32,10 @@ async function expectScriptsRanUnderPolicy(page: Page, path: string) {
   expect(policy, path).toMatch(/script-src 'self' 'nonce-[A-Za-z0-9+/]{24}' 'strict-dynamic'/);
   expect(policy, path).toContain("object-src 'none'");
   expect(policy, path).toContain("frame-ancestors 'none'");
-  // Next.js's client runtime sets `window.next` once its scripts run.
+  // goto waited for `load`, so every script in the HTML has been tried; Next.js's client
+  // runtime sets `window.next` once its scripts run. (Not "networkidle": a page that polls,
+  // like a library with an import in progress, never gets there.)
   await expect.poll(() => page.evaluate(() => "next" in window), { message: path }).toBe(true);
-  await page.waitForLoadState("networkidle");
   expect(await violations(page), path).toEqual([]);
 }
 
@@ -138,13 +139,18 @@ test.describe("content security policy", () => {
     await page.goto("/");
     // The page's own scripts still run.
     await expect.poll(() => page.evaluate(() => "next" in window)).toBe(true);
-    await page.waitForLoadState("networkidle");
+    // Both are refused: the script while the page is parsed, the handler once the image fails.
+    await expect
+      .poll(async () =>
+        (await violations(page))
+          .filter((line) => /^script-src-(elem|attr) inline/.test(line))
+          .map((line) => line.split(" ")[0])
+          .sort(),
+      )
+      .toEqual(["script-src-attr", "script-src-elem"]);
     expect(
       await page.evaluate(() => [(window as Watched).__injected, (window as Watched).__handler]),
     ).toEqual([undefined, undefined]);
-    const refused = await violations(page);
-    expect(refused.some((line) => line.startsWith("script-src-elem inline"))).toBe(true);
-    expect(refused.some((line) => line.startsWith("script-src-attr inline"))).toBe(true);
 
     // Markup added later (a DOM sink) gets no further: a handler attribute is refused too.
     await page.unrouteAll();

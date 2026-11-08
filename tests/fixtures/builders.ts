@@ -106,8 +106,15 @@ export function pdfDocument(
     const pageId = 3 + index * 2;
     const contentId = pageId + 1;
     pageIds.push(pageId);
-    const escaped = text.replace(/[()\\]/g, (char) => `\\${char}`);
-    const stream = `BT /F1 18 Tf 72 720 Td (${escaped}) Tj ET`;
+    // One text line per "\n", each 24 points below the one before.
+    const shown = text
+      .split("\n")
+      .map((line, row) => {
+        const escaped = line.replace(/[()\\]/g, (char) => `\\${char}`);
+        return `${row > 0 ? "0 -24 Td " : ""}(${escaped}) Tj`;
+      })
+      .join(" ");
+    const stream = `BT /F1 18 Tf 72 720 Td ${shown} ET`;
     objects[pageId] =
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${contentId} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >>`;
     objects[contentId] = `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`;

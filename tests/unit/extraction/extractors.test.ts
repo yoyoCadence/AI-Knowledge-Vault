@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmFromMarkdown } from "mdast-util-gfm";
+import { toString } from "mdast-util-to-string";
+import { gfm } from "micromark-extension-gfm";
 import {
   extractHtml,
   extractMarkdown,
@@ -6,6 +10,8 @@ import {
   extractPlainText,
   parseFrontMatter,
 } from "@/modules/extraction";
+import { normalizeWhitespace } from "@/modules/extraction/normalize";
+import { pagesMarkdown } from "@/modules/extraction/pdf";
 import {
   claudeDesignDocument,
   htmlDocument,
@@ -236,6 +242,79 @@ describe("extractPlainText", () => {
         charEnd: result.plainText.length,
       },
     ]);
+  });
+});
+
+describe("pagesMarkdown (PDF reading mode)", () => {
+  /** The blocks reading mode would see (GFM, as markdown-view parses). */
+  const blocks = (markdown: string) =>
+    fromMarkdown(markdown, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] }).children;
+  const roundTrip = (text: string) => {
+    const tree = blocks(
+      pagesMarkdown([
+        { number: 1, text },
+        { number: 2, text: "end" },
+      ]),
+    );
+    return {
+      kinds: tree.map((node) => node.type).join(","),
+      text: tree[1] ? toString(tree[1]) : null,
+    };
+  };
+
+  it("escapes page text that looks like Markdown, so it reads as written", () => {
+    for (const text of [
+      "Results\n-------\np < 0.05 and 2 * 3 * 4 = 24",
+      "Title\n=====\nbody",
+      "# 1 Introduction\n## sub\n1. first\n- dash\n+ plus\n* star\n> quote\n1) paren",
+      "a | b\n--- | ---\n1 | 2",
+      "```js\ncode\n```\n~~~\nfence",
+      "<script>alert(1)</script> <div>x</div> <!-- c -->",
+      "&amp; &copy; &#38; and C:\\Users\\\nnext line",
+      "*em* _em_ **strong** ~~del~~ `code` [link](http://x) ![img](y.png) [^1]",
+      "***\n---\n___",
+      "見 https://en.wikipedia.org/wiki/Urban_heat_island 與 www.taipei.gov.tw/News_Content.aspx?n=1&s=2",
+      "http://example.edu/~smith/paper_v2.pdf and first_last@example.com",
+    ]) {
+      expect(roundTrip(text), text).toEqual({ kinds: "heading,paragraph,heading,paragraph", text });
+    }
+  });
+
+  it("never lets page text add or remove a block, whatever it holds", () => {
+    const alphabet = [..."#-=*_`~|><[]()!&;\\:12.+ab中 \n$^{}'\"", "www.", "http://", "@", "x.com"];
+    let seed = 7;
+    const random = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+    for (let sample = 0; sample < 3000; sample += 1) {
+      let raw = "";
+      for (let index = 0, length = 1 + random() * 40; index < length; index += 1) {
+        raw += alphabet[Math.floor(random() * alphabet.length)];
+      }
+      const text = normalizeWhitespace(raw).replace(/\n{2,}/g, "\n");
+      if (!text) continue;
+      const result = roundTrip(text);
+      expect(result.kinds, text).toBe("heading,paragraph,heading,paragraph");
+      // Inside a bare URL GFM reads text literally, so an escape there stays visible; in
+      // anything else the text reads exactly as written.
+      if (!/www\.|https?:|@/.test(text)) expect(result.text, text).toBe(text);
+    }
+  });
+});
+
+describe("extractPlainText keeps the layout for reading", () => {
+  it("shows the text as written, and searches it normalized", () => {
+    const text =
+      "\r\n第一章\r\n　　這是第一段，段首兩個全形空白。  \r\n\r\ndef f():\n    return 1\n\n" +
+      "Name    Value\nAlpha   1   \n\tTabbed\n\n\n\n";
+    const result = extractPlainText(text, { filenameStem: "x" });
+    expect(result.markdown).toBe(
+      "第一章\n　　這是第一段，段首兩個全形空白。\n\ndef f():\n    return 1\n\n" +
+        "Name    Value\nAlpha   1\n\tTabbed",
+    );
+    expect(result.plainText).toBe(
+      "第一章\n這是第一段，段首兩個全形空白。\n\ndef f():\nreturn 1\n\nName Value\nAlpha 1\nTabbed",
+    );
+    expect(result.title).toBe("第一章");
+    expect(extractPlainText(" \n\t\n", { filenameStem: "x" }).markdown).toBe("");
   });
 });
 
